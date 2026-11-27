@@ -543,7 +543,7 @@ fn gather_in(
     let mut cands: Vec<(u32, Vec2)> = Vec::new();
     let mut near_prims: Vec<Prim> = Vec::new();
     let mut count = 0usize;
-    let mut budget = MAX_BLOCK_LEAVES;
+    let mut walk = Leaves::new(probe);
     for (e, known) in crate::select::candidates(d, space, ix, &probe.expand(aperture), true, false)? {
         if !d.is_visible(e) || frozen.iter().any(|l| l.eq_ignore_ascii_case(&e.common.layer)) || Some(e.handle) == skip {
             continue;
@@ -585,17 +585,17 @@ fn gather_in(
         sink.object(&e.kind, None);
         // A block reference snaps to the objects inside it, placed by its transform.
         if let EntityKind::Insert(ins) = &e.kind {
-            block_leaves(d, ins, &Mat3::IDENTITY, 0, &mut budget, frozen, &mut |k, m| sink.object(k, Some(m)));
+            block_leaves(d, ins, &Mat3::IDENTITY, 0, &mut walk, frozen, &mut |k, m| sink.object(k, Some(m)));
         }
         if let EntityKind::Dimension(dm) = &e.kind {
-            sink.dimension(d, dm, &mut budget, frozen);
+            sink.dimension(d, dm, &mut walk, frozen);
         }
         // A dimension kept as read draws its block through a reference in its graphics (#3438),
         // and snaps to the objects inside it the same way.
         if let EntityKind::Unknown(u) = &e.kind {
             for g in &u.graphics {
                 if let EntityKind::Insert(ins) = &g.kind {
-                    block_leaves(d, ins, &Mat3::IDENTITY, 0, &mut budget, frozen, &mut |k, m| sink.object(k, Some(m)));
+                    block_leaves(d, ins, &Mat3::IDENTITY, 0, &mut walk, frozen, &mut |k, m| sink.object(k, Some(m)));
                 }
             }
         }
@@ -837,10 +837,10 @@ impl Sink<'_> {
     /// A dimension snaps to what it draws, as in AutoCAD (into its block): the objects of its
     /// block when the drawing has one (read from a file), else the lines generated from it
     /// (Endpoint on their ends); Node on its definition points.
-    fn dimension(&mut self, d: &Drawing, dm: &cadcraft_doc::Dimension, budget: &mut usize, frozen: &[String]) {
+    fn dimension<'d>(&mut self, d: &'d Drawing, dm: &cadcraft_doc::Dimension, walk: &mut Leaves<'d>, frozen: &[String]) {
         match dm.block.as_ref().and_then(|n| d.block(n)) {
             Some(blk) => {
-                block_leaves(d, &dimension_reference(blk, dm), &Mat3::IDENTITY, 0, budget, frozen, &mut |k, m| self.object(k, Some(m)));
+                block_leaves(d, &dimension_reference(blk, dm), &Mat3::IDENTITY, 0, walk, frozen, &mut |k, m| self.object(k, Some(m)));
             }
             None => {
                 let g = cadcraft_render::dimension_in(d, dm);
@@ -882,10 +882,46 @@ fn dim_def_points(dm: &cadcraft_doc::Dimension) -> Vec<Vec2> {
     pts.into_iter().map(|p| p.xy()).filter(|p| p.is_finite()).collect()
 }
 
-/// Calls `f` with each object drawn by a block reference and the transform placing it, nested
-/// references expanded (within [`MAX_BLOCK_DEPTH`] levels and `budget` objects); objects that
-/// aren't drawn (hidden, on a layer that is off or frozen, attribute definitions) are left out.
-fn block_leaves(d: &Drawing, ins: &Insert, m: &Mat3, depth: usize, budget: &mut usize, frozen: &[String], f: &mut dyn FnMut(&EntityKind, &Mat3)) {
+/// One snap query's walk through the objects block references draw ([`block_leaves`]).
+struct Leaves<'a> {
+    /// Objects near the cursor still to look at (hostile files).
+    budget: usize,
+    /// The query box, in drawing coordinates: objects of a block away from it are passed over.
+    probe: Bounds2,
+    /// The bounds of nested blocks measured so far.
+    bounds: cadcraft_doc::BlockBoundsCache<'a>,
+}
+
+impl<'a> Leaves<'a> {
+    fn new(probe: Bounds2) -> Self {
+        Leaves { budget: MAX_BLOCK_LEAVES, probe, bounds: cadcraft_doc::BlockBoundsCache::default() }
+    }
+
+    /// Whether `e`, placed in a block by `m`, may reach the query box: false only when its bounds
+    /// are known and away from it.
+    fn reaches(&mut self, d: &'a Drawing, e: &cadcraft_doc::Entity, m: &Mat3, depth: usize) -> bool {
+        if crate::select::is_infinite(e) {
+            return true;
+        }
+        let b = cadcraft_doc::entity_bounds_cached(d, e, depth, &mut self.bounds);
+        let corners = [b.min, Vec2::new(b.max.x, b.min.y), b.max, Vec2::new(b.min.x, b.max.y)];
+        b.is_empty() || Bounds2::from_points(corners.map(|p| m.apply(p))).intersects(&self.probe)
+    }
+}
+
+/// Calls `f` with each object drawn by a block reference near the query box and the transform
+/// placing it, nested references expanded (within [`MAX_BLOCK_DEPTH`] levels and the walk's
+/// budget); objects that aren't drawn (hidden, on a layer that is off or frozen, attribute
+/// definitions) are left out.
+fn block_leaves<'a>(
+    d: &'a Drawing,
+    ins: &Insert,
+    m: &Mat3,
+    depth: usize,
+    walk: &mut Leaves<'a>,
+    frozen: &[String],
+    f: &mut dyn FnMut(&EntityKind, &Mat3),
+) {
     if depth >= MAX_BLOCK_DEPTH {
         return;
     }
@@ -897,35 +933,42 @@ fn block_leaves(d: &Drawing, ins: &Insert, m: &Mat3, depth: usize, budget: &mut 
     for r in 0..rows {
         for c in 0..cols {
             // Each array cell spends budget too, so a huge array of tiny blocks stays bounded.
-            if *budget == 0 {
+            if walk.budget == 0 {
                 return;
             }
-            *budget -= 1;
+            walk.budget -= 1;
             let off = Vec2::new(ins.col_spacing * f64::from(c), ins.row_spacing * f64::from(r)).rotate(ins.rotation);
             let mm = m.then_before(Mat3::translate(off).then_before(ins.transform(blk.base.xy())));
             for be in blk.entities.iter() {
-                if *budget == 0 {
-                    return;
-                }
-                *budget -= 1;
                 // Objects on layer 0 take the reference's layer, which is visible.
                 if !be.common.visible
                     || (be.common.layer != "0" && (!d.is_visible(be) || frozen.iter().any(|l| l.eq_ignore_ascii_case(&be.common.layer))))
                 {
                     continue;
                 }
+                // Objects away from the cursor are passed over without spending the budget: spent
+                // on every object in turn, it ran out partway through a block of more objects than
+                // that, and the objects after that point never snapped (a drawing kept as one
+                // block snapped at one end and not at the other).
+                if !walk.reaches(d, be, &mm, depth + 1) {
+                    continue;
+                }
+                if walk.budget == 0 {
+                    return;
+                }
+                walk.budget -= 1;
                 match &be.kind {
                     EntityKind::AttDef(_) => {}
-                    EntityKind::Insert(inner) => block_leaves(d, inner, &mm, depth + 1, budget, frozen, f),
+                    EntityKind::Insert(inner) => block_leaves(d, inner, &mm, depth + 1, walk, frozen, f),
                     // A dimension draws its block, as at the top level.
                     EntityKind::Dimension(dm) if let Some(blk) = dm.block.as_ref().and_then(|n| d.block(n)) => {
-                        block_leaves(d, &dimension_reference(blk, dm), &mm, depth + 1, budget, frozen, f);
+                        block_leaves(d, &dimension_reference(blk, dm), &mm, depth + 1, walk, frozen, f);
                     }
                     k @ EntityKind::Unknown(u) => {
                         f(k, &mm);
                         for g in &u.graphics {
                             if let EntityKind::Insert(inner) = &g.kind {
-                                block_leaves(d, inner, &mm, depth + 1, budget, frozen, f);
+                                block_leaves(d, inner, &mm, depth + 1, walk, frozen, f);
                             }
                         }
                     }
@@ -1468,6 +1511,28 @@ mod tests {
         assert!(osnap(&d, &Space::Model, Vec2::new(20.0, 2.1), 0.5, mode::QUA, None, false).unwrap().point.near(Vec2::new(20.0, 2.0), 1e-9));
         let t = osnap(&d, &Space::Model, Vec2::new(19.9, 1.9), 1.0, mode::TAN, Some(Vec2::new(10.0, 0.0)), false);
         assert!(t.is_some());
+    }
+
+    #[test]
+    fn every_object_of_a_big_block_snaps() {
+        // A drawing kept as one block of more objects than a query may look at: the walk spent its
+        // budget on the block's first objects, so the far end never snapped.
+        let n = MAX_BLOCK_LEAVES + 500;
+        let mut b = cadcraft_doc::Block::new("BIG");
+        for i in 0..n {
+            let y = 2.0 * i as f64;
+            let line = EntityKind::Line(Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(10.0, y + 1.0, 0.0) });
+            b.entities.push(cadcraft_doc::Entity::new(Handle(1 + i as u64), line));
+        }
+        let mut d = Drawing::new_imperial();
+        d.blocks.insert("BIG".into(), std::sync::Arc::new(b));
+        let ins = Insert { block: "BIG".into(), insert: Vec3::new(100.0, 0.0, 0.0), ..Insert::default() };
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+        let far = 2.0 * (n - 1) as f64 + 1.0;
+        for end in [Vec2::new(110.0, 1.0), Vec2::new(110.0, far)] {
+            let h = osnap(&d, &Space::Model, end + Vec2::new(0.1, -0.1), 0.5, mode::END, None, false);
+            assert!(h.is_some_and(|h| h.point.near(end, 1e-9)), "no endpoint snap at {end:?}");
+        }
     }
 
     #[test]
