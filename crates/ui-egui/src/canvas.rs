@@ -1054,6 +1054,20 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     if idle && !app.canvas.snap_menu && app.canvas.grip_menu.is_some() {
         grip_menu(app, &resp);
     } else if (idle && !enter) || app.canvas.snap_menu {
+        // Right-clicking an unselected object while idle selects it (expanding selectable groups)
+        // so the shortcut menu offers its object-specific commands (Block Editor, Edit Text,
+        // Hatch Edit, Properties…).
+        if inside
+            && pressed_secondary
+            && idle
+            && !enter
+            && !app.canvas.snap_menu
+            && app.session.selection().is_empty()
+            && let Some(w) = raw_world
+        {
+            let aperture = app.session.settings.pickbox.max(1.0) * 1.5 / scale.max(1e-12);
+            app.session.select_at(w, aperture);
+        }
         crate::context_menu::show(app, &resp);
     }
 
