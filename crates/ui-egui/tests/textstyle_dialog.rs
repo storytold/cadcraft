@@ -177,6 +177,24 @@ fn clicking_new_stages_the_height_field_before_navigation() {
 }
 
 #[test]
+fn selecting_another_style_stages_the_height_field_before_navigation() {
+    let mut h = dialog(|app| {
+        app.run("style", json!({ "name": "Notes", "current": false })).unwrap();
+    });
+    field(&h, "0.0000").focus();
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::A);
+    h.run_steps(1);
+    field(&h, "0.0000").type_text("5");
+    h.run_steps(2);
+    click(&mut h, "Notes");
+    h.get_by_label("The style Standard has been modified. Do you want to save your changes?");
+    click(&mut h, "Yes");
+    assert_eq!(style(&h, "Standard").height, 5.0);
+    assert_eq!(style(&h, "Notes").height, 0.0);
+}
+
+#[test]
 fn annotative_styles_have_a_paper_height() {
     let mut h = dialog(|_| {});
     h.get_by_label("Height");
