@@ -4,7 +4,7 @@ use super::{
     dxf_ext,
 };
 
-/// `AcadAnnotative` xdata marking an annotative style.
+/// `AcadAnnotative` xdata marking an annotative style or block.
 pub(super) fn annotative_xdata(w: &mut W) {
     w.s(1001, "AcadAnnotative");
     w.s(1000, "AnnotativeData");
