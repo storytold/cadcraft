@@ -3360,6 +3360,84 @@ fn mirrored_hatch_extrusion_flips_boundary() {
     }
 }
 
+/// A TEXT in a tilted Z-up plane keeps its insertion point, alignment point and rotation in that
+/// plane's OCS, so read as WCS ones it lands millions of units away in a drawing near UTM
+/// coordinates and runs the wrong way — the read-side counterpart of #1886, which #2584 fixed for
+/// HATCH and LWPOLYLINE and left TEXT for a follow-up.
+#[test]
+fn tilted_text_is_placed_as_seen_from_above() {
+    // Extrusion (0.6,0,0.8): the OCS axes are x = (0,1,0) and y = (-0.8,0,0.6), so group 10
+    // (2000,-800,600) is WCS (1000,2000,0), and a text with group 50 = 0 is drawn turned 90°.
+    let text = "0\nSECTION\n2\nENTITIES\n0\nTEXT\n8\n0\n10\n2000\n20\n-800\n30\n600\n40\n2.5\n\
+                1\nSURVEY\n210\n0.6\n220\n0\n230\n0.8\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "t.dxf").unwrap();
+    let tx = first(&d, |k| if let EntityKind::Text(t) = k { Some(t.clone()) } else { None });
+    for (got, want) in [(tx.insert.x, 1000.0), (tx.insert.y, 2000.0), (tx.insert.z, 0.0)] {
+        assert!((got - want).abs() < 1e-9, "insert {:?}", tx.insert);
+    }
+    assert!((tx.rotation - std::f64::consts::FRAC_PI_2).abs() < 1e-12, "{}", tx.rotation);
+    // Its points are plan coordinates now, so the plane is spent rather than kept on the entity.
+    assert_eq!(d.model.iter().next().unwrap().common.extrusion, Vec3::Z);
+    // The text takes up its place in the drawing instead of an area millions of units across.
+    let b = d.extents(&Space::Model);
+    for (got, want) in [(b.min.x, 1000.0), (b.min.y, 2000.0)] {
+        assert!((got - want).abs() < 10.0, "extents {b:?}");
+    }
+    // Saved flat in the WCS (no extrusion), it reads back in the same place.
+    let b2 = roundtrip(&d).extents(&Space::Model);
+    assert!((b2.min - b.min).len() < 1e-6 && (b2.max - b.max).len() < 1e-6, "{b2:?} vs {b:?}");
+
+    // A plain text and one whose extrusion only carries noise are untouched.
+    for ext in ["", "210\n0.0001\n220\n0\n230\n1\n"] {
+        let plain = format!("0\nSECTION\n2\nENTITIES\n0\nTEXT\n8\n0\n10\n5\n20\n7\n40\n2.5\n1\nOK\n{ext}0\nENDSEC\n0\nEOF\n");
+        let p = first(&read(plain.as_bytes(), "p.dxf").unwrap(), |k| if let EntityKind::Text(t) = k { Some(t.clone()) } else { None });
+        assert_eq!((p.insert.x, p.insert.y, p.insert.z), (5.0, 7.0, 0.0), "{ext:?}");
+        assert_eq!(p.rotation, 0.0, "{ext:?}");
+    }
+}
+
+/// The two operations the plain fixture cannot reach: a nonzero turn (group 50) puts weight on the
+/// plane's y axis in `plan_frame`, and a justified text carries an alignment point (group 11) that
+/// has to be mapped with the insertion point. Numbers worked out by hand from the arbitrary axis
+/// algorithm: extrusion (0.6,0,0.8) gives x = (0,1,0) and y = (-0.8,0,0.6), so a turn of 45° runs
+/// along (−0.8,1)/√2 in plan, which is (−0.624695, 0.780869) normalized.
+#[test]
+fn tilted_text_turns_by_the_plane_axes_and_maps_its_alignment_point() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nTEXT\n8\n0\n10\n2000\n20\n-800\n30\n600\n11\n2100\n21\n-800\n31\n600\n\
+                40\n2.5\n50\n45\n72\n2\n73\n0\n1\nRIGHT\n210\n0.6\n220\n0\n230\n0.8\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "r.dxf").unwrap();
+    let tx = first(&d, |k| if let EntityKind::Text(t) = k { Some(t.clone()) } else { None });
+    // Both anchors go through the same frame: (2000,-800,600) → (1000,2000,0) and
+    // (2100,-800,600) → (1000,2100,0).
+    for (got, want) in [(tx.insert.x, 1000.0), (tx.insert.y, 2000.0), (tx.insert.z, 0.0)] {
+        assert!((got - want).abs() < 1e-9, "insert {:?}", tx.insert);
+    }
+    let align = tx.align_pt.expect("a right-justified text keeps its alignment point");
+    for (got, want) in [(align.x, 1000.0), (align.y, 2100.0), (align.z, 0.0)] {
+        assert!((got - want).abs() < 1e-9, "align_pt {:?}", tx.align_pt);
+    }
+    // The direction is the plane's x axis turned by 45° in the plane, seen from above.
+    let (want_x, want_y) = (-0.624695, 0.780869);
+    assert!((tx.rotation.cos() - want_x).abs() < 1e-6, "cos {} (rotation {})", tx.rotation.cos(), tx.rotation);
+    assert!((tx.rotation.sin() - want_y).abs() < 1e-6, "sin {} (rotation {})", tx.rotation.sin(), tx.rotation);
+}
+
+/// A mirrored plane (z < 0) maps its anchors once, in `text_from`'s mirror path. The tilted branch
+/// must leave those points alone: mapping them again would move the text twice. The mirrored
+/// tilted plane's footprint is otherwise unchanged from main and is a separate change.
+#[test]
+fn mirrored_tilted_text_anchors_are_mapped_once() {
+    let raw = Vec3::new(2000.0, -800.0, 600.0);
+    let n = Vec3::new(0.6, 0.0, -0.8);
+    let text = "0\nSECTION\n2\nENTITIES\n0\nTEXT\n8\n0\n10\n2000\n20\n-800\n30\n600\n40\n2.5\n\
+                1\nMIRROR\n210\n0.6\n220\n0\n230\n-0.8\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "m.dxf").unwrap();
+    let tx = first(&d, |k| if let EntityKind::Text(t) = k { Some(t.clone()) } else { None });
+    let once = cadcraft_geom::Mat4::ocs(n).apply(raw);
+    let twice = cadcraft_geom::Mat4::ocs(n).apply(once);
+    assert!((tx.insert - once).len() < 1e-9, "insert {:?}: wanted {once:?} (mapped once), not {twice:?} (twice)", tx.insert);
+}
+
 /// Issue #1886: a HATCH in a tilted plane (a terrain face) is drawn as seen from above, not turned
 /// about the origin. With extrusion (0, 0.5, -√3/2) the OCS axes are x = (-1,0,0) and
 /// y = (0, √3/2, 1/2): the square (1,0)..(3,2) lies over (-3,0)..(-1,√3), from z 0 up to z 1.
