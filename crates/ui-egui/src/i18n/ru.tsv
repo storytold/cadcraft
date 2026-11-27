@@ -292,6 +292,7 @@
 	Freeze/Thaw in the current viewport	Заморозить/разморозить в текущем видовом экране
 	From	От точки
 	General	Общие
+	Generate Boundary	Создать границу
 	Geometric Center	Геометрический центр
 	Geometric Constraint	Геометрическое ограничение
 	Geometric Constraints	Геометрические ограничения
@@ -1062,3 +1063,1205 @@
 
 # ArtCraft feature naming
 	Additional Tools	Дополнительные инструменты
+	Enter angle of xline (0) or	Введите угол вспомогательной прямой (0) или
+	Enter delta length or	Введите изменение длины или
+	Select an object to change or	Выберите объект для изменения или
+	Select an object to measure or	Выберите объект для измерения или
+	Select first object or	Выберите первый объект или
+	Select nested objects to copy or	Выберите вложенные объекты для копирования или
+	Select polyline or	Выберите полилинию или
+	Specify base point or	Укажите базовую точку или
+	Specify base radius or	Укажите базовый радиус или
+	Specify helix height or	Укажите высоту спирали или
+	Specify offset distance or	Укажите расстояние смещения или
+	Specify rotation angle or	Укажите угол поворота или
+	Specify top radius or	Укажите верхний радиус или
+	Specify total length or	Укажите общую длину или
+	Grid	Сетка
+	Ortho	Орто
+	Workspace	Рабочая среда
+	Settings	Параметры
+	Preferences	Настройки
+	Current:	Текущий:
+	Continuous	Непрерывная
+	Displayed layers	Отображаемые слои
+	Black	Чёрный
+	Gray	Серый
+	Grey	Серый
+	Orange	Оранжевый
+	Purple	Фиолетовый
+	Brown	Коричневый
+	Pink	Розовый
+	Rename	Переименовать
+	Select Color	Выбор цвета
+	Line type	Тип линии
+	Line weight	Вес линии
+	Layer filters	Фильтры слоёв
+	Dashed	Штриховая
+	Dotted	Пунктирная
+	Dashdot	Штрихпунктирная
+	Hidden	Скрытая
+	Phantom	Фантомная
+	Clear selection	Снять выделение
+	Object type	Тип объекта
+	Model Space	Пространство модели
+	Plot Settings	Параметры печати
+	Preview	Просмотр
+	Units	Единицы
+	Precision	Точность
+	Perimeter	Периметр
+	Polar	Полярное
+	Lineweight Display	Отображение веса линий
+	Annotation	Аннотации
+	Annotative	Аннотативный
+	Attributes	Атрибуты
+	Insertion point	Точка вставки
+	Base point	Базовая точка
+	Scale factor	Масштабный коэффициент
+	Rotation angle	Угол поворота
+	X coordinate	Координата X
+	Y coordinate	Координата Y
+	Z coordinate	Координата Z
+	Cancel operation	Отменить операцию
+	Apply	Применить
+	Reset	Сбросить
+	Bring Above Objects	Перенести над объектами
+	Send Under Objects	Перенести под объекты
+	Bring Annotations to Front	Аннотации на передний план
+	Text Objects Only	Только текстовые объекты
+	Dimension Objects Only	Только размеры
+	Leaders Only	Только выноски
+	All Annotation Objects	Все аннотативные объекты
+	Send Hatches to Back	Штриховки на задний план
+	Isolate Objects	Изолировать объекты
+	Hide Objects	Скрыть объекты
+	End Object Isolation	Закончить изоляцию объектов
+	Update Fields	Обновить поля
+	Edit Xref in Place	Редактировать xref на месте
+	Open Xref	Открыть xref
+	Load Application...	Загрузить приложение...
+	New UCS	Новая ПСК
+	World	Мир
+	Face	Грань
+	Origin	Начало
+	LwPolyline	2D-полилиния
+	New Sheet Set...	Новый набор листов...
+	Open Sheet Set...	Открыть набор листов...
+	Open Recent	Открыть недавние
+	Clear Menu	Очистить меню
+	Attach...	Присоединить...
+	Export Layout to Model...	Экспорт листа в модель...
+	Package Drawing...	Упаковать чертёж...
+	DWG Compare...	Сравнить DWG...
+	Markup Import...	Импорт пометок...
+	Share...	Поделиться...
+	Undo Group of commands	Отменить группу команд
+	Dynamic	Динамическая
+	Constrained Orbit	Ограниченная орбита
+	Free Orbit	Свободная орбита
+	Camera	Камера
+	Adjust Distance	Изменить расстояние
+	Swivel	Поворот камеры
+	Polygonal Viewport	Многоугольный видовой экран
+	3D Views	3D-виды
+	Viewpoint	Точка зрения
+	Plan View	Вид в плане
+	Current UCS	Текущая ПСК
+	World UCS	Мировая ПСК
+	Named UCS	Именованная ПСК
+	Bottom	Снизу
+	Front	Спереди
+	Back	Сзади
+	SW Isometric	ЮЗ изометрия
+	SE Isometric	ЮВ изометрия
+	NE Isometric	СВ изометрия
+	NW Isometric	СЗ изометрия
+	Show Annotative Objects	Показать аннотативные объекты
+	Current Scale Only	Только текущий масштаб
+	All Scales	Все масштабы
+	Hide	Скрыть
+	Visual Styles	Визуальные стили
+	2D Wireframe	2D-каркас
+	Wireframe	Каркас
+	Realistic	Реалистичный
+	Conceptual	Концептуальный
+	Shaded	Тонированный
+	Shaded with Edges	Тонированный с кромками
+	Shades of Gray	Оттенки серого
+	Sketchy	Эскизный
+	X-Ray	Рентген
+	Render	Тонирование
+	New Point Light	Новый точечный свет
+	New Spotlight	Новый прожектор
+	New Distant Light	Новый удалённый свет
+	Light Glyphs	Значки источников света
+	Materials Browser	Браузер материалов
+	Lights	Источники света
+	Enter Full Screen	Во весь экран
+	DWG Reference...	Ссылка DWG...
+	PDF Underlay...	Подложка PDF...
+	Raster Image Reference...	Растровое изображение...
+	Field...	Поле...
+	Data Link...	Связь с данными...
+	Layout from Template...	Лист из шаблона...
+	ACIS File...	Файл ACIS...
+	Drawing Exchange Binary...	Двоичный обмен чертёжами...
+	Reference Manager	Диспетчер ссылок
+	Scale List...	Список масштабов...
+	Spelling	Орфография
+	Height:	Высота:
+	Linetype Manager	Диспетчер типов линий
+	Color Selector	Выбор цвета
+	Object Properties	Свойства объекта
+	Display	Отображение
+	Selection	Выделение
+	Width	Ширина
+	Position	Положение
+	Object Snap Settings	Параметры объектной привязки
+	Polar Tracking Settings	Параметры полярного отслеживания
+	Explode Block	Расчленить блок
+	Block Name	Имя блока
+	Coordinate	Координата
+	Coordinates	Координаты
+	Properties Palette	Палитра свойств
+	Save Changes	Сохранить изменения
+	Discard Changes	Отменить изменения
+	Unsaved changes	Несохранённые изменения
+	Are you sure?	Вы уверены?
+	Create	Создать
+	Open	Открыть
+	Fit	Вписать
+	Specify center point	Укажите центр
+	Dimensions	Размеры
+	Align block with object?	Выровнять блок по объекту?
+	Guide crosshairs along cloud path	Проведите перекрестье вдоль контура облака
+	Erase polyline?	Стереть полилинию?
+	Calculate rectangle dimensions based on	Рассчитать размеры прямоугольника по
+	Erase source objects?	Стереть исходные объекты?
+	Object selected is not a polyline. Do you want to turn it into one?	Выбранный объект не является полилинией. Преобразовать его в полилинию?
+	Scale objects based on alignment points?	Масштабировать объекты по точкам выравнивания?
+	Select an annotation object or	Выберите аннотационный объект или
+	Specify radius	Укажите радиус
+	Specify diameter	Укажите диаметр
+	Specify opposite corner point	Укажите противоположный угол
+	Pick internal point	Укажите внутреннюю точку
+	{n} commit	{n} коммит
+	{n} contributor	{n} участник
+	Attach DWG...	Присоединить DWG...
+	Bind	Внедрить
+	Detach	Отсоединить
+	Loaded	Загружена
+	Make it a block of this drawing, keeping its layer names	Сделать блоком этого чертёжа, сохранив имена слоёв
+	Make it a block of this drawing; its layers become NAME$0$LAYER	Сделать блоком этого чертёжа; слои получат имена NAME$0$LAYER
+	No external references are attached.	Внешние ссылки не присоединены.
+	Not Found	Не найдена
+	Not loaded	Не загружена
+	Overlay	Наложение
+	Reference Name	Имя ссылки
+	References: {n}	Ссылки: {n}
+	Reload	Обновить
+	Reload All	Обновить все
+	Saved Path	Сохранённый путь
+	Unload	Выгрузить
+	Unloaded	Выгружена
+	Unreferenced	Без ссылок
+	Unresolved	Не разрешена
+	A variable name starts with a letter and has only letters, digits and _	Имя переменной начинается с буквы и содержит только буквы, цифры и _
+	Additional angles	Дополнительные углы
+	Bind...	Внедрить...
+	Bulleted list	Маркированный список
+	Changed: {n}	Изменено: {n}
+	Clear History	Очистить журнал
+	Clip	Подрезать
+	Clip Viewport	Подрезать видовой экран
+	Close All Other Drawings	Закрыть все другие чертёжи
+	Close Comparison	Закрыть сравнение
+	Collapse Palettes	Свернуть палитры
+	Command Aliases	Псевдонимы команд
+	Clear Command History	Очистить журнал команд
+	Compare Drawings...	Сравнить чертёжи...
+	Convert	Преобразовать
+	Copy Full File Path	Копировать полный путь к файлу
+	Copy History	Копировать журнал
+	Count List	Список подсчёта
+	Count Table	Таблица подсчёта
+	Data Extraction...	Извлечение данных...
+	Default Save Version	Версия сохранения по умолчанию
+	Degrees of Freedom	Степени свободы
+	Degrees of freedom: {n}	Степени свободы: {n}
+	Dimension Break	Разрыв размера
+	Dimension Edit	Редактировать размер
+	Drawing Template (DWT)	Шаблон чертёжа (DWT)
+	SVG drawings (SVG, SVGZ)	Чертёжи SVG (SVG, SVGZ)
+	Edit Attributes...	Редактировать атрибуты...
+	Edit Table Cell	Редактировать ячейку таблицы
+	Enter	Ввод
+	Evaluate	Вычислить
+	Evaluate LISP	Вычислить LISP
+	Export Table	Экспорт таблицы
+	External Reference	Внешняя ссылка
+	External References	Внешние ссылки
+	From Template...	Из шаблона...
+	Get from the Drawing	Взять из чертёжа
+	Grid snap	Шаговая привязка к сетке
+	Grip Edit	Редактирование ручками
+	Grip Option	Параметр ручки
+	Group Options	Параметры группы
+	Group Selection	Выбор группы
+	Hatch Patterns	Образцы штриховки
+	History	Журнал
+	Align Multileaders	Выровнять мультивыноски
+	Collect	Собрать
+	Collect Multileaders	Собрать мультивыноски
+	Edit Multileader	Редактировать мультивыноску
+	Infer Constraints	Выводить ограничения
+	Insert tab	Вставить табуляцию
+	Insert Table Formula	Вставить формулу таблицы
+	Inspection	Контроль
+	Jogged	С изломом
+	Jogged Linear	Линейный с изломом
+	Isometric Plane	Изометрическая плоскость
+	Isometric snap	Изометрическая привязка
+	Hide Palette	Скрыть палитру
+	Lines of Command History	Строки журнала команд
+	Lock viewport	Блокировать видовой экран
+	Named Views...	Именованные виды...
+	New from Template...	Создать из шаблона...
+	Next Change	Следующее изменение
+	Numbered list	Нумерованный список
+	Object Snap Tracking Settings	Параметры отслеживания объектной привязки
+	Oblique	Наклон
+	Only in this drawing: {n}	Только в этом чертёже: {n}
+	Only in {name}: {n}	Только в {name}: {n}
+	Clear Recent Files	Очистить список недавних файлов
+	Over-constrained	Избыточные ограничения
+	Paste to Command Line	Вставить в командную строку
+	Plot Window	Печать рамки
+	Plotter Manager	Диспетчер плоттеров
+	Plotter Manager...	Диспетчер плоттеров...
+	Polar angle measurement	Измерение полярного угла
+	Polar distance	Полярное расстояние
+	PolarSnap	Полярная привязка
+	Polyline Edit	Редактировать полилинию
+	Previous Change	Предыдущее изменение
+	QuickCalc Pick	Указать для калькулятора
+	Recent Commands	Недавние команды
+	Recent Input	Недавний ввод
+	Recalculate Table Formulas	Пересчитать формулы таблицы
+	Rectangular snap	Прямоугольная привязка
+	Reinitialize	Переинициализировать
+	Relative to last segment	Относительно последнего сегмента
+	Select Similar	Выбрать похожие
+	Set Current Viewport	Сделать видовой экран текущим
+	Set Table Cell Style	Задать стиль ячейки таблицы
+	Show and hide the tools of this category	Показать и скрыть инструменты этой категории
+	Show in Tool Sets	Показать в наборах инструментов
+	Show command prompting near the crosshairs	Показывать подсказки команд у перекрестья
+	Snap Overrides	Переопределения привязки
+	Snap type	Тип привязки
+	A drawing opened from a file keeps that file's format.	Чертёж, открытый из файла, сохраняет формат этого файла.
+	An array that would create more objects than this is refused.	Массив, который создал бы больше объектов, чем это значение, отклоняется.
+	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	CADCraft сохраняет эти настройки, режимы объектной привязки и переключатели черчения в вашей учётной записи и восстанавливает их при запуске.
+	Changes apply at once and are kept for next time.	Изменения применяются сразу и сохраняются на следующий раз.
+	Command line history	Журнал командной строки
+	Copy as JSON	Копировать как JSON
+	Crosshair size	Размер перекрестья
+	Crossing selection color:	Цвет секущей рамки:
+	Exclude:	Исключить:
+	Grip size	Размер ручек
+	Grips	Ручки
+	Groups	Группы
+	Hatches	Штриховки
+	Hold Shift to add to the selection	Удерживайте Shift, чтобы добавить к выделению
+	Indicate selection area	Показывать область выбора
+	Interface language	Язык интерфейса
+	Interface theme	Тема интерфейса
+	Keep the system cursor visible over the drawing area	Оставлять системный курсор видимым над областью чертёжа
+	Largest array	Наибольший массив
+	Layout paper	Бумага листа
+	Model background	Фон модели
+	Multiline text	Многострочный текст
+	Object grouping	Группирование объектов
+	Object selection limit for display of grips	Предел числа объектов для отображения ручек
+	Object snap aperture	Прицел объектной привязки
+	Object snap marker size	Размер маркера объектной привязки
+	Objects on locked layers	Объекты на заблокированных слоях
+	Open and Save	Открытие и сохранение
+	Options...	Параметры...
+	Pickbox size	Размер прицела выбора
+	Profiles	Профили
+	Reset keeps the interface language.	Сброс сохраняет язык интерфейса.
+	Reset to Defaults	Сбросить к значениям по умолчанию
+	Save new drawings as	Сохранять новые чертёжи как
+	Screen magnifiers, screen readers and recorders follow the system cursor.	Экранные лупы, программы чтения с экрана и средства записи следуют за системным курсором.
+	Select objects first, then choose a command	Сначала выберите объекты, затем команду
+	Selection Area Effect	Эффект области выбора
+	Selection Preview Filter	Фильтр предварительного просмотра выбора
+	Selection area opacity:	Непрозрачность области выбора:
+	Selection effect color	Цвет эффекта выбора
+	Selection modes	Режимы выбора
+	Selection preview	Предварительный просмотр выбора
+	Settings...	Параметры...
+	Show Quick Properties for selected objects	Показывать быстрые свойства выбранных объектов
+	Show grips	Показывать ручки
+	Snap, grid, polar tracking and Dynamic Input:	Привязка, сетка, полярное отслеживание и динамический ввод:
+	Tables	Таблицы
+	The aperture is how near the cursor must come to a point for an object snap to find it.	Прицел — это расстояние, на котором курсор должен подойти к точке, чтобы сработала объектная привязка.
+	User Preferences	Пользовательские настройки
+	Visual Effect Settings	Параметры визуальных эффектов
+	Visual Effect Settings...	Параметры визуальных эффектов...
+	When a command is active	Когда команда активна
+	When no command is active	Когда команда не активна
+	Window selection color:	Цвет рамки выбора:
+	Xrefs	Внешние ссылки
+	objects	объектов
+	Spline Edit	Редактировать сплайн
+	To	До
+	Table Breaks	Разрывы таблицы
+	Table Cell Style	Стиль ячейки таблицы
+	Temporary track point	Временная точка отслеживания
+	Thaw Layer	Разморозить слой
+	Track orthogonally only	Отслеживать только ортогонально
+	Track using all polar angle settings	Отслеживать по всем полярным углам
+	Turn On Layer	Включить слой
+	Units Conversion	Преобразование единиц
+	Unlock viewport	Разблокировать видовой экран
+	Update Data Links	Обновить связи с данными
+	Variables	Переменные
+	Version 2000	Версия 2000
+	Version 2004	Версия 2004
+	Version 2007	Версия 2007
+	Version 2010	Версия 2010
+	Version 2013	Версия 2013
+	Version 2018	Версия 2018
+	Viewport is locked	Видовой экран заблокирован
+	Viewport scale	Масштаб видового экрана
+	Zoom Dynamic	Показать динамически
+	Zoom Realtime	Показать в реальном времени
+	Annotative Object Scale	Масштаб аннотативного объекта
+	Add Current Scale	Добавить текущий масштаб
+	Delete Current Scale	Удалить текущий масштаб
+	Add/Delete Scales...	Добавить/удалить масштабы...
+	Synchronize Multiple-scale Positions	Синхронизировать положения при нескольких масштабах
+	Annotative Update	Обновить аннотативные объекты
+	Drawing Recovery Manager...	Диспетчер восстановления чертёжей...
+	Tolerance...	Допуск...
+	Add Vertex	Добавить вершину
+	Remove Vertex	Удалить вершину
+	Convert to Arc	Преобразовать в дугу
+	Convert to Line	Преобразовать в отрезок
+	Stretch Vertex	Растянуть вершину
+	Edit Array	Редактировать массив
+	Close Array Editing	Завершить редактирование массива
+	Multiline...	Мультилиния...
+	Multiline Style...	Стиль мультилинии...
+	Solid Editing	Редактирование тел
+	3D Mouse...	3D-мышь...
+	3D Mouse	3D-мышь
+	Calibrate 3D Mouse	Калибровка 3D-мыши
+	3D Mouse Navigation	Навигация 3D-мышью
+	3D mouse input is unavailable on this platform	Ввод с 3D-мыши на этой платформе недоступен
+	No supported 3D mouse found	Поддерживаемая 3D-мышь не найдена
+	Release the 3D mouse to calibrate its resting position	Отпустите 3D-мышь, чтобы откалибровать положение покоя
+	3D mouse connected	3D-мышь подключена
+	3D mouse busy, possibly 3DxWare or missing device permissions	3D-мышь занята: возможно, запущена 3DxWare или нет прав на устройство
+	3D mouse disconnected	3D-мышь отключена
+	3D mouse input could not be started	Не удалось запустить ввод с 3D-мыши
+	Enable 3D mouse navigation	Включить навигацию 3D-мышью
+	Pan sensitivity	Чувствительность панорамирования
+	Zoom sensitivity	Чувствительность показа
+	Reverse zoom direction	Обратить направление показа
+	Calibrate	Калибровать
+	Move sideways to pan; push/pull or twist to zoom.	Двигайте в стороны для панорамирования; толкайте, тяните или поворачивайте для показа.
+	Left device button: zoom extents. Right device button: calibrate.	Левая кнопка устройства: показать границы. Правая кнопка: калибровка.
+	More toolbar commands	Другие команды панели
+	Default save version	Версия сохранения по умолчанию
+	Automatic save every	Автосохранение каждые
+	min	мин
+	Automatic save file location	Расположение файлов автосохранения
+	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Чертёжи без файла сохраняются в версии по умолчанию. 0 минут отключает автосохранение.
+	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Правый щелчок с учётом времени: короткий щелчок — Enter, удержание открывает меню
+	Turned off, a right-click while a command runs always opens the shortcut menu.	Если выключено, правый щелчок во время команды всегда открывает контекстное меню.
+	Run Script...	Выполнить скрипт...
+	Hatch Pick	Указать для штриховки
+	Hatch and Gradient	Штриховка и градиент
+	Color 1	Цвет 1
+	Color 2	Цвет 2
+	Shape	Форма
+	Curved	Криволинейная
+	Spherical	Сферическая
+	Hemispherical	Полусферическая
+	Inverted	Инвертированная
+	Centered	По центру
+	Hatch origin	Начало штриховки
+	Use current origin	Использовать текущее начало
+	Specified origin	Указанное начало
+	Click to set new origin	Щёлкните, чтобы задать новое начало
+	Default to boundary extents	По умолчанию по границам контура
+	Bottom left	Снизу слева
+	Bottom right	Снизу справа
+	Top left	Сверху слева
+	Top right	Сверху справа
+	Boundaries	Контуры
+	Add: Pick points	Добавить: указать точки
+	Add: Select objects	Добавить: выбрать объекты
+	Boundaries picked: {n}	Выбрано контуров: {n}
+	Associative	Ассоциативная
+	Create separate hatches	Создавать отдельные штриховки
+	Island detection	Обнаружение островков
+	Outer	Внешний
+	Ignore	Игнорировать
+	Origin: {x}, {y}	Начало: {x}, {y}
+	Dynamic Block Data	Данные динамического блока
+	Custom	Пользовательский
+	Dynamic Block Reference	Вхождение динамического блока
+	Set Dynamic Property	Задать динамическое свойство
+	Dynamic Block Grips	Ручки динамического блока
+	Drag Dynamic Grip	Перетащить динамическую ручку
+	Save Block	Сохранить блок
+	Save Block As	Сохранить блок как
+	Close Block Editor	Закрыть редактор блоков
+	Edit Block Definition	Редактировать описание блока
+	Block to create or edit	Блок для создания или редактирования
+	Open in Block Editor	Открыть в редакторе блоков
+	This drawing	Этот чертёж
+	contains authoring elements. Open in Block Editor?	содержит элементы разработки блока. Открыть в редакторе блоков?
+	New block	Новый блок
+	Italic	Курсив
+	Underline	Подчёркивание
+	Overline	Надчёркивание
+	Justify	Выравнивание
+	Text color	Цвет текста
+	Click the ruler to add a tab stop, right-click to remove one	Щёлкните линейку, чтобы добавить табуляцию; щёлкните правой кнопкой, чтобы удалить
+menu	Dimension	Размеры
+	(1, 2, 4, 8, 16, 32, 64, 128, or 256)	(1, 2, 4, 8, 16, 32, 64, 128 или 256)
+	<Offset>	<Смещение>
+	>> Expression	>> Выражение
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Заданное вами сочетание клавиш имеет приоритет над сочетанием CADCraft. Изменения применяются сразу и сохраняются на следующий раз.
+	Add…	Добавить…
+	Alias	Псевдоним
+	Alias file: {file}	Файл псевдонимов: {file}
+	Aliases are saved in your CADCraft profile and survive restarts.	Псевдонимы сохраняются в профиле CADCraft и остаются после перезапуска.
+	Analyze Usage	Анализ использования
+	Associate the hatch with the new boundary?	Связать штриховку с новым контуром?
+	Associative dimension priority	Приоритет ассоциативных размеров
+	Back to CADCraft's shortcut	Вернуть сочетание клавиш CADCraft
+	Backup copies are off, so the current file will be replaced.	Резервные копии выключены, поэтому текущий файл будет заменён.
+	Backup copy	Резервная копия
+	Break-line Symbol	Символ линии обрыва
+	Breakline extension distance	Выступ линии обрыва
+	Breakline symbol size	Размер символа линии обрыва
+	Bring to front	На передний план
+	Change	Изменить
+	Change Properties	Изменить свойства
+	Choose mode for selected object conversion	Выберите режим преобразования выбранных объектов
+	Choose the command the alias starts.	Выберите команду, которую запускает псевдоним.
+	Clip Xref	Обрезать xref
+	Combine collinear objects that meet end to end	Объединять коллинеарные объекты, стыкующиеся концами
+	Combine collinear objects that partially overlap	Объединять коллинеарные объекты с частичным наложением
+	Combine identical rows?	Объединить одинаковые строки?
+	Combine layer property changes into one undo step?	Объединять изменения свойств слоёв в один шаг отмены?
+	Combine text into a single MTEXT?	Объединить текст в один многострочный текст?
+	Combine zooms and pans into one undo step?	Объединять операции показа и панорамирования в один шаг отмены?
+	Command	Команда
+	Command Mode	Режим команды
+	Constant?	Постоянный?
+	Convert Lines and Arcs to polylines	Преобразовать отрезки и дуги в полилинии
+	Convert Text to Mtext	Преобразовать текст в многострочный
+	Create associative array	Создать ассоциативный массив
+	Create backup copy with each save	Создавать резервную копию при каждом сохранении
+	Customize	Адаптация
+	DView	DView
+	DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.	DXF 2010 и более ранние их сохраняют. Используйте «Сохранить как», чтобы оставить их в чертёже.
+	DXF keeps them. Use Save As to keep them in the drawing.	DXF их сохраняет. Используйте «Сохранить как», чтобы оставить их в чертёже.
+	Default Mode	Режим по умолчанию
+	Define each corner of the selection window with a separate click.	Задавайте каждый угол рамки выбора отдельным щелчком.
+	Delete old boundary(s)?	Удалить старые контуры?
+	Discard	Отбросить
+	Don't Save	Не сохранять
+	Drafting mode?	Режим черчения?
+	ENTER	ENTER
+	Edit Command Aliases (PGP)...	Редактировать псевдонимы команд (PGP)...
+	Edit Mode	Режим правки
+	Edit attributes one at a time?	Редактировать атрибуты по одному?
+	Edit only attributes visible on screen?	Редактировать только атрибуты, видимые на экране?
+	Edit path for which xref(s)	Изменить путь для каких xref
+	Edit…	Изменить…
+	Enter Trim mode option	Введите параметр режима обрезки
+	Enter UNDO Auto mode	Введите режим UNDO Auto
+	Enter X scale factor, specify opposite corner	Введите масштабный коэффициент X или укажите противоположный угол
+	Enter Y scale factor	Введите масштабный коэффициент Y
+	Enter a boundary loop number to remove (starting at 1)	Введите номер контура для удаления (начиная с 1)
+	Enter a configuration option	Введите параметр конфигурации
+	Enter a default viewport visibility option	Введите параметр видимости видовых экранов по умолчанию
+	Enter a group description	Введите описание группы
+	Enter a group name	Введите имя группы
+	Enter a group option	Введите параметр группы
+	Enter a hatch option	Введите параметр штриховки
+	Enter a loaded linetype name	Введите имя загруженного типа линии
+	Enter a name for the new plotter	Введите имя нового плоттера
+	Enter a new name for the group	Введите новое имя группы
+	Enter a plotter option	Введите параметр плоттера
+	Enter a plotting preference	Введите параметр печати
+	Enter a projection option	Введите параметр проекции
+	Enter a property to turn on or off	Введите свойство для включения или отключения
+	Enter a scale factor (nX or nXP)	Введите масштабный коэффициент (nX или nXP)
+	Enter a text edit mode option	Введите параметр режима редактирования текста
+	Enter an UNDO control option	Введите параметр управления UNDO
+	Enter an annotation option	Введите параметр аннотации
+	Enter an implied edge extension mode	Введите режим подразумеваемого удлинения кромок
+	Enter an option [Add/Remove] <Add>	Введите параметр [Add/Remove] <Add>
+	Enter an option to change	Введите параметр для изменения
+	Enter array type	Введите тип массива
+	Enter attribute tag	Введите тег атрибута
+	Enter attribute tag specification	Введите спецификацию тега атрибута
+	Enter attribute value specification	Введите спецификацию значения атрибута
+	Enter attribute visibility setting	Введите настройку видимости атрибута
+	Enter block name or select a block reference	Введите имя блока или выберите вхождение блока
+	Enter block name or select a block reference [?]	Введите имя блока или выберите вхождение блока [?]
+	Enter block name specification	Введите спецификацию имени блока
+	Enter block names to extract	Введите имена блоков для извлечения
+	Enter block(s) to list	Введите блоки для списка
+	Enter choice, 1 to 5	Введите выбор, от 1 до 5
+	Enter clipping option	Введите параметр подрезки
+	Enter color name or number (1-255)	Введите имя или номер цвета (1-255)
+	Enter column type	Введите тип столбца
+	Enter decimal places of accuracy (0 to 16)	Введите число знаков после запятой (0–16)
+	Enter distance between rows or specify unit cell (---)	Введите расстояние между рядами или укажите ячейку (---)
+	Enter file name	Введите имя файла
+	Enter first angle constraint	Введите первое угловое ограничение
+	Enter first line of annotation text or	Введите первую строку текста аннотации или
+	Enter first tolerance value	Введите первое значение допуска
+	Enter fit tolerance	Введите допуск аппроксимации
+	Enter fuzz distance	Введите допуск зазора
+	Enter geometric characteristic	Введите геометрическую характеристику
+	Enter group description	Введите описание группы
+	Enter group name	Введите имя группы
+	Enter group name(s) to list	Введите имя (имена) групп для списка
+	Enter inspection rate	Введите частоту контроля
+	Enter inspection shape	Введите форму контроля
+	Enter justification	Введите выравнивание
+	Enter knot parameterization	Введите параметризацию узлов
+	Enter label (press ENTER for none)	Введите метку (ENTER — без метки)
+	Enter layer description	Введите описание слоя
+	Enter layer name	Введите имя слоя
+	Enter layer name to make current	Введите имя слоя, который сделать текущим
+	Enter layer name(s) to change default viewport visibility	Введите имя (имена) слоёв для изменения видимости в видовых экранах по умолчанию
+	Enter layer name(s) to list	Введите имя (имена) слоёв для списка
+	Enter layer option for offset objects	Введите параметр слоя для объектов смещения
+	Enter layout name for copy	Введите имя листа для копии
+	Enter layout name(s) to list	Введите имя (имена) листов для списка
+	Enter layout option	Введите параметр листа
+	Enter layout to make current	Введите лист, который сделать текущим
+	Enter layout to rename	Введите лист для переименования
+	Enter layout to save to template	Введите лист для сохранения в шаблон
+	Enter leader format option	Введите параметр формата выноски
+	Enter line spacing factor or distance	Введите коэффициент или расстояние межстрочного интервала
+	Enter line spacing type	Введите тип межстрочного интервала
+	Enter linetype(s) to load	Введите тип (типы) линий для загрузки
+	Enter lineweight (0.0mm - 2.11mm)	Введите вес линии (0.0mm - 2.11mm)
+	Enter magnification or height	Введите увеличение или высоту
+	Enter maximum part height	Введите максимальную высоту детали
+	Enter mline editing option	Введите параметр редактирования мультилинии
+	Enter mline style name or [?]	Введите имя стиля мультилинии или [?]
+	Enter name for new layer (becomes the current layer)	Введите имя нового слоя (он станет текущим)
+	Enter name for new scale	Введите имя нового масштаба
+	Enter name for new viewport configuration	Введите имя новой конфигурации видовых экранов
+	Enter name list for new layer(s)	Введите список имен новых слоёв
+	Enter name of LISP file to load	Введите имя загружаемого файла LISP
+	Enter name of block to manage	Введите имя блока для управления
+	Enter name of block to sync	Введите имя блока для синхронизации
+	Enter name of breakline symbol block (. for the built-in symbol)	Введите имя блока символа линии обрыва (. — встроенный символ)
+	Enter name of drawing file to recover	Введите имя файла чертёжа для восстановления
+	Enter name of existing block	Введите имя существующего блока
+	Enter name of layout to copy	Введите имя копируемого листа
+	Enter name of layout to delete	Введите имя удаляемого листа
+	Enter name of linetype file	Введите имя файла типов линий
+	Enter name of new layout	Введите имя нового листа
+	Enter name of output file	Введите имя выходного файла
+	Enter name of scale to delete	Введите имя удаляемого масштаба
+	Enter name of script file	Введите имя файла скрипта
+	Enter name of viewport configuration to restore	Введите имя восстанавливаемой конфигурации видовых экранов
+	Enter name(s) of new layers frozen in all viewports	Введите имя (имена) новых слоёв, замороженных во всех видовых экранах
+	Enter name(s) of viewport configurations to delete	Введите имя (имена) удаляемых конфигураций видовых экранов
+	Enter name(s) of viewport configurations to list	Введите имя (имена) конфигураций видовых экранов для списка
+	Enter name(s) to purge	Введите имя (имена) для очистки
+	Enter named scale to add	Введите именованный масштаб для добавления
+	Enter named scale to delete	Введите именованный масштаб для удаления
+	Enter new attribute value	Введите новое значение атрибута
+	Enter new color	Введите новый цвет
+	Enter new default value	Введите новое значение по умолчанию
+	Enter new dimension text	Введите новый размерный текст
+	Enter new group name	Введите новое имя группы
+	Enter new layer name	Введите новое имя слоя
+	Enter new layout name	Введите новое имя листа
+	Enter new linetype name	Введите новое имя типа линии
+	Enter new linetype scale factor	Введите новый масштабный коэффициент типа линии
+	Enter new lineweight	Введите новый вес линии
+	Enter new order	Введите новый порядок
+	Enter new prompt	Введите новую подсказку
+	Enter new string	Введите новую строку
+	Enter new tag	Введите новый тег
+	Enter new text style	Введите новый текстовый стиль
+	Enter new value for CONSTRAINTINFER	Введите новое значение CONSTRAINTINFER
+	Enter new value for PICKSTYLE	Введите новое значение PICKSTYLE
+	Enter new value for THICKNESS	Введите новое значение THICKNESS
+	Enter new value for XCLIPFRAME	Введите новое значение XCLIPFRAME
+	Enter next line of annotation text	Введите следующую строку текста аннотации
+	Enter next line of text (empty line to finish)	Введите следующую строку текста (пустая строка — завершить)
+	Enter number of actions	Введите количество действий
+	Enter number of columns (|||)	Введите количество столбцов (|||)
+	Enter number of digits to right of decimal point (0 to 8)	Введите число знаков после десятичной точки (0–8)
+	Enter number of fractional places for display of angles (0 to 8)	Введите число дробных знаков для отображения углов (0–8)
+	Enter number of items in array	Введите количество элементов в массиве
+	Enter number of rows (---)	Введите количество рядов (---)
+	Enter object ordering option	Введите параметр порядка объектов
+	Enter object type to rename	Введите тип объекта для переименования
+	Enter obliquing angle (press ENTER for none)	Введите угол наклона (ENTER — без наклона)
+	Enter old group name	Введите старое имя группы
+	Enter old layer name	Введите старое имя слоя
+	Enter option	Введите параметр
+	Enter option [Save/Discard reference changes] <Save>	Введите параметр [Save/Discard reference changes] <Save>
+	Enter properties to match (SELECTSIMILARMODE bit code)	Введите совпадающие свойства (битовый код SELECTSIMILARMODE)
+	Enter property to change	Введите свойство для изменения
+	Enter scale ratio (paper units:drawing units)	Введите масштабное отношение (единицы листа:единицы чертёжа)
+	Enter second angle constraint	Введите второе угловое ограничение
+	Enter second tolerance value	Введите второе значение допуска
+	Enter spline creation method	Введите способ создания сплайна
+	Enter string to change	Введите заменяемую строку
+	Enter style name	Введите имя стиля
+	Enter symbol type to bind	Введите тип символа для внедрения
+	Enter target layer name	Введите имя целевого слоя
+	Enter template file name	Введите имя файла шаблона
+	Enter the distance between rows or specify unit cell (---)	Введите расстояние между рядами или укажите ячейку (---)
+	Enter the drawing to compare with (an open drawing's name or a file path)	Введите чертёж для сравнения (имя открытого чертёжа или путь к файлу)
+	Enter the maximum points for leader line	Введите максимальное число точек линии выноски
+	Enter the name of the block to replace	Введите имя заменяемого блока
+	Enter the number of columns	Введите количество столбцов
+	Enter the number of columns (|||)	Введите количество столбцов (|||)
+	Enter the number of items in the array	Введите количество элементов в массиве
+	Enter the number of levels	Введите количество уровней
+	Enter the number of operations to undo	Введите количество отменяемых операций
+	Enter the number of rows	Введите количество рядов
+	Enter the number of rows (---)	Введите количество рядов (---)
+	Enter the output	Введите вывод
+	Enter the paper name	Введите имя формата бумаги
+	Enter the paper width,height in mm	Введите ширину и высоту бумаги в мм
+	Enter the plotter to add a paper size to	Введите плоттер, к которому добавить формат бумаги
+	Enter the plotter to delete	Введите удаляемый плоттер
+	Enter the type of array	Введите тип массива
+	Enter tolerance location	Введите положение допуска
+	Enter transparency value	Введите значение прозрачности
+	Enter transparency value (0-90)	Введите значение прозрачности (0-90)
+	Enter trim method	Введите способ обрезки
+	Enter type of dimension editing	Введите тип редактирования размера
+	Enter type of unused objects to purge	Введите тип неиспользуемых объектов для очистки
+	Enter type of value modification	Введите тип изменения значения
+	Enter value	Введите значение
+	Enter variable name	Введите имя переменной
+	Enter view name to restore	Введите имя восстанавливаемого вида
+	Enter view name to save	Введите имя сохраняемого вида
+	Enter view name(s) to delete	Введите имя (имена) удаляемых видов
+	Enter view name(s) to list	Введите имя (имена) видов для списка
+	Enter viewport arrangement	Введите компоновку видовых экранов
+	Enter viewport configuration name	Введите имя конфигурации видовых экранов
+	Enter what to pick	Введите, что указывать
+	Enter xref(s) to list	Введите xref для списка
+	Erase source object after offsetting?	Стереть исходный объект после смещения?
+	Explode Attributes to Text	Расчленить атрибуты в текст
+	Export Comparison	Экспорт сравнения
+	Express Tools	Экспресс-инструменты
+	First point of mid	Первая точка середины
+	First tracking point	Первая точка отслеживания
+	Fix any errors detected?	Исправить обнаруженные ошибки?
+	Font	Шрифт
+	Get from the drawing or [Point/Distance/Angle/Intersection]	Взять из чертёжа или [Point/Distance/Angle/Intersection]
+	Imperial (inches)	Британские (дюймы)
+	Implied Loops	Подразумеваемые контуры
+	Import and replace	Импортировать и заменить
+	Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.	Импорт: здесь нет диалога файла; выполните ALIASEDIT с содержимым файла в текстовом параметре.
+	Importing a file replaces your {n} aliases, and any changes not applied yet.	Импорт файла заменяет ваши псевдонимы ({n}) и все ещё не примененные изменения.
+	Import…	Импорт…
+	Indicate dimension point to add	Укажите добавляемую размерную точку
+	Indicate dimension point to remove	Укажите удаляемую размерную точку
+	Interface scale	Масштаб интерфейса
+	Internal error; press Enter to end the command	Внутренняя ошибка; нажмите Enter, чтобы завершить команду
+	Invisible?	Невидимый?
+	Island	Островок
+	Island detection style	Стиль обнаружения островков
+	Isometric plane?	Изометрическая плоскость?
+	Keep associative objects	Сохранять ассоциативные объекты
+	Keep my aliases	Оставить мои псевдонимы
+	Keyboard Shortcuts	Сочетания клавиш
+	Keyboard Shortcuts...	Сочетания клавиш...
+	Lock the view of viewports?	Блокировать вид видовых экранов?
+	Longer click duration:	Длительность длинного щелчка:
+	Measure angles clockwise?	Измерять углы по часовой стрелке?
+	Metric (millimetres)	Метрические (миллиметры)
+	More than {n} aliases.	Больше {n} псевдонимов.
+	Move/Copy/Rotate	Переместить/копировать/повернуть
+	Multiple Insert	Множественная вставка
+	Needs Ctrl, Alt or a function key	Нужны Ctrl, Alt или функциональная клавиша
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Команда «Создать» и первый чертёж при запуске используют эти единицы, если не задан шаблон по умолчанию (QNEWTEMPLATE).
+	New color	Новый цвет
+	Next point (Press ENTER to end tracking)	Следующая точка (ENTER — закончить отслеживание)
+	No alias file loaded. REINIT replaces these aliases with a file's.	Файл псевдонимов не загружен. REINIT заменяет эти псевдонимы псевдонимами из файла.
+	No mark: undo everything?	Нет метки: отменить все?
+	No objects selected and no command running:	Объекты не выбраны и команда не выполняется:
+	Number of objects to move	Количество перемещаемых объектов
+	Objects selected and no command running:	Объекты выбраны и команда не выполняется:
+	Optimize segments within polylines	Оптимизировать сегменты внутри полилиний
+	Pick a table cell	Укажите ячейку таблицы
+	Pick an internal point for the new boundary	Укажите внутреннюю точку для нового контура
+	Press the keys	Нажмите клавиши
+	Raster Images	Растровые изображения
+	Red, Green, Blue	Красный, зелёный, синий
+	Red,Green,Blue	Красный,зелёный,синий
+	Repeat last command	Повторить последнюю команду
+	Replaces the shortcut of {commands}	Заменяет сочетание клавиш для {commands}
+	Reset the scale list to the defaults?	Сбросить список масштабов к значениям по умолчанию?
+	Right-Click Customization	Адаптация правого щелчка
+	Right-Click Customization...	Адаптация правого щелчка...
+	Rotate arrayed items?	Поворачивать элементы массива?
+	Rotate arrayed objects?	Поворачивать объекты массива?
+	Run ALIASEDIT with the file's contents using its text parameter.	Выполните ALIASEDIT с содержимым файла в текстовом параметре.
+	Save Anyway	Все равно сохранить
+	Save Layout as Template	Сохранить лист как шаблон
+	Save alias	Сохранить псевдоним
+	Save cancelled: {path} was not changed.	Сохранение отменено: {path} не изменён.
+	Save changes to array?	Сохранить изменения массива?
+	Save changes to block "{name}"?	Сохранить изменения блока «{name}»?
+	Save changes to {name}?	Сохранить изменения в {name}?
+	Save layer settings with views?	Сохранять настройки слоёв вместе с видами?
+	Saving {name} will remove content	Сохранение {name} удалит содержимое
+	Second point of mid	Вторая точка середины
+	Select a block	Выберите блок
+	Select a block reference	Выберите вхождение блока
+	Select a content type	Выберите тип содержимого
+	Select a leader type	Выберите тип выноски
+	Select a multileader	Выберите мультивыноску
+	Select a table	Выберите таблицу
+	Select a viewport	Выберите видовой экран
+	Select an item in array to replace	Выберите элемент массива для замены
+	Select an object to copy	Выберите объект для копирования
+	Select array	Выберите массив
+	Select attributes	Выберите атрибуты
+	Select base dimension	Выберите базовый размер
+	Select base point of replacement objects	Выберите базовую точку заменяющих объектов
+	Select block reference	Выберите вхождение блока
+	Select boundaries to remove	Выберите удаляемые контуры
+	Select boundary objects (Enter finds them)	Выберите объекты контура (Enter найдет их)
+	Select clipping object	Выберите объект подрезки
+	Select closed boundary objects to add	Выберите добавляемые замкнутые объекты контура
+	Select destination object(s)	Выберите целевые объекты
+	Select dimension	Выберите размер
+	Select dimension to add jog	Выберите размер для добавления излома
+	Select dimension to add/remove break	Выберите размер для добавления или удаления разрыва
+	Select dimensions to space	Выберите размеры для расстановки
+	Select first mline	Выберите первую мультилинию
+	Select grip to edit array	Выберите ручку для редактирования массива
+	Select group	Выберите группу
+	Select hatch object	Выберите штриховку
+	Select item in array	Выберите элемент массива
+	Select jog to remove	Выберите излом для удаления
+	Select mline	Выберите мультилинию
+	Select multileader to align to or [Options]	Выберите мультивыноску для выравнивания или [Options]
+	Select new datum point	Выберите новую базовую точку
+	Select object on target layer	Выберите объект на целевом слое
+	Select object to break dimension	Выберите объект для разрыва размера
+	Select object to clip viewport	Выберите объект для подрезки видового экрана
+	Select object to count or [List/Spaces]	Выберите объект для подсчёта или [List/Spaces]
+	Select objects or	Выберите объекты или
+	Select objects to add to the group	Выберите объекты для добавления в группу
+	Select objects to erase or	Выберите объекты для стирания или
+	Select objects to remove from the group	Выберите объекты для удаления из группы
+	Select reference objects	Выберите объекты ссылки
+	Select replacement objects	Выберите заменяющие объекты
+	Select second mline	Выберите вторую мультилинию
+	Select source object	Выберите исходный объект
+	Select using two clicks only	Выбирать только двумя щелчками
+	Select viewport to clip	Выберите подрезаемый видовой экран
+	Select viewports	Выберите видовые экраны
+	Shortcut Menu	Контекстное меню
+	Shortcut Menu: always enabled	Контекстное меню: всегда включено
+	Shortcut Menu: enabled when command options are present	Контекстное меню: включено, когда есть параметры команды
+	Sort text top-down?	Сортировать текст сверху вниз?
+	Specify X scale factor	Укажите масштабный коэффициент X
+	Specify Z scale factor or	Укажите масштабный коэффициент Z или
+	Specify a fit tolerance	Укажите допуск аппроксимации
+	Specify a point on the spline <exit>	Укажите точку на сплайне <exit>
+	Specify a precision	Укажите точность
+	Specify angle for dimension text	Укажите угол размерного текста
+	Specify base point of objects	Укажите базовую точку объектов
+	Specify block attachment	Укажите привязку блока
+	Specify center location override	Укажите переопределение положения центра
+	Specify center of isocircle	Укажите центр изокруга
+	Specify center of view box	Укажите центр рамки вида
+	Specify chamfer angle from the first line	Укажите угол фаски от первого отрезка
+	Specify chamfer length on the first line	Укажите длину фаски на первом отрезке
+	Specify change point	Укажите точку изменения
+	Specify clipping boundary or select invert option	Укажите контур подрезки или выберите инверсию
+	Specify collected multileader location or [Vertical/Horizontal/Wrap]	Укажите положение собранных мультивыносок или [Vertical/Horizontal/Wrap]
+	Specify column height	Укажите высоту столбца
+	Specify control point <exit>	Укажите управляющую точку <exit>
+	Specify diameter of isocircle	Укажите диаметр изокруга
+	Specify dimension line position	Укажите положение размерной линии
+	Specify direction	Укажите направление
+	Specify direction (first point)	Укажите направление (первая точка)
+	Specify direction (second point)	Укажите направление (вторая точка)
+	Specify direction of chord for arc	Укажите направление хорды дуги
+	Specify direction of vertex tangent	Укажите направление касательной в вершине
+	Specify displacement	Укажите смещение
+	Specify displacement base point	Укажите базовую точку смещения
+	Specify distance between columns (|||)	Укажите расстояние между столбцами (|||)
+	Specify end tangent	Укажите конечную касательную
+	Specify endpoint of the arc	Укажите конечную точку дуги
+	Specify existing fit point <exit>	Укажите существующую точку аппроксимации <exit>
+	Specify first break point	Укажите первую точку разрыва
+	Specify first corner of the unit cell	Укажите первый угол ячейки
+	Specify first fence point	Укажите первую точку секущей линии
+	Specify first point for arc length dimension	Укажите первую точку размера длины дуги
+	Specify first point for breakline	Укажите первую точку линии обрыва
+	Specify first point or [Options]	Укажите первую точку или [Options]
+	Specify fourth point or	Укажите четвёртую точку или
+	Specify gutter width	Укажите ширину промежутка
+	Specify included angle for arc	Укажите центральный угол дуги
+	Specify insertion point of the table	Укажите точку вставки таблицы
+	Specify jog location	Укажите положение излома
+	Specify jog location (or press ENTER)	Укажите положение излома (или нажмите ENTER)
+	Specify leader arrowhead location or [Remove leaders]	Укажите положение стрелки выноски или [Remove leaders]
+	Specify leader start point	Укажите начальную точку выноски
+	Specify leaders to remove	Укажите удаляемые выноски
+	Specify leaders to remove or [Add leaders]	Укажите удаляемые выноски или [Add leaders]
+	Specify length of line	Укажите длину отрезка
+	Specify linetype name	Укажите имя типа линии
+	Specify location for break symbol	Укажите положение символа обрыва
+	Specify location of the text	Укажите положение текста
+	Specify new angle	Укажите новый угол
+	Specify new block insertion point	Укажите новую точку вставки блока
+	Specify new block rotation angle	Укажите новый угол поворота блока
+	Specify new circle radius	Укажите новый радиус окружности
+	Specify new elevation	Укажите новую отметку
+	Specify new fit point <exit>	Укажите новую точку аппроксимации <exit>
+	Specify new height	Укажите новую высоту
+	Specify new length	Укажите новую длину
+	Specify new linetype scale	Укажите новый масштаб типа линии
+	Specify new location	Укажите новое положение
+	Specify new location for dimension text	Укажите новое положение размерного текста
+	Specify new point on spline <exit>	Укажите новую точку на сплайне <exit>
+	Specify new rotation angle	Укажите новый угол поворота
+	Specify new text insertion point	Укажите новую точку вставки текста
+	Specify new thickness	Укажите новую толщину
+	Specify next fence point	Укажите следующую точку секущей линии
+	Specify number of columns	Укажите количество столбцов
+	Specify other corner	Укажите другой угол
+	Specify quadrant	Укажите квадрант
+	Specify radius of isocircle	Укажите радиус изокруга
+	Specify reference angle	Укажите исходный угол
+	Specify reference length	Укажите исходную длину
+	Specify rotation around major axis	Укажите поворот вокруг большой оси
+	Specify scale factor for XYZ axes	Укажите масштабный коэффициент по осям XYZ
+	Specify second point for arc length dimension	Укажите вторую точку размера длины дуги
+	Specify second point for breakline	Укажите вторую точку линии обрыва
+	Specify second point on arc	Укажите вторую точку на дуге
+	Specify size of view box	Укажите размер рамки вида
+	Specify spacing	Укажите интервал
+	Specify start tangent	Укажите начальную касательную
+	Specify temporary OTRACK point	Укажите временную точку отслеживания
+	Specify text height	Укажите высоту текста
+	Specify the angle between items	Укажите угол между элементами
+	Specify the angle to fill (+=ccw, -=cw)	Укажите угол заполнения (+=против часовой, -=по часовой)
+	Specify the distance between columns (|||)	Укажите расстояние между столбцами (|||)
+	Specify the incrementing elevation between rows	Укажите приращение отметки между рядами
+	Specify the new angle	Укажите новый угол
+	Specify the pattern origin	Укажите начало образца
+	Specify the reference angle	Укажите исходный угол
+	Specify the tangent direction for the start point of arc	Укажите направление касательной в начальной точке дуги
+	Specify third point	Укажите третью точку
+	Specify tolerance	Укажите допуск
+	Specify view twist angle	Укажите угол поворота вида
+	Specify width	Укажите ширину
+	Specify zoom scale factor	Укажите масштабный коэффициент показа
+	The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.	Текущий файл выглядит неполным, поэтому {name} остаётся без изменений, а текущий файл будет заменён.
+	The current file is kept as {name} until the next save.	Текущий файл сохраняется как {name} до следующего сохранения.
+	This format can't keep these objects yet: {objects}.	Этот формат пока не может сохранить такие объекты: {objects}.
+	Turn on time-sensitive right-click	Включить правый щелчок с учётом времени
+	Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode.	Если выключено, правый щелчок во время команды выполняет то, что задано в адаптации правого щелчка для режима команды.
+	Type an alias name.	Введите имя псевдонима.
+	Type of boundary object	Тип объекта контура
+	Type something to find	Введите текст для поиска
+	Units of new drawings	Единицы новых чертёжей
+	Use landing	Использовать полку
+	Verify each name to be purged?	Подтверждать каждое очищаемое имя?
+	Where should the data go?	Куда поместить данные?
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	Пока выполняется команда, короткий щелчок — это Enter, а более длинный открывает контекстное меню.
+	While a command runs:	Пока выполняется команда:
+	Word-wrap text?	Переносить текст по словам?
+	Xref	Xref
+	Xref Clip Frame	Рамка подрезки xref
+	Your changes will be lost if you don't save them.	Если не сохранить, изменения будут потеряны.
+	built-in	встроенный
+	milliseconds	мс
+	overrides built-in	переопределяет встроенный
+	{alias} is already defined; select it and use Edit.	{alias} уже определён; выберите его и используйте «Изменить».
+	{command} is an unknown command.	{command} — неизвестная команда.
+	{count} more types	Ещё типов: {count}
+	{n} more warnings; see the command line.	Ещё предупреждений: {n}; см. командную строку.
+	Remove objects	Удалить объекты
+	Select geometry to dimension	Выберите геометрию для нанесения размера
+	Select annotative objects	Выберите аннотативные объекты
+	Specify total width	Укажите общую ширину
+	Specify column width	Укажите ширину столбца
+	Specify fit point	Укажите точку аппроксимации
+	Specify control point	Укажите управляющую точку
+	Arrow size	Размер стрелки
+	Dim scale overall	Общий масштаб размеров
+	Close {panel}	Закрыть {panel}
+	Close panel	Закрыть панель
+	AutoLISP (LSP)	AutoLISP (LSP)
+	Menu Bar	Строка меню
+	3 Point	3 точки
+	UCS	ПСК
+	UCS Icon at Origin	Значок ПСК в начале
+	Z	Z
+	Unnamed	Безымянный
+	Alias files (PGP)	Файлы псевдонимов (PGP)
+	Overrides the dimension style. Right-click to use the style's value.	Переопределяет размерный стиль. Щёлкните правой кнопкой, чтобы взять значение стиля.
+	Use the style's value	Использовать значение стиля
+	Set by text style "{style}", which has a fixed height. Give the style a height of 0 to use the dimension text height.	Задается текстовым стилем «{style}» с фиксированной высотой. Задайте высоту стиля 0, чтобы использовать высоту размерного текста.
+	Some of these dimensions take their text height from a fixed-height text style.	У части этих размеров высота текста берется из текстового стиля с фиксированной высотой.
+	{property}: that value can't be used here.	{property}: это значение здесь нельзя использовать.
+	Misc	Разное
+	Lines & Arrows	Линии и стрелки
+	Primary Units	Основные единицы
+	Alternate Units	Альтернативные единицы
+	Tolerances	Допуски
+	Style	Стиль
+	Justification	Выравнивание
+	Obliquing	Наклон
+	Text alignment X	Выравнивание текста X
+	Text alignment Y	Выравнивание текста Y
+	Columns	Столбцы
+	Line space factor	Коэффициент межстрочного интервала
+	Line space distance	Расстояние межстрочного интервала
+	Line space style	Стиль межстрочного интервала
+	At least	Не менее
+	Exactly	Точно
+	Middle	Посередине
+	Top center	Сверху по центру
+	Middle left	Посередине слева
+	Middle center	Посередине по центру
+	Middle right	Посередине справа
+	Bottom center	Снизу по центру
+	Top	Сверху
+	Arrow 1	Стрелка 1
+	Arrow 2	Стрелка 2
+	Tick size	Размер засечки
+	Dim line color	Цвет размерной линии
+	Dim line linetype	Тип размерной линии
+	Dim line lineweight	Вес размерной линии
+	Dim line ext	Выступ размерной линии
+	Hide dim line 1	Скрыть размерную линию 1
+	Hide dim line 2	Скрыть размерную линию 2
+	Ext line color	Цвет выносной линии
+	Ext line 1 linetype	Тип выносной линии 1
+	Ext line 2 linetype	Тип выносной линии 2
+	Ext line lineweight	Вес выносной линии
+	Ext line ext	Выступ выносной линии
+	Ext line offset	Отступ выносной линии
+	Ext line fixed	Фиксированная выносная линия
+	Ext line length	Длина выносной линии
+	Hide ext line 1	Скрыть выносную линию 1
+	Hide ext line 2	Скрыть выносную линию 2
+	Center mark size	Размер знака центра
+	Jog angle	Угол излома
+	Arc length symbol	Символ длины дуги
+	Before text	Перед текстом
+	Above text	Над текстом
+	Text offset	Отступ текста
+	Text outside align	Выравнивание текста снаружи
+	Text pos hor	Положение текста по горизонтали
+	Text pos vert	Положение текста по вертикали
+	Text inside align	Выравнивание текста внутри
+	Text position X	Положение текста X
+	Text position Y	Положение текста Y
+	Text rotation	Поворот текста
+	Measurement	Измерение
+	At Ext Line 1	У выносной линии 1
+	At Ext Line 2	У выносной линии 2
+	Over Ext Line 1	Над выносной линией 1
+	Over Ext Line 2	Над выносной линией 2
+	Above	Над
+	Below	Под
+	Outside	Снаружи
+	JIS	JIS
+	Dim line forced	Принудительная размерная линия
+	Suppress arrows	Подавить стрелки
+	Text inside	Текст внутри
+	Text movement	Перемещение текста
+	Text and arrows	Текст и стрелки
+	Arrows	Стрелки
+	Best fit	По размеру
+	Keep dim line with text	Оставлять размерную линию с текстом
+	Move text, add leader	Переместить текст, добавить выноску
+	Move text, no leader	Переместить текст, без выноски
+	Decimal separator	Десятичный разделитель
+	Period	Точка
+	Comma	Запятая
+	Space	Пробел
+	Dim prefix	Префикс размера
+	Dim roundoff	Округление размера
+	Dim scale linear	Линейный масштаб размера
+	Dim suffix	Суффикс размера
+	Dim units	Единицы размера
+	Scientific	Научные
+	Decimal	Десятичные
+	Engineering	Инженерные
+	Architectural	Архитектурные
+	Fractional	Дробные
+	Windows desktop	Рабочий стол Windows
+	Architectural stacked	Архитектурные многоярусные
+	Fractional stacked	Дробные многоярусные
+	Fraction format	Формат дроби
+	Horizontal stacking	Горизонтальное многоярусное
+	Diagonal stacking	Диагональное многоярусное
+	Not stacked	В строку
+	Angle format	Формат угла
+	Decimal degrees	Десятичные градусы
+	Degrees Minutes Seconds	Градусы минуты секунды
+	Gradians	Грады
+	Radians	Радианы
+	Angle precision	Точность угла
+	Alt enabled	Альтернативные включены
+	Alt format	Альтернативный формат
+	Alt precision	Альтернативная точность
+	Alt scale factor	Альтернативный масштабный коэффициент
+	Alt round	Альтернативное округление
+	Alt prefix	Альтернативный префикс
+	Alt suffix	Альтернативный суффикс
+	Limits	Пределы
+	Upper tolerance	Верхнее отклонение
+	Lower tolerance	Нижнее отклонение
+	Tolerance precision	Точность допуска
+	Tolerance height	Высота допуска
+	Tolerance pos vert	Положение допуска по вертикали
+	Closed filled	Замкнутая залитая
+	Closed blank	Замкнутая пустая
+	Dot	Точка
+	Architectural tick	Архитектурная засечка
+	Open arrow	Открытая стрелка
+	Origin indicator	Индикатор начала
+	Origin indicator 2	Индикатор начала 2
+	Right angle	Прямой угол
+	Open 30	Открытая 30
+	Dot small	Малая точка
+	Dot blank	Пустая точка
+	Small	Малый
+	Box blank	Пустой квадрат
+	Box filled	Залитый квадрат
+	Datum triangle	Треугольник базы
+	Datum triangle filled	Залитый треугольник базы
+	Integral	Интеграл
+	Remove Style Overrides	Удалить переопределения стиля
+	Save as New Style...	Сохранить как новый стиль...
+	Dimension Style	Размерный стиль
+	Dimension Style Manager	Диспетчер размерных стилей
+	Current dimension style: {style}	Текущий размерный стиль: {style}
+	Styles	Стили
+	All styles	Все стили
+	Styles in use	Используемые стили
+	<style overrides>	<переопределения стиля>
+	Save to current style	Сохранить в текущий стиль
+	Preview of: {style}	Просмотр: {style}
+	Preview of: {style} (overrides)	Просмотр: {style} (переопределения)
+	New...	Новый...
+	Modify...	Изменить...
+	Override...	Переопределить...
+	Compare...	Сравнить...
+	Create New Dimension Style	Создать новый размерный стиль
+	New style name	Имя нового стиля
+	Start with	Начать с
+	A dimension style with this name already exists.	Размерный стиль с таким именем уже существует.
+	Modify Dimension Style: {style}	Изменить размерный стиль: {style}
+	Override Current Style: {style}	Переопределить текущий стиль: {style}
+	New Dimension Style: {style}	Новый размерный стиль: {style}
+	Lines	Линии
+	Symbols and Arrows	Символы и стрелки
+	Leading	Начальные
+	Trailing	Конечные
+	Compare Dimension Styles	Сравнить размерные стили
+	Compare	Сравнить
+	With	С
+	All properties of {style}	Все свойства {style}
+	{count} differences	Различий: {count}
+	Variable	Переменная
+	Dimension Style Overrides	Переопределения размерного стиля
+	Arrowheads	Наконечники стрелок
+	Leader arrow	Стрелка выноски
+	Baseline spacing	Интервал базовой линии
+	Text vertical position	Положение текста по вертикали
+	Prefix and suffix	Префикс и суффикс
+	Zero suppression	Подавление нулей
+	Angular zero suppression	Подавление угловых нулей
+	Alt prefix and suffix	Альтернативные префикс и суффикс
+	Alt zero suppression	Подавление альтернативных нулей
+	Tolerance zero suppression	Подавление нулей допуска
+	Layouts	Листы
+	Printer/plotter	Принтер/плоттер
+	Paper size	Формат бумаги
+	Orientation	Ориентация
+	Portrait	Книжная
+	Landscape	Альбомная
+	Plot area	Область печати
+	Fit to paper	Вписать в лист
+	Center the plot	Центрировать печать
+	Plot object lineweights	Печатать веса линий объектов
+	Plot transparency	Печатать прозрачность
+	Apply to Layout	Применить к листу
+	Plot offset	Смещение печати
+	X offset (mm)	Смещение X (мм)
+	Y offset (mm)	Смещение Y (мм)
+	First corner	Первый угол
+	Opposite corner	Противоположный угол
+	Window <	Рамка <
+	CADCraft	CADCraft
+	Associate	Связать
+	Drawing Units	Единицы чертёжа
+	Insertion scale	Масштаб вставки
+	Units to scale inserted content	Единицы для масштабирования вставляемого содержимого
+	Sample output	Образец вывода
+	Decimal Degrees	Десятичные градусы
+	Deg/Min/Sec	Град/мин/сек
+	Grads	Грады
+	Surveyor's Units	Топографические единицы
+	Unitless	Без единиц
+	Inches	Дюймы
+	Feet	Футы
+	Miles	Мили
+	Millimeters	Миллиметры
+	Centimeters	Сантиметры
+	Meters	Метры
+	Kilometers	Километры
+	Microinches	Микродюймы
+	Mils	Милы
+	Yards	Ярды
+	Angstroms	Ангстремы
+	Nanometers	Нанометры
+	Microns	Микроны
+	Decimeters	Дециметры
+	Decameters	Декаметры
+	Hectometers	Гектометры
+	Gigameters	Гигаметры
+	Astronomical Units	Астрономические единицы
+	Light Years	Световые годы
+	Parsecs	Парсеки
+	US Survey Feet	Геодезические футы США
+	US Survey Inch	Геодезический дюйм США
+	US Survey Yard	Геодезический ярд США
+	US Survey Mile	Геодезическая миля США
+	B	B
+	X	X
+	Y	Y
+menu	Draw	Рисование
+menu	Modify	Модификация
+menu	View	Вид

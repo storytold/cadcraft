@@ -2,10 +2,12 @@
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="image/vnd.dxf">
     <comment>DXF drawing</comment>
+    <comment xml:lang="ru">Чертёж DXF</comment>
     <glob pattern="*.dxf"/>
   </mime-type>
   <mime-type type="image/vnd.dwg">
     <comment>DWG drawing</comment>
+    <comment xml:lang="ru">Чертёж DWG</comment>
     <magic priority="50"><match type="string" value="AC10" offset="0"/></magic>
     <glob pattern="*.dwg"/>
   </mime-type>

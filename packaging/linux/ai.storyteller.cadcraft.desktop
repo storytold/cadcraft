@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=CADCraft
+Name[ru]=CADCraft
 GenericName=Computer-Aided Design
+GenericName[ru]=Система автоматизированного проектирования
 Comment=Draft, dimension and plot 2D drawings; open DXF and DWG files
+Comment[ru]=Черчение, простановка размеров и печать 2D-чертежей; открытие файлов DXF и DWG
 Exec=cadcraft %F
 TryExec=cadcraft
 Icon=ai.storyteller.cadcraft
@@ -12,3 +15,4 @@ StartupWMClass=ai.storyteller.cadcraft
 Categories=Graphics;Engineering;VectorGraphics;
 MimeType=image/vnd.dxf;image/vnd.dwg;application/x-dxf;application/acad;
 Keywords=cad;drafting;dxf;dwg;drawing;engineering;architecture;mechanical;
+Keywords[ru]=cad;сапр;черчение;чертёж;dxf;dwg;инженерия;архитектура;машиностроение;
