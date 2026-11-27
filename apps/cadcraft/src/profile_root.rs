@@ -189,7 +189,7 @@ fn entries_stay_inside(root: &Path) -> Result<(), String> {
         let metadata = std::fs::symlink_metadata(&path).map_err(|e| format!("cannot inspect the nightly profile: {e}"))?;
         // Settings and session state are ordinary files, not directories. Keep the existing
         // directory-boundary check for folders (including the known folder-only entries).
-        let folder_only = [AUTOSAVE, "logs", "support"].iter().any(|name| entry.file_name().eq_ignore_ascii_case(name));
+        let folder_only = PROFILE_FOLDERS.iter().any(|name| entry.file_name().eq_ignore_ascii_case(name));
         if metadata.is_file() && !folder_only {
             private_regular_file(&path, &metadata)?;
         } else {
@@ -210,23 +210,24 @@ fn private_regular_file(path: &Path, metadata: &std::fs::Metadata) -> Result<(),
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt as _;
         use winsafe::{HFILE, co};
-        if metadata.file_attributes() & 0x400 != 0 {
-            return Err("the nightly profile file must not be an alias".into());
-        }
         let (file, _) = HFILE::CreateFile(
             path.to_str().ok_or("the nightly profile file path is not textual")?,
-            co::GENERIC::READ,
+            co::GENERIC::default(),
             Some(co::FILE_SHARE::READ | co::FILE_SHARE::WRITE | co::FILE_SHARE::DELETE),
             None,
             co::DISPOSITION::OPEN_EXISTING,
-            Some(co::FILE_ATTRIBUTE::NORMAL),
+            co::FILE_ATTRIBUTE::NORMAL,
             Some(co::FILE_FLAG::OPEN_REPARSE_POINT),
+            None,
             None,
         )
         .map_err(|e| e.to_string())?;
-        if file.GetFileInformationByHandle().map_err(|e| e.to_string())?.nNumberOfLinks != 1 {
+        let info = file.GetFileInformationByHandle().map_err(|e| e.to_string())?;
+        if info.dwFileAttributes.has(co::FILE_ATTRIBUTE::REPARSE_POINT | co::FILE_ATTRIBUTE::DIRECTORY) {
+            return Err("the nightly profile file must not be an alias or directory".into());
+        }
+        if info.nNumberOfLinks != 1 {
             return Err("the nightly profile file must not be shared".into());
         }
     }
@@ -333,6 +334,8 @@ const EFRAME_APP_ID: &str = "ai.storyteller.cadcraft";
 
 /// The subfolder autosave and Drawing Recovery write ([`crate::main`], `<settings>/autosave`).
 pub const AUTOSAVE: &str = "autosave";
+
+const PROFILE_FOLDERS: [&str; 6] = [AUTOSAVE, "logs", "support", "single-instance", "plotters", "crash-reports"];
 
 #[cfg(test)]
 mod tests {
@@ -527,14 +530,19 @@ mod tests {
             for name in ["app.ron", "nightly-session.lock", "nightly-session.json"] {
                 std::fs::write(private.join(name), b"saved profile data").unwrap();
             }
-            for name in ["logs", "support", AUTOSAVE] {
+            for name in PROFILE_FOLDERS {
                 std::fs::create_dir(private.join(name)).unwrap();
             }
             assert_eq!(fixture.check(platform, &private).unwrap(), private);
             assert_eq!(std::fs::read(private.join("app.ron")).unwrap(), b"saved profile data");
-            std::fs::remove_dir(private.join(AUTOSAVE)).unwrap();
-            std::fs::write(private.join(AUTOSAVE), b"not a recovery folder").unwrap();
-            assert!(fixture.check(platform, &private).is_err());
+            for name in [AUTOSAVE, "logs", "support", "single-instance", "plotters", "crash-reports"] {
+                let path = private.join(name);
+                std::fs::remove_dir(&path).unwrap();
+                std::fs::write(&path, b"not a directory").unwrap();
+                assert!(fixture.check(platform, &private).is_err(), "{name} must stay a directory");
+                std::fs::remove_file(&path).unwrap();
+                std::fs::create_dir(&path).unwrap();
+            }
         }
     }
 
