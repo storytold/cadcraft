@@ -19,8 +19,8 @@
 	Reference Manager	Trình quản lý tham chiếu
 	Reference Name	Tên tham chiếu
 	References: {n}	Tham chiếu: {n}
-	Reload	Tải lại
-	Reload All	Tải lại tất cả
+	Reload	Nạp lại
+	Reload All	Nạp lại tất cả
 	Saved Path	Đường dẫn đã lưu
 	Unload	Bỏ nạp
 	Unloaded	Đã bỏ nạp
@@ -74,7 +74,7 @@
 	Arc Length	Chiều dài cung
 	Area	Diện tích
 	Arrange Panel	Sắp xếp bảng
-	Array	Sao chép theo dãy
+	Array	Mảng
 	Attach	Đính kèm
 	Attribute	Attribute
 	Attribute Definition	Định nghĩa attribute
@@ -86,7 +86,7 @@
 	Axis, End	Trục, Điểm cuối
 	Base	Gốc
 	Baseline	Đường cơ sở
-	Batch Publish	Xuất bản hàng loạt
+	Batch Publish	In/xuất hàng loạt
 	Binary assets added	Đã thêm tài nguyên nhị phân
 	Binary assets removed	Đã xóa tài nguyên nhị phân
 	Bind...	Gắn kết...
@@ -101,8 +101,8 @@
 	Blue	Xanh dương
 	Bold	Đậm
 	Boolean	Boolean
-	Boundary	Biên
-	Boundary...	Biên...
+	Boundary	Đường bao
+	Boundary...	Đường bao...
 	Box	Hộp
 	Break	Ngắt
 	Break At Point	Ngắt tại điểm
@@ -157,7 +157,7 @@
 	Clear Command History	Xóa lịch sử lệnh
 	Command Line	Dòng lệnh
 	Command Line History Lines	Số dòng lịch sử dòng lệnh
-	Command Reference	Tham chiếu lệnh
+	Command Reference	Tra cứu lệnh
 	Commits	Commit
 	Company	Công ty
 	Compare Drawings...	So sánh bản vẽ...
@@ -350,9 +350,9 @@
 	Freeze	Đóng băng
 	Freeze Layer	Đóng băng layer
 	Freeze in new viewports	Đóng băng trong khung nhìn mới
-	Freeze/Thaw	Đóng băng/Tan băng
-	Freeze/Thaw in all viewports	Đóng băng/Tan băng trong tất cả khung nhìn
-	Freeze/Thaw in the current viewport	Đóng băng/Tan băng trong khung nhìn hiện hành
+	Freeze/Thaw	Đóng băng/Bỏ đóng băng
+	Freeze/Thaw in all viewports	Đóng băng/Bỏ đóng băng trong tất cả khung nhìn
+	Freeze/Thaw in the current viewport	Đóng băng/Bỏ đóng băng trong khung nhìn hiện hành
 	From	Từ
 	From Template...	Từ mẫu...
 	General	Chung
@@ -494,9 +494,9 @@
 	List Layouts	Liệt kê layout
 	List System Variables	Liệt kê biến hệ thống
 	List Text Styles	Liệt kê kiểu chữ
-	Load all	Tải tất cả
-	Load...	Tải...
-	Loaded linetypes	Loại nét đã tải
+	Load all	Nạp tất cả
+	Load...	Nạp...
+	Loaded linetypes	Loại nét đã nạp
 	Lock	Khóa
 	Lock Layer	Khóa layer
 	Lock viewport	Khóa khung nhìn
@@ -505,7 +505,7 @@
 	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OR Apache-2.0. Không liên kết với Autodesk, Inc.
 	MODEL	MODEL
 	MText	Chữ nhiều dòng
-	Magenta	Magenta
+	Magenta	Đỏ tươi
 	Major line every	Đường chính mỗi
 	Make Current	Đặt làm hiện hành
 	Make Object's Layer Current	Đặt layer của đối tượng làm hiện hành
@@ -617,6 +617,7 @@
 	Parameters Manager	Trình quản lý tham số
 	Parametric	Tham số
 	Paste	Dán
+	Paste Table	Dán bảng
 	Paste as Block	Dán thành block
 	Paste to Command Line	Dán vào dòng lệnh
 	Paste to Original Coordinates	Dán theo tọa độ gốc
@@ -804,10 +805,10 @@
 	Select first line or arc	Chọn đoạn thẳng hoặc cung tròn thứ nhất
 	Select first object	Chọn đối tượng thứ nhất
 	Select first point	Chọn điểm thứ nhất
-	Add to Working Set	Thêm vào Working Set
+	Add to Working Set	Thêm vào tập làm việc
 	Edit Reference In-Place	Chỉnh sửa tham chiếu tại chỗ
 	Save Reference Edits	Lưu chỉnh sửa tham chiếu
-	Working Set	Working Set
+	Working Set	Tập làm việc
 	Xref and Block In-place Editing	Chỉnh sửa Xref và Block tại chỗ
 	Select nested objects to copy	Chọn đối tượng lồng nhau để sao chép
 	Select object	Chọn đối tượng
@@ -1074,10 +1075,10 @@
 	Text Height	Chiều cao chữ
 	Text Style...	Kiểu chữ...
 	Text height	Chiều cao chữ
-	Text override	Chữ đè
+	Text override	Ghi đè chữ
 	Text style	Kiểu chữ
-	Thaw All Layers	Tan băng tất cả layer
-	Thaw Layer	Tan băng layer
+	Thaw All Layers	Bỏ đóng băng tất cả layer
+	Thaw Layer	Bỏ đóng băng layer
 	There is nothing here yet.	Chưa có gì ở đây.
 	Thickness	Độ dày
 	Time	Thời gian
@@ -1182,11 +1183,11 @@
 	Hide Others	Ẩn các ứng dụng khác
 	Accessibility	Trợ năng
 	Show System Cursor	Hiển thị con trỏ hệ thống
-	Animation Effects	Hiệu ứng hoạt hình
-	Animation effects	Hiệu ứng hoạt hình
+	Animation Effects	Hiệu ứng chuyển động
+	Animation effects	Hiệu ứng chuyển động
 	Import...	Nhập...
 	Export...	Xuất...
-	Batch Publish...	Xuất bản hàng loạt...
+	Batch Publish...	In/xuất hàng loạt...
 	Scale List...	Danh sách tỉ lệ...
 	Annotative Object Scale	Tỉ lệ đối tượng chú thích
 	Add Current Scale	Thêm tỉ lệ hiện hành
@@ -1291,7 +1292,7 @@ menu	Modify	Hiệu chỉnh
 	Dynamic Block Grips	Grip block động
 	Dynamic Block Reference	Tham chiếu block động
 	Edit Block Definition	Sửa định nghĩa block
-	Evaluate LISP	Tính giá trị LISP
+	Evaluate LISP	Thực thi LISP
 	Exclude:	Loại trừ:
 	Grips	Grip
 	Groups	Nhóm
@@ -1301,10 +1302,10 @@ menu	Modify	Hiệu chỉnh
 	Hatches	Hatch
 	Hemispherical	Bán cầu
 	Ignore	Bỏ qua
-	Indicate selection area	Chỉ định vùng chọn
+	Indicate selection area	Hiển thị vùng chọn
 	Inverted	Đảo ngược
 	Island detection	Phát hiện đảo
-	Load Application...	Tải ứng dụng...
+	Load Application...	Nạp ứng dụng...
 	Multiline text	Chữ nhiều dòng
 	New block	Block mới
 	Object grouping	Gom nhóm đối tượng
@@ -1355,7 +1356,7 @@ menu	Modify	Hiệu chỉnh
 	{alias} is already defined; select it and use Edit.	{alias} đã được định nghĩa; chọn nó và dùng nút Sửa.
 	More than {n} aliases.	Hơn {n} bí danh.
 	Alias file: {file}	Tệp bí danh: {file}
-	No alias file loaded. REINIT replaces these aliases with a file's.	Chưa tải tệp bí danh nào. REINIT sẽ thay các bí danh này bằng bí danh trong tệp.
+	No alias file loaded. REINIT replaces these aliases with a file's.	Chưa nạp tệp bí danh nào. REINIT sẽ thay các bí danh này bằng bí danh trong tệp.
 	Alias	Bí danh
 	Command	Lệnh
 	overrides built-in	ghi đè lệnh tích hợp
@@ -1375,7 +1376,7 @@ menu	Modify	Hiệu chỉnh
 	Center the plot	Căn giữa bản in
 	Enter block names to extract	Nhập tên block cần trích xuất
 	Enter geometric characteristic	Nhập đặc tính hình học
-	Enter name of LISP file to load	Nhập tên tệp LISP cần tải
+	Enter name of LISP file to load	Nhập tên tệp LISP cần nạp
 	First corner	Góc thứ nhất
 	Fit to paper	Vừa khổ giấy
 	Landscape	Ngang
@@ -1411,7 +1412,7 @@ menu	Modify	Hiệu chỉnh
 	Don't Save	Không lưu
 	Drawing Units	Đơn vị bản vẽ
 	Engineering	Kỹ thuật
-	Feet	Feet
+	Feet	Foot
 	Fractional	Phân số
 	Gigameters	Gigamét
 	Grads	Grad
@@ -1435,7 +1436,7 @@ menu	Modify	Hiệu chỉnh
 	Surveyor's Units	Đơn vị trắc địa
 	Unitless	Không đơn vị
 	Units to scale inserted content	Đơn vị để co giãn nội dung được chèn
-	US Survey Feet	Feet khảo sát Mỹ
+	US Survey Feet	Foot khảo sát Mỹ
 	US Survey Inch	Inch khảo sát Mỹ
 	US Survey Mile	Dặm khảo sát Mỹ
 	US Survey Yard	Yard khảo sát Mỹ
@@ -1449,18 +1450,307 @@ menu	Modify	Hiệu chỉnh
 	Change Properties	Đổi thuộc tính
 	Font	Phông chữ
 	Save Layout as Template	Lưu layout thành mẫu
-	Find All	Find All
-	Find what:	Find what:
-	Match case	Match case
-	Replace	Replace
-	Replace All	Replace All
-	Replace with:	Replace with:
-	Replacement text	Replacement text
-	Results	Results
-	Searches the current space.	Searches the current space.
-	Text to find	Text to find
-	Whole words	Whole words
-	Nothing found	Nothing found
-	Ctrl+Enter to apply	Ctrl+Enter to apply
-	Edit Text	Edit Text
+	Add a drawing file as a block library	Thêm tệp bản vẽ làm thư viện block
+	Add a folder of drawings or a drawing file to use its blocks.	Thêm thư mục chứa bản vẽ hoặc tệp bản vẽ để dùng các block của nó.
+	Block Libraries	Thư viện block
+	Block Library	Thư viện block
+	Blocks Palette	Bảng block
+	Click a block, then pick its insertion point.	Nhấp vào một block, rồi chỉ định điểm chèn của nó.
+	Current Drawing	Bản vẽ hiện hành
+	Details	Chi tiết
+	Extra Large Icons	Biểu tượng cực lớn
+	Folder or file	Thư mục hoặc tệp
+	Import Library Block	Nhập block từ thư viện
+	Insert and Explode	Chèn và phân rã
+	Large Icons	Biểu tượng lớn
+	Libraries	Thư viện
+	Medium Icons	Biểu tượng cỡ vừa
+	No block matches the filter.	Không có block nào khớp với bộ lọc.
+	This block is already in the drawing, so its definition is used.	Block này đã có trong bản vẽ nên định nghĩa của nó được dùng.
+	Open Library...	Mở thư viện...
+	Read the library again	Đọc lại thư viện
+	Reading the library...	Đang đọc thư viện...
+	Refresh	Làm mới
+	Remove from the list	Xóa khỏi danh sách
+	Repeat Placement	Lặp lại việc đặt
+	Small Icons	Biểu tượng nhỏ
+	This drawing has no blocks.	Bản vẽ này không có block.
+	This library has no drawings or blocks.	Thư viện này không có bản vẽ hay block.
+	Only the first {n} are shown.	Chỉ hiển thị {n} mục đầu tiên.
+	Find All	Tìm tất cả
+	Find what:	Tìm:
+	Match case	Phân biệt hoa/thường
+	Replace	Thay thế
+	Replace All	Thay thế tất cả
+	Replace with:	Thay bằng:
+	Replacement text	Chữ thay thế
+	Results	Kết quả
+	Searches the current space.	Tìm trong không gian hiện hành.
+	Text to find	Chữ cần tìm
+	Whole words	Khớp nguyên từ
+	Nothing found	Không tìm thấy
+	Ctrl+Enter to apply	Ctrl+Enter để áp dụng
+	Edit Text	Sửa chữ
 	The drawing changed. Close the window and open it again.	Bản vẽ đã thay đổi. Đóng cửa sổ và mở lại.
+# Phase 1 of craft-i18n#401: the strings the translation_gaps report listed as missing for vi.
+# Dimension Style Manager (DIMSTYLE)
+	<style overrides>	<ghi đè kiểu>
+	A dimension style with this name already exists.	Đã có một kiểu kích thước mang tên này.
+	All properties of {style}	Mọi thuộc tính của {style}
+	All styles	Tất cả kiểu
+	Alternate Units	Đơn vị thay thế
+	Annotative	Chú thích
+	Compare	So sánh
+	Compare Dimension Styles	So sánh kiểu kích thước
+	Compare...	So sánh...
+	Create New Dimension Style	Tạo kiểu kích thước mới
+	Current dimension style: {style}	Kiểu kích thước hiện hành: {style}
+	Dimension Style	Kiểu kích thước
+	Dimension Style Manager	Trình quản lý kiểu kích thước
+	Dimension Style Overrides	Các ghi đè kiểu kích thước
+	Fit	Vừa khít
+	Leading	Số 0 đầu
+	Lines	Đường nét
+	Modify Dimension Style: {style}	Sửa kiểu kích thước: {style}
+	Modify...	Sửa...
+	New Dimension Style: {style}	Kiểu kích thước mới: {style}
+	New style name	Tên kiểu mới
+	New...	Mới...
+	Override Current Style: {style}	Ghi đè kiểu hiện hành: {style}
+	Override...	Ghi đè...
+	Preview of: {style}	Xem trước: {style}
+	Preview of: {style} (overrides)	Xem trước: {style} (có ghi đè)
+	Primary Units	Đơn vị chính
+	Remove Style Overrides	Xóa ghi đè kiểu
+	Rename	Đổi tên
+	Save as New Style...	Lưu thành kiểu mới...
+	Save to current style	Lưu vào kiểu hiện hành
+	Set by text style "{style}", which has a fixed height. Give the style a height of 0 to use the dimension text height.	Do kiểu chữ "{style}" quy định, vì kiểu này có chiều cao cố định. Đặt chiều cao của kiểu chữ là 0 để dùng chiều cao chữ của kích thước.
+	Start with	Bắt đầu từ
+	Styles	Các kiểu
+	Styles in use	Kiểu đang dùng
+	Symbols and Arrows	Ký hiệu và mũi tên
+	Tolerances	Dung sai
+	Trailing	Số 0 cuối
+	Variable	Biến
+	With	Với
+	{count} differences	{count} điểm khác nhau
+# Dimension properties: Properties palette and the style dialog
+	Above	Phía trên
+	Above text	Phía trên chữ
+	Alt enabled	Bật đơn vị thay thế
+	Alt format	Định dạng thay thế
+	Alt precision	Độ chính xác thay thế
+	Alt prefix	Tiền tố thay thế
+	Alt prefix and suffix	Tiền tố và hậu tố thay thế
+	Alt round	Làm tròn thay thế
+	Alt scale factor	Hệ số tỉ lệ thay thế
+	Alt suffix	Hậu tố thay thế
+	Alt zero suppression	Ẩn số 0 thay thế
+	Angle format	Định dạng góc
+	Angle precision	Độ chính xác góc
+	Angular zero suppression	Ẩn số 0 của góc
+	Arc length symbol	Ký hiệu chiều dài cung
+	Architectural stacked	Kiến trúc xếp chồng
+	Architectural tick	Nét gạch kiến trúc
+	Arrow 1	Mũi tên 1
+	Arrow 2	Mũi tên 2
+	Arrowheads	Đầu mũi tên
+	Arrows	Mũi tên
+	At Ext Line 1	Tại đường gióng 1
+	At Ext Line 2	Tại đường gióng 2
+	Baseline spacing	Khoảng cách đường cơ sở
+	Before text	Trước chữ
+	Below	Phía dưới
+	Best fit	Phù hợp nhất
+	Bottom	Dưới
+	Box blank	Ô vuông rỗng
+	Box filled	Ô vuông tô đặc
+	Center mark size	Kích thước dấu tâm
+	Closed blank	Khép kín rỗng
+	Closed filled	Khép kín tô đặc
+	Comma	Dấu phẩy
+	Datum triangle	Tam giác chuẩn
+	Datum triangle filled	Tam giác chuẩn tô đặc
+	Decimal degrees	Độ thập phân
+	Decimal separator	Dấu thập phân
+	Degrees Minutes Seconds	Độ Phút Giây
+	Diagonal stacking	Xếp chồng chéo
+	Dim line color	Màu đường kích thước
+	Dim line ext	Phần kéo dài đường kích thước
+	Dim line forced	Buộc vẽ đường kích thước
+	Dim line linetype	Loại nét đường kích thước
+	Dim line lineweight	Bề dày nét đường kích thước
+	Dim prefix	Tiền tố kích thước
+	Dim roundoff	Làm tròn kích thước
+	Dim scale linear	Tỉ lệ đo dài
+	Dim suffix	Hậu tố kích thước
+	Dim units	Đơn vị kích thước
+	Dot	Chấm
+	Dot blank	Chấm rỗng
+	Dot small	Chấm nhỏ
+	Ext line 1 linetype	Loại nét đường gióng 1
+	Ext line 2 linetype	Loại nét đường gióng 2
+	Ext line color	Màu đường gióng
+	Ext line ext	Phần kéo dài đường gióng
+	Ext line fixed	Đường gióng dài cố định
+	Ext line length	Chiều dài đường gióng
+	Ext line lineweight	Bề dày nét đường gióng
+	Ext line offset	Khoảng hở gốc đường gióng
+	Fraction format	Định dạng phân số
+	Fractional stacked	Phân số xếp chồng
+	Gradians	Grad
+	Hide dim line 1	Ẩn đường kích thước 1
+	Hide dim line 2	Ẩn đường kích thước 2
+	Hide ext line 1	Ẩn đường gióng 1
+	Hide ext line 2	Ẩn đường gióng 2
+	Horizontal stacking	Xếp chồng ngang
+	Integral	Tích phân
+	JIS	JIS
+	Jog angle	Góc gãy khúc
+	Keep dim line with text	Giữ đường kích thước theo chữ
+	Leader arrow	Mũi tên đường dẫn ghi chú
+	Lines & Arrows	Đường nét và mũi tên
+	Lower tolerance	Dung sai dưới
+	Measurement	Số đo
+	Middle	Giữa
+	Misc	Khác
+	Move text, add leader	Di chuyển chữ, thêm đường dẫn ghi chú
+	Move text, no leader	Di chuyển chữ, không có đường dẫn ghi chú
+	Not stacked	Không xếp chồng
+	Open 30	Hở 30
+	Open arrow	Mũi tên hở
+	Origin indicator	Dấu gốc
+	Origin indicator 2	Dấu gốc 2
+	Outside	Bên ngoài
+	Over Ext Line 1	Trên đường gióng 1
+	Over Ext Line 2	Trên đường gióng 2
+	Overrides the dimension style. Right-click to use the style's value.	Ghi đè kiểu kích thước. Nhấp phải để dùng giá trị của kiểu.
+	Period	Dấu chấm
+	Prefix and suffix	Tiền tố và hậu tố
+	Right angle	Góc vuông
+	Small	Nhỏ
+	Some of these dimensions take their text height from a fixed-height text style.	Một số kích thước trong số này lấy chiều cao chữ từ kiểu chữ có chiều cao cố định.
+	Space	Dấu cách
+	Suppress arrows	Ẩn mũi tên
+	Text and arrows	Chữ và mũi tên
+	Text inside	Chữ bên trong
+	Text inside align	Căn chữ bên trong
+	Text movement	Di chuyển chữ
+	Text offset	Khoảng hở chữ
+	Text outside align	Căn chữ bên ngoài
+	Text pos hor	Vị trí ngang của chữ
+	Text pos vert	Vị trí dọc của chữ
+	Text position X	Vị trí chữ X
+	Text position Y	Vị trí chữ Y
+	Text rotation	Góc xoay chữ
+	Text vertical position	Độ lệch dọc của chữ
+	Tick size	Kích thước nét gạch
+	Tolerance height	Chiều cao chữ dung sai
+	Tolerance pos vert	Vị trí dọc của dung sai
+	Tolerance precision	Độ chính xác dung sai
+	Tolerance zero suppression	Ẩn số 0 của dung sai
+	Top	Trên
+	Upper tolerance	Dung sai trên
+	Use the style's value	Dùng giá trị của kiểu
+	Windows desktop	Theo cài đặt Windows
+	Zero suppression	Ẩn số 0
+	{property}: that value can't be used here.	{property}: không thể dùng giá trị đó ở đây.
+# Text and multiline text properties
+	At least	Ít nhất
+	Bottom center	Dưới giữa
+	Columns	Cột
+	Exactly	Chính xác
+	Justification	Căn lề
+	Line space distance	Khoảng cách dòng
+	Line space factor	Hệ số giãn dòng
+	Line space style	Kiểu giãn dòng
+	Middle center	Chính giữa
+	Middle left	Giữa trái
+	Middle right	Giữa phải
+	Obliquing	Góc nghiêng
+	Style	Kiểu
+	Text alignment X	Điểm căn chữ X
+	Text alignment Y	Điểm căn chữ Y
+	Top center	Trên giữa
+# Array dialog
+	Angle between	Góc giữa các mục
+	Column spacing	Khoảng cách cột
+	Fill angle	Góc phủ
+	Items	Số mục
+	Level spacing	Khoảng cách tầng
+	Levels	Tầng
+	Pick center	Chọn tâm
+	Rotate items	Xoay các mục
+	Row elevation	Cao độ hàng
+	Row spacing	Khoảng cách hàng
+	Rows	Hàng
+	Select objects first	Hãy chọn đối tượng trước
+# Keyboard shortcuts
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Phím tắt bạn đặt sẽ được ưu tiên hơn phím tắt sẵn có của CADCraft. Thay đổi có hiệu lực ngay và được giữ lại cho lần sau.
+	Back to CADCraft's shortcut	Trở về phím tắt của CADCraft
+	Keyboard Shortcuts	Phím tắt
+	Keyboard Shortcuts...	Phím tắt...
+	Needs Ctrl, Alt or a function key	Cần Ctrl, Alt hoặc một phím chức năng
+	Press the keys	Nhấn tổ hợp phím
+	Replaces the shortcut of {commands}	Thay phím tắt của {commands}
+# Right-click customization and update check (Options)
+	Check for updates when CADCraft starts	Kiểm tra cập nhật khi CADCraft khởi động
+	Command Mode	Chế độ lệnh
+	Default Mode	Chế độ mặc định
+	Edit Mode	Chế độ chỉnh sửa
+	ENTER	ENTER
+	Longer click duration:	Thời lượng nhấp lâu:
+	milliseconds	mili giây
+	No objects selected and no command running:	Chưa chọn đối tượng nào và không có lệnh nào đang chạy:
+	Objects selected and no command running:	Đã chọn đối tượng và không có lệnh nào đang chạy:
+	Repeat last command	Lặp lại lệnh trước
+	Right-Click Customization	Tùy chỉnh nhấp phải
+	Right-Click Customization...	Tùy chỉnh nhấp phải...
+	Shortcut Menu	Menu ngữ cảnh
+	Shortcut Menu: always enabled	Menu ngữ cảnh: luôn bật
+	Shortcut Menu: enabled when command options are present	Menu ngữ cảnh: bật khi lệnh có tùy chọn
+	Turn on time-sensitive right-click	Bật nhấp phải theo thời gian
+	Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode.	Khi tắt, nhấp phải trong lúc lệnh đang chạy sẽ làm theo thiết lập Chế độ lệnh trong Tùy chỉnh nhấp phải.
+	Turned off, CADCraft never offers an update on its own; Help ▸ Check for Updates… still looks.	Khi tắt, CADCraft không tự đề xuất cập nhật; Trợ giúp ▸ Kiểm tra cập nhật… vẫn kiểm tra được.
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	Khi lệnh đang chạy, nhấp nhanh là Enter, nhấp lâu hơn sẽ mở menu ngữ cảnh.
+	While a command runs:	Khi lệnh đang chạy:
+	With no command running, a quick click repeats the last command or runs what was typed.	Khi không có lệnh nào đang chạy, nhấp nhanh sẽ lặp lại lệnh trước hoặc chạy nội dung đã nhập.
+# UCS
+	3 Point	3 điểm
+	New UCS	UCS mới
+	Origin	Gốc
+	UCS	UCS
+	UCS Icon at Origin	Biểu tượng UCS tại gốc
+	Unnamed	Vô danh
+	World	Thế giới
+	Z	Z
+# Command aliases (ALIASEDIT)
+	Aliases are saved in your CADCraft profile and survive restarts.	Bí danh được lưu trong hồ sơ CADCraft của bạn và vẫn còn sau khi khởi động lại.
+	Import and replace	Nhập và thay thế
+	Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.	Nhập: ở đây không có hộp thoại chọn tệp; hãy chạy ALIASEDIT với nội dung của tệp qua tham số text.
+	Importing a file replaces your {n} aliases, and any changes not applied yet.	Nhập một tệp sẽ thay thế {n} bí danh của bạn và mọi thay đổi chưa áp dụng.
+	Import…	Nhập…
+	Keep my aliases	Giữ bí danh của tôi
+	Run ALIASEDIT with the file's contents using its text parameter.	Chạy ALIASEDIT với nội dung của tệp qua tham số text.
+	{n} more warnings; see the command line.	Còn {n} cảnh báo khác; xem trên dòng lệnh.
+# Commands, menus and panels
+	Change	Thay đổi
+	Clip Xref	Xén xref
+	Close panel	Đóng bảng
+	Close {panel}	Đóng {panel}
+	Describe Properties	Mô tả thuộc tính
+	DView	DView
+	Extended Trim	Cắt xén mở rộng
+	Generate Boundary	Tạo đường bao
+	Import PDF...	Nhập PDF...
+	Menu Bar	Thanh menu
+	Raster Image Reference...	Tham chiếu ảnh raster...
+	Raster Images	Ảnh raster
+	Units	Đơn vị
+	Write Block Pick	Chọn cho ghi block
+	Xref	Xref
+	Xref Clip Frame	Khung xén xref
+
+# ArtCraft feature naming
+	Additional Tools	Công cụ bổ sung

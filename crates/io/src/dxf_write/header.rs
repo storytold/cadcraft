@@ -1,4 +1,4 @@
-use super::{DimVal, Drawing, HVal, K, Version, W, dxf_ext};
+use super::{DimVal, Drawing, HVal, K, Ucs, Vec3, Version, W, dxf_ext};
 
 /// Header variables we write, with their group codes (DXF Reference, HEADER section).
 /// `P2`/`P3` = 2D/3D point.
@@ -26,6 +26,7 @@ const HEADER_VARS: &[(&str, i32)] = &[
     ("CELTSCALE", 40),
     ("DIMSCALE", 40),
     ("DIMSTYLE", 2),
+    ("DIMASSOC", 280),
     ("LUNITS", 70),
     ("LUPREC", 70),
     ("AUNITS", 70),
@@ -37,6 +38,11 @@ const HEADER_VARS: &[(&str, i32)] = &[
     ("CHAMFERB", 40),
     ("ANGBASE", 50),
     ("ANGDIR", 70),
+    // Model space's current UCS (each layout's is in its LAYOUT object).
+    ("UCSNAME", 2),
+    ("UCSORG", -3),
+    ("UCSXDIR", -3),
+    ("UCSYDIR", -3),
     ("PDMODE", 70),
     ("PDSIZE", 40),
     ("PLINEWID", 40),
@@ -52,14 +58,37 @@ const HEADER_VARS: &[(&str, i32)] = &[
     ("VIEWSIZE", 40),
 ];
 
+/// Model space's current UCS from the header (UCSORG, UCSXDIR, UCSYDIR, UCSNAME): unusable
+/// values are the World UCS's, so a broken one read from a file isn't written back.
+pub(super) fn model_ucs(d: &Drawing) -> Ucs {
+    let h = &d.header;
+    let p = |name: &str| h.point(name).filter(|v| v.is_finite());
+    let axis = |name: &str| p(name).filter(|v| v.len() > 1e-12);
+    let (x, y, usable) = match (axis("UCSXDIR"), axis("UCSYDIR")) {
+        (Some(x), Some(y)) if x.cross(y).len() > 1e-9 * x.len() * y.len() => (x, y, true),
+        _ => (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0), false),
+    };
+    // The name only of a UCS table record whose frame the current UCS still is: a name read from
+    // a file without its record, beside axes replaced by the World UCS's, or beside an origin or
+    // axes of its own (restoring the name would move the UCS) is dropped.
+    let origin = p("UCSORG").unwrap_or(Vec3::ZERO);
+    let raw = h.str("UCSNAME", "");
+    let name = crate::dxf_ext::named_ucs(&d.ucss, &raw, origin, x, y).filter(|_| usable).map(|u| u.name.clone()).unwrap_or_default();
+    Ucs { name, origin, x_axis: x, y_axis: y }
+}
+
 /// The current dimension style's variables as header variables (`$DIMTXT`, `$DIMDEC`…), after
 /// `$DIMSTYLE`: AutoCAD draws new and updated dimensions with the header's DIM* values, which
 /// otherwise stay its defaults (0.18 text, 4 decimals) whatever the current style says (#1051).
-/// `$DIMSCALE` is a header variable of its own.
+/// `$DIMSCALE` is a header variable of its own. Variables set with SETVAR that differ from the
+/// style are its overrides and are written instead, so they are kept with the drawing (#3100).
 fn dim_header_vars(w: &mut W, d: &Drawing) {
     let name = d.header.str("DIMSTYLE", "Standard");
-    let Some(style) = d.dim_styles.iter().find(|s| s.name.eq_ignore_ascii_case(&name)) else { return };
-    let v = serde_json::to_value(style).unwrap_or_default();
+    let Some(style) = d.dim_style(&name) else { return };
+    let mut v = serde_json::to_value(style).unwrap_or_default();
+    if let Some(fields) = v.as_object_mut() {
+        fields.extend(d.dim_overrides());
+    }
     let none = |_: &str| None;
     for (var, field) in cadcraft_doc::DIMVARS {
         if *var == "DIMSCALE" {
@@ -96,6 +125,7 @@ fn dim_header_vars(w: &mut W, d: &Drawing) {
     }
 }
 
+/// Write modelled HEADER variables with their declared DXF group types, then dimension style variables.
 pub(super) fn header_vars(w: &mut W, d: &Drawing) {
     for (name, code) in HEADER_VARS {
         let Some(v) = d.header.get(name) else { continue };
@@ -104,6 +134,9 @@ pub(super) fn header_vars(w: &mut W, d: &Drawing) {
                 let p = match *name {
                     "SNAPUNIT" => d.header.snap_unit().to3(0.0),
                     "GRIDUNIT" => d.header.grid_unit().to3(0.0),
+                    "UCSORG" => model_ucs(d).origin,
+                    "UCSXDIR" => model_ucs(d).x_axis,
+                    "UCSYDIR" => model_ucs(d).y_axis,
                     _ => *p,
                 };
                 w.s(9, format!("${name}"));
@@ -122,11 +155,16 @@ pub(super) fn header_vars(w: &mut W, d: &Drawing) {
                     w.f(c, f);
                 }
             }
-            (c @ (62 | 70 | 290 | 370), v) => {
+            (c @ (62 | 70 | 280 | 290 | 370), v) => {
                 if let Some(i) = v.as_i64() {
                     w.s(9, format!("${name}"));
                     w.i(c, i);
                 }
+            }
+            // Only the name of a UCS the drawing has, with the axes written above.
+            (c, _) if *name == "UCSNAME" => {
+                w.s(9, "$UCSNAME");
+                w.s(c, model_ucs(d).name);
             }
             (c, v) => {
                 if let Some(t) = v.as_str() {
@@ -144,6 +182,6 @@ pub(super) fn header_vars(w: &mut W, d: &Drawing) {
 /// from 2007 (UTF-8 text), `ANSI_1252`.
 pub(crate) fn code_page(d: &Drawing, version: Version) -> String {
     let read = d.header.get("DWGCODEPAGE").and_then(HVal::as_str).map(str::trim).unwrap_or_default();
-    let known = read.is_ascii() && read.len() <= 32 && cadcraft_dxf::decode_code_page(b"", read).is_some();
+    let known = read.is_ascii() && read.len() <= 32 && craft_dxf::decode_code_page(b"", read).is_some();
     if version < Version::R2007 && known { read.to_string() } else { "ANSI_1252".into() }
 }

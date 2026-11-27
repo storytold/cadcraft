@@ -73,6 +73,7 @@ fn a_dynamic_block_reads_its_parameters_and_actions() {
 
 #[test]
 fn a_saved_drawing_keeps_the_dynamic_block_as_read() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = read_dxf(dxf(&fixture()).as_bytes()).unwrap();
     let before = dynamic_block(&d, "Door").unwrap();
     let again = read_dxf(write_dxf(&d).as_bytes()).unwrap();
@@ -87,6 +88,7 @@ fn a_saved_drawing_keeps_the_dynamic_block_as_read() {
 }
 
 /// The Door fixture with a scale action on the Width parameter: graph node 6, object 68.
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 fn with_scale_action() -> String {
     let node = "91 6\n93 32\n95 7\n360 68\n92 -1\n92 -1\n92 -1\n92 -1\n";
     let action = "0 BLOCKSCALEACTION\n5 68\n330 61\n100 AcDbEvalExpr\n90 7\n98 33\n99 232\n\
@@ -103,14 +105,16 @@ fn with_scale_action() -> String {
 
 /// A scale action goes through CADCraft's own DWG save (the bridge DXF, then acadrust) whole:
 /// the DWG holds it with its connections, and it reads back as the same action. AutoCAD refused
-/// such DWGs while acadrust left out the byte after its connections (cadcraft-dwg's
+/// such DWGs while acadrust left out the byte after its connections (craft-dwg's
 /// `scale_actions_keep_the_byte_autocad_reads_after_their_connections` covers the byte).
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn a_scale_action_survives_a_dwg_save() {
     use acadrust::objects::{DynamicBlockData, DynamicBlockObject, ObjectType};
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = read_dxf(dxf(&with_scale_action()).as_bytes()).unwrap();
     let before = dynamic_block(&d, "Door").unwrap();
-    assert!(before.actions.iter().any(|a| a.node == 7 && matches!(a.kind, ActionKind::Scale)), "{:?}", before.actions);
+    assert!(before.actions.iter().any(|a| a.node == 7 && matches!(a.kind, ActionKind::Scale { .. })), "{:?}", before.actions);
     let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
 
     let doc = acadrust::DwgReader::from_stream(std::io::Cursor::new(&dwg)).read().unwrap();
@@ -343,9 +347,7 @@ fn bad_values_are_refused_and_change_nothing() {
     let ps = cadcraft_doc::dynblock::custom_properties(&d, h("80")).unwrap().1;
     let editable: Vec<(&str, bool)> = ps.iter().map(|p| (p.name.as_str(), p.editable)).collect();
     assert_eq!(editable, [("Visibility1", true), ("Width", true), ("Size", true)]);
-    for (name, value) in
-        [("Visibility1", "Ajar"), ("Size", "Huge"), ("Width", "wide"), ("Width", "0"), ("Width", "-3"), ("Width", "inf"), ("Nope", "x"), ("", "")]
-    {
+    for (name, value) in [("Visibility1", "Ajar"), ("Size", "Huge"), ("Width", "wide"), ("Width", "-3"), ("Width", "inf"), ("Nope", "x"), ("", "")] {
         assert!(cadcraft_doc::dynblock::set_property(&mut d, h("80"), name, value).is_err(), "{name}={value}");
     }
     assert!(cadcraft_doc::dynblock::set_property(&mut d, h("30"), "Visibility1", "Open").is_err(), "not a reference");
@@ -505,6 +507,403 @@ fn a_stretch_moves_the_points_inside_its_frame_not_the_listed_ones() {
         vec![(20.0, 1.0), (30.0, 1.0), (30.0, -1.0)],
     ];
     assert_eq!(shapes(&d, r), want);
+}
+
+/// The outlines of the wipeouts of reference `r`'s block, in its order.
+fn wipeouts(d: &cadcraft_doc::Drawing, r: Handle) -> Vec<Vec<(f64, f64)>> {
+    let b = d.block(&block_of(d, &r.hex())).unwrap();
+    b.entities
+        .iter()
+        .filter_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Wipeout(w) => Some(w.boundary.iter().map(|p| (p.x, p.y)).collect()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A WIPEOUT `handle` of the door block whose outline is `points`: a 1 by 1 image at the origin,
+/// whose clip point (x - 0.5, 0.5 - y) the reader maps back to (x, y).
+fn wipeout(handle: &str, points: &[(f64, f64)]) -> String {
+    let mut s = format!(
+        "0 WIPEOUT\n5 {handle}\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbWipeout\n10 0\n20 0\n30 0\n11 1\n21 0\n31 0\n12 0\n22 1\n32 0\n13 1\n23 1\n71 2\n91 {}\n",
+        points.len()
+    );
+    for (x, y) in points {
+        s.push_str(&format!("14 {}\n24 {}\n", x - 0.5, 0.5 - y));
+    }
+    s
+}
+
+#[test]
+fn a_stretch_moves_the_points_of_a_wipeout_inside_its_frame() {
+    // The stretch (frame (34,-2)-(38,2)) also acts on wipeout 34, whose right side is inside the
+    // frame and whose outline repeats its first point to close, and on wipeout 35, all outside it.
+    // The list stored for 34 names its left side. AutoCAD 2024 moves the points of a wipeout that
+    // are inside the frame and leaves the others, whatever the list says: measured on its own
+    // stretched copies of a dynamic block from another program, where each of three copies moved
+    // the 324 points of the block's 521-point wipeout inside the frame by the distance's change and
+    // left the other 197. A wipeout all outside the frame moves whole, as a line or polyline does
+    // (not measured for a wipeout).
+    let crossing = [(36.0, -1.0), (36.0, 1.0), (20.0, 1.0), (20.0, -1.0), (36.0, -1.0)];
+    let outside = [(0.0, 5.0), (4.0, 5.0), (4.0, 8.0)];
+    let src = fixture()
+        .replace("71 1\n330 30\n1010 40", "71 3\n330 30\n330 34\n330 35\n1010 40")
+        .replace("73 1\n331 30\n74 1\n94 1\n75 0", "73 2\n331 30\n74 1\n94 1\n331 34\n74 2\n94 2\n94 3\n75 0")
+        .replace("21 25\n31 0\n0 ENDBLK\n", &format!("21 25\n31 0\n{}{}0 ENDBLK\n", wipeout("34", &crossing), wipeout("35", &outside)));
+    let (mut d, r) = door_reference(&src);
+    assert_eq!(wipeouts(&d, r), [crossing.to_vec(), outside.to_vec()]);
+    cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+    let want = [vec![(30.0, -1.0), (30.0, 1.0), (20.0, 1.0), (20.0, -1.0), (30.0, -1.0)], vec![(-6.0, 5.0), (-2.0, 5.0), (-2.0, 8.0)]];
+    assert_eq!(wipeouts(&d, r), want);
+    assert_eq!(shapes(&d, r)[0], [(0.0, 0.0), (30.0, 0.0)]);
+}
+
+#[test]
+fn wipeouts_and_arcs_move_whole_when_the_frame_cant_be_tested() {
+    // The frame as a polygon of `n` points, as in the test of the stored lists. Up to 1000 points
+    // the points of wipeout 34 and the end of arc 35 inside it move; past that both move whole, as
+    // before: the lists stored for them (their first point alone) aren't used, as a wipeout's or an
+    // arc's list isn't measured.
+    let frame = |n: usize| {
+        let mut f = format!("72 {n}\n1011 34\n1021 -2\n1011 38\n1021 -2\n1011 38\n1021 2\n");
+        f.push_str(&"1011 34\n1021 2\n".repeat(n - 3));
+        f
+    };
+    let crossing = [(36.0, -1.0), (36.0, 1.0), (20.0, 1.0), (20.0, -1.0)];
+    let angle = |x: f64, y: f64| y.atan2(x).to_degrees();
+    let cases = [
+        (1000, [(30.0, -1.0), (30.0, 1.0), (20.0, 1.0), (20.0, -1.0)], ((30.0, 0.0), (20.0, 0.0), 5.125)),
+        (1001, [(30.0, -1.0), (30.0, 1.0), (14.0, 1.0), (14.0, -1.0)], ((30.0, 0.0), (14.0, 0.0), 10.0)),
+    ];
+    for (n, want, want_arc) in cases {
+        let src = fixture()
+            .replace("72 2\n1011 34\n1021 -2\n1011 38\n1021 2\n", &frame(n))
+            .replace("71 1\n330 30\n1010 40", "71 3\n330 30\n330 34\n330 35\n1010 40")
+            .replace("73 1\n331 30\n74 1\n94 1\n75 0", "73 3\n331 30\n74 1\n94 1\n331 34\n74 1\n94 0\n331 35\n74 1\n94 0\n75 0")
+            .replace(
+                "21 25\n31 0\n0 ENDBLK\n",
+                &format!("21 25\n31 0\n{}{}0 ENDBLK\n", wipeout("34", &crossing), arc("35", 28.0, -6.0, 10.0, angle(8.0, 6.0), angle(-8.0, 6.0))),
+            );
+        let (mut d, r) = door_reference(&src);
+        cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+        assert_eq!(wipeouts(&d, r), [want.to_vec()], "{n} frame points");
+        let got = arcs(&d, r);
+        assert!(got.len() == 1 && near(got[0], want_arc), "{n} frame points: {got:?}");
+    }
+}
+
+#[test]
+fn a_tilted_arc_moves_whole() {
+    // An arc in the plane whose normal is x: its centre, at (28, -6) seen from above, and its
+    // angles are in that plane, so its ends can't be tested against the frame. It moves whole, as
+    // before (not measured in AutoCAD).
+    let tilted = "0 ARC\n5 34\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbCircle\n10 -6\n20 0\n30 28\n40 10\n210 1\n220 0\n230 0\n100 AcDbArc\n50 36.86989764584402\n51 143.13010235415598\n";
+    let src = fixture()
+        .replace("71 1\n330 30\n1010 40", "71 2\n330 30\n330 34\n1010 40")
+        .replace("21 25\n31 0\n0 ENDBLK\n", &format!("21 25\n31 0\n{tilted}0 ENDBLK\n"));
+    let (mut d, r) = door_reference(&src);
+    let centre = |d: &cadcraft_doc::Drawing| {
+        let b = d.block(&block_of(d, &r.hex())).unwrap();
+        b.entities.iter().find_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Arc(a) => Some((a.center, a.radius)),
+            _ => None,
+        })
+    };
+    let (before, radius) = centre(&d).expect("the tilted arc is read as an arc");
+    assert!((before.x - 28.0).abs() < 1e-9 && (before.y + 6.0).abs() < 1e-9, "{before:?}");
+    cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+    let (after, r2) = centre(&d).unwrap();
+    assert_eq!((after.x - before.x, after.y - before.y, after.z - before.z, r2), (-6.0, 0.0, 0.0, radius));
+}
+
+/// An ARC `handle` of the door block: centre (`x`, `y`), radius `r`, from `start` to `end` degrees.
+fn arc(handle: &str, x: f64, y: f64, r: f64, start: f64, end: f64) -> String {
+    format!("0 ARC\n5 {handle}\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbCircle\n10 {x}\n20 {y}\n30 0\n40 {r}\n100 AcDbArc\n50 {start}\n51 {end}\n")
+}
+
+/// The arcs of reference `r`'s block, in its order: their start and end points and radius.
+fn arcs(d: &cadcraft_doc::Drawing, r: Handle) -> Vec<((f64, f64), (f64, f64), f64)> {
+    let b = d.block(&block_of(d, &r.hex())).unwrap();
+    b.entities
+        .iter()
+        .filter_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Arc(a) => {
+                let c = a.center.xy();
+                let (s, e) = (cadcraft_doc::geom::Vec2::polar(c, a.radius, a.start), cadcraft_doc::geom::Vec2::polar(c, a.radius, a.end));
+                Some(((s.x, s.y), (e.x, e.y), a.radius))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn near(a: ((f64, f64), (f64, f64), f64), b: ((f64, f64), (f64, f64), f64)) -> bool {
+    let d = |p: (f64, f64), q: (f64, f64)| (p.0 - q.0).hypot(p.1 - q.1);
+    d(a.0, b.0) < 1e-9 && d(a.1, b.1) < 1e-9 && (a.2 - b.2).abs() < 1e-9
+}
+
+#[test]
+fn a_stretch_moves_an_arc_end_inside_its_frame_and_keeps_its_height() {
+    // Arc 34 runs from (36, 0), inside the frame (34,-2)-(38,2), over (28, 4) to (20, 0): 4 above
+    // its chord. Arc 35 has both ends inside the frame. AutoCAD 2024 moves an arc's ends that are
+    // inside the frame and keeps the arc's height over its chord: measured on its own stretched
+    // copies of library blocks, where 21 arcs had one end moved and 63 had their ends moved by two
+    // stretch actions by different amounts, all with their height unchanged to 1.1e-14 of it.
+    let angle = |x: f64, y: f64| y.atan2(x).to_degrees();
+    let src = fixture().replace("71 1\n330 30\n1010 40", "71 3\n330 30\n330 34\n330 35\n1010 40").replace(
+        "21 25\n31 0\n0 ENDBLK\n",
+        &format!(
+            "21 25\n31 0\n{}{}0 ENDBLK\n",
+            arc("34", 28.0, -6.0, 10.0, angle(8.0, 6.0), angle(-8.0, 6.0)),
+            arc("35", 36.0, 0.0, 1.0, 0.0, 180.0)
+        ),
+    );
+    let (mut d, r) = door_reference(&src);
+    cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+    // The chord is now (30, 0)-(20, 0), 10 long, and the arc still rises 4 over it: radius
+    // (5² + 4²) / (2 × 4) = 5.125. Arc 35 moves whole.
+    let got = arcs(&d, r);
+    let want = [((30.0, 0.0), (20.0, 0.0), 5.125), ((31.0, 0.0), (29.0, 0.0), 1.0)];
+    assert_eq!(got.len(), 2);
+    for (g, w) in got.iter().zip(want) {
+        assert!(near(*g, w), "{g:?} != {w:?}");
+    }
+    assert_eq!(shapes(&d, r)[0], [(0.0, 0.0), (30.0, 0.0)]);
+}
+
+/// The door block with arc 34 (from (36, 0), inside the stretch's frame, over (28, 4) to (20, 0))
+/// also held by the stretch, and flip parameter Flip state1 (graph id 7, reflection line from the
+/// origin to `end`) with one flip action per entry of `held`, holding those objects. The flip
+/// actions are listed in the evaluation graph before the stretch when `first`, else after it.
+/// Lookup Size's Narrow row also sets Flip state1 to Flipped (Wide to Not flipped).
+fn door_with_flip(end: (f64, f64), held: &[&[&str]], first: bool) -> String {
+    let angle = |x: f64, y: f64| y.atan2(x).to_degrees();
+    let node = |k: usize, id: usize, handle: &str| format!("91 {k}\n93 32\n95 {id}\n360 {handle}\n92 -1\n92 -1\n92 -1\n92 -1\n");
+    let mut nodes = node(6, 7, "6A");
+    let mut objects = format!(
+        "0 BLOCKFLIPPARAMETER\n5 6A\n330 61\n100 AcDbEvalExpr\n90 7\n98 33\n99 232\n100 AcDbBlockElement\n300 Flip\n98 33\n99 232\n1071 0\n\
+         100 AcDbBlockParameter\n280 1\n281 0\n100 AcDbBlock2PtParameter\n1010 0\n1020 0\n1030 0\n1011 {}\n1021 {}\n1031 0\n170 4\n91 0\n91 0\n\
+         91 0\n91 0\n171 0\n172 0\n173 0\n174 0\n177 0\n100 AcDbBlockFlipParameter\n305 Flip state1\n306\n307 Not flipped\n308 Flipped\n\
+         1012 -12\n1022 0\n1032 0\n309 UpdatedFlip\n96 0\n",
+        end.0, end.1
+    );
+    for (k, objs) in held.iter().enumerate() {
+        let handle = format!("6{}", ["B", "C", "D"][k]);
+        nodes.push_str(&node(7 + k, 8 + k, &handle));
+        objects.push_str(&format!(
+            "0 BLOCKFLIPACTION\n5 {handle}\n330 61\n100 AcDbEvalExpr\n90 {}\n98 33\n99 232\n100 AcDbBlockElement\n300 Flip{}\n98 33\n99 232\n\
+             1071 0\n100 AcDbBlockAction\n70 2\n91 0\n91 0\n71 {}\n{}1010 -6\n1020 0\n1030 0\n100 AcDbBlockFlipAction\n92 7\n93 7\n94 7\n\
+             95 7\n301 Flip\n302 UpdatedFlip\n303 UpdatedBase\n304 UpdatedEnd\n",
+            8 + k,
+            k + 1,
+            objs.len(),
+            objs.iter().map(|h| format!("330 {h}\n")).collect::<String>()
+        ));
+    }
+    // The graph's node counts, and its nodes: the new ones first, or after the last.
+    let counts = format!("96 {0}\n97 {0}\n", 7 + held.len());
+    let last = "360 67\n92 -1\n92 -1\n92 -1\n92 -1\n";
+    let src = if first {
+        fixture().replacen("96 6\n97 6\n", &format!("{counts}{nodes}"), 1)
+    } else {
+        fixture().replacen("96 6\n97 6\n", &counts, 1).replacen(last, &format!("{last}{nodes}"), 1)
+    };
+    src.replace("71 1\n330 30\n1010 40", "71 2\n330 30\n330 34\n1010 40")
+        .replace("21 25\n31 0\n0 ENDBLK\n", &format!("21 25\n31 0\n{}0 ENDBLK\n", arc("34", 28.0, -6.0, 10.0, angle(8.0, 6.0), angle(-8.0, 6.0))))
+        .replace(
+            "93 2\n301\n302 30\n302 Narrow\n302 36\n302 Wide\n303\n94 2\n95 1\n96 0\n282 0\n305 Custom\n281 0\n304 UpdatedDistance\n",
+            "93 3\n301\n302 30\n302 1\n302 Narrow\n302 36\n302 0\n302 Wide\n303\n94 2\n95 1\n96 0\n282 0\n305 Custom\n281 0\n304 UpdatedDistance\n\
+             303\n94 7\n95 1\n96 0\n282 0\n305 Custom\n281 0\n304 UpdatedFlip\n",
+        )
+        .replace("0 ENDSEC\n0 EOF", &format!("{objects}0 ENDSEC\n0 EOF"))
+}
+
+/// The point halfway round each arc of reference `r`'s block, in its order.
+fn arc_middles(d: &cadcraft_doc::Drawing, r: Handle) -> Vec<(f64, f64)> {
+    let b = d.block(&block_of(d, &r.hex())).unwrap();
+    b.entities
+        .iter()
+        .filter_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Arc(a) => {
+                let sweep = (a.end - a.start).rem_euclid(std::f64::consts::TAU);
+                let m = cadcraft_doc::geom::Vec2::polar(a.center.xy(), a.radius, a.start + sweep / 2.0);
+                Some((m.x, m.y))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether reference `r`'s one arc runs from `start` to `end` with radius `radius` through `mid`.
+fn arc_is(d: &cadcraft_doc::Drawing, r: Handle, start: (f64, f64), end: (f64, f64), radius: f64, mid: (f64, f64)) -> bool {
+    let (got, m) = (arcs(d, r), arc_middles(d, r));
+    got.len() == 1 && near(got[0], (start, end, radius)) && (m[0].0 - mid.0).hypot(m[0].1 - mid.1) < 1e-9
+}
+
+#[test]
+fn a_stretch_moves_the_end_of_a_flipped_arc_that_was_inside_its_frame() {
+    // Flip state1 mirrors arc 34 across the x axis, and a mirror swaps an arc's start and end: in
+    // the flipped reference the arc runs from (20, 0) under (28, -4) to (36, 0). A stretch then
+    // moves the end that was inside its frame in the dynamic block, (36, 0), to (30, 0), and the
+    // arc keeps its height of 4 over its chord, now below it; (20, 0) stays. Not flipped, the
+    // block's start (36, 0) moves and the arc rises over the chord. A selection that repeats the
+    // arc mirrors it once; two flip actions holding it mirror it back; a reflection line of no
+    // length mirrors nothing.
+    let over = ((30.0, 0.0), (20.0, 0.0), 5.125, (25.0, 4.0));
+    let under = ((20.0, 0.0), (30.0, 0.0), 5.125, (25.0, -4.0));
+    let cases: [(&str, (f64, f64), &[&[&str]], &str, _); 5] = [
+        ("not flipped", (-10.0, 0.0), &[&["34"]], "Not flipped", over),
+        ("flipped", (-10.0, 0.0), &[&["34"]], "Flipped", under),
+        ("flipped, the arc held twice", (-10.0, 0.0), &[&["34", "34"]], "Flipped", under),
+        ("flipped by two actions", (-10.0, 0.0), &[&["34"], &["34"]], "Flipped", over),
+        ("flipped across no line", (0.0, 0.0), &[&["34"]], "Flipped", over),
+    ];
+    for (case, end, held, state, (s, e, radius, mid)) in cases {
+        let (mut d, r) = door_reference(&door_with_flip(end, held, false));
+        cadcraft_doc::dynblock::set_property(&mut d, r, "Flip state1", state).unwrap();
+        let mirrored = s == under.0;
+        let (s0, e0, m0) = if mirrored { ((20.0, 0.0), (36.0, 0.0), (28.0, -4.0)) } else { ((36.0, 0.0), (20.0, 0.0), (28.0, 4.0)) };
+        assert!(arc_is(&d, r, s0, e0, 10.0, m0), "{case}, before the stretch: {:?} {:?}", arcs(&d, r), arc_middles(&d, r));
+        cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+        assert!(arc_is(&d, r, s, e, radius, mid), "{case}: {:?} {:?}", arcs(&d, r), arc_middles(&d, r));
+        assert_eq!(shapes(&d, r)[0], [(0.0, 0.0), (30.0, 0.0)], "{case}");
+    }
+}
+
+#[test]
+fn a_flip_and_a_stretch_in_one_change_move_the_arc_alike_in_either_order() {
+    // Size Narrow sets Width to 30 and flips arc 34 in one change. Whether the flip action comes
+    // before the stretch (the arc is mirrored, so the stretch moves its end) or after it (the
+    // stretch moves its start, then it is mirrored), the arc ends from (20, 0) under (25, -4) to
+    // (30, 0). Size Wide then sets Width back to 36 and flips the flipped reference back in one
+    // change: the flip first mirrors the arc back (the stretch moves its start), the flip after
+    // finds it still mirrored (the stretch moves its end); either way the arc is as the block has
+    // it again.
+    for first in [true, false] {
+        let (mut d, r) = door_reference(&door_with_flip((-10.0, 0.0), &[&["34"]], first));
+        let m = dynamic_block(&d, "Door").unwrap();
+        let order: Vec<i32> = m.actions.iter().filter(|a| matches!(a.kind, ActionKind::Flip | ActionKind::Stretch { .. })).map(|a| a.node).collect();
+        assert_eq!(order, if first { [8, 3] } else { [3, 8] });
+        cadcraft_doc::dynblock::set_property(&mut d, r, "Size", "Narrow").unwrap();
+        let p = props(&d, &r.hex()).1;
+        let shown: Vec<(&str, &str)> = p.iter().map(|(n, v, _)| (n.as_str(), v.as_str())).collect();
+        assert!(shown.contains(&("Width", "30.0000")) && shown.contains(&("Flip state1", "Flipped")), "{shown:?}");
+        assert!(arc_is(&d, r, (20.0, 0.0), (30.0, 0.0), 5.125, (25.0, -4.0)), "flip first {first}: {:?} {:?}", arcs(&d, r), arc_middles(&d, r));
+        cadcraft_doc::dynblock::set_property(&mut d, r, "Size", "Wide").unwrap();
+        let p = props(&d, &r.hex()).1;
+        let shown: Vec<(&str, &str)> = p.iter().map(|(n, v, _)| (n.as_str(), v.as_str())).collect();
+        assert!(shown.contains(&("Width", "36.0000")) && shown.contains(&("Flip state1", "Not flipped")), "{shown:?}");
+        assert!(arc_is(&d, r, (36.0, 0.0), (20.0, 0.0), 10.0, (28.0, 4.0)), "back, flip first {first}: {:?} {:?}", arcs(&d, r), arc_middles(&d, r));
+    }
+}
+
+/// A HATCH `handle` of the door block, associative or not, with one straight loop through
+/// `points` made from boundary objects `sources`.
+fn hatch(handle: &str, associative: bool, points: &[(f64, f64)], sources: &[&str]) -> String {
+    let mut s = format!(
+        "0 HATCH\n5 {handle}\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbHatch\n10 0\n20 0\n30 0\n210 0\n220 0\n230 1\n2 ANSI31\n70 0\n71 {}\n91 1\n92 3\n72 0\n73 1\n93 {}\n",
+        u8::from(associative),
+        points.len()
+    );
+    for (x, y) in points {
+        s.push_str(&format!("10 {x}\n20 {y}\n"));
+    }
+    s.push_str(&format!("97 {}\n", sources.len()));
+    for h in sources {
+        s.push_str(&format!("330 {h}\n"));
+    }
+    s.push_str("75 0\n76 1\n52 0\n41 1\n77 0\n78 0\n98 0\n");
+    s
+}
+
+/// The first loop of each hatch of reference `r`'s block, in its order.
+fn hatch_loops(d: &cadcraft_doc::Drawing, r: Handle) -> Vec<Vec<(f64, f64)>> {
+    let b = d.block(&block_of(d, &r.hex())).unwrap();
+    b.entities
+        .iter()
+        .filter_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Hatch(h) => Some(h.loops.first()?.vertices.iter().map(|v| (v.p.x, v.p.y)).collect()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn an_associative_hatch_follows_its_stretched_boundary() {
+    // Lines 36 to 39 outline (20,-1)-(36,1). The stretch acts on 36 (bottom), 37 (right) and 38
+    // (top), whose ends at x = 36 are inside the frame, and on hatch 3B. Hatches 3A and 3B are
+    // associative with that outline (3A's second vertex 2e-10 off the lines' ends, as a file's
+    // rounding leaves it); 3C is the same but not associative; 3D's third vertex is 5e-8 off the
+    // lines' ends at (36, 1), more than a rounding (a billionth of 36); 3E's second edge is curved
+    // (bulge 0.5), which its lines can't give back.
+    // AutoCAD 2024 fills an associative hatch again from its stretched boundary: in its own
+    // stretched copies of library blocks, such a hatch's vertices are where its lines' ends went,
+    // whether the stretch acts on the hatch or not. The others keep their loops.
+    let rect = [(20.0, -1.0), (36.0, -1.0), (36.0, 1.0), (20.0, 1.0)];
+    let mut lines = String::new();
+    for (h, a, b) in [("36", rect[0], rect[1]), ("37", rect[1], rect[2]), ("38", rect[2], rect[3]), ("39", rect[3], rect[0])] {
+        lines.push_str(&format!(
+            "0 LINE\n5 {h}\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbLine\n10 {}\n20 {}\n30 0\n11 {}\n21 {}\n31 0\n",
+            a.0, a.1, b.0, b.1
+        ));
+    }
+    let sources = ["36", "37", "38", "39"];
+    let rounded = [(20.0, -1.0), (36.000_000_000_2, -1.0), (36.0, 1.0), (20.0, 1.0)];
+    let off = [(20.0, -1.0), (36.0, -1.0), (36.0 - 5e-8, 1.0), (20.0, 1.0)];
+    let curved = hatch("3E", true, &rect, &sources).replace("72 0\n", "72 1\n").replace("10 36\n20 -1\n", "10 36\n20 -1\n42 0.5\n");
+    let hatches = [
+        hatch("3A", true, &rounded, &sources),
+        hatch("3B", true, &rect, &sources),
+        hatch("3C", false, &rect, &sources),
+        hatch("3D", true, &off, &sources),
+        curved,
+    ];
+    let src = fixture()
+        .replace("71 1\n330 30\n1010 40", "71 5\n330 30\n330 36\n330 37\n330 38\n330 3B\n1010 40")
+        .replace("21 25\n31 0\n0 ENDBLK\n", &format!("21 25\n31 0\n{lines}{}0 ENDBLK\n", hatches.concat()));
+    let (mut d, r) = door_reference(&src);
+    assert_eq!(hatch_loops(&d, r), [rounded.to_vec(), rect.to_vec(), rect.to_vec(), off.to_vec(), rect.to_vec()]);
+    cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+    let stretched = vec![(20.0, -1.0), (30.0, -1.0), (30.0, 1.0), (20.0, 1.0)];
+    // 3B moved whole with the stretch, then took its boundary's points.
+    assert_eq!(hatch_loops(&d, r), [stretched.clone(), stretched, rect.to_vec(), off.to_vec(), rect.to_vec()]);
+}
+
+#[test]
+fn a_hatch_vertex_among_too_many_boundary_points_keeps_its_loop() {
+    // Lines 36 to 39 outline (20,-1)-(35,1), and the stretch acts on 36 (bottom), 37 (right) and 38
+    // (top), whose ends at x = 35 are inside the frame. The hatch's boundary also lists `n` lines
+    // from 40 on, starting `gap` and then 1e-10 more further right of (35, -1) each, and left where
+    // they are. With 14 of them, the vertex at (35, -1) has 16 boundary points within reach (theirs,
+    // and the bottom and right lines' ends) and follows its lines. With 15 it has 17: it can't tell
+    // which line it sits on, so the loop keeps what it has. A gap of 2e-8 puts their starts in the
+    // next cell of the grid, still within a rounding (a billionth of 41) of the vertex.
+    let rect = [(20.0, -1.0), (35.0, -1.0), (35.0, 1.0), (20.0, 1.0)];
+    let line = |h: &str, a: (f64, f64), b: (f64, f64)| {
+        format!("0 LINE\n5 {h}\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbLine\n10 {}\n20 {}\n30 0\n11 {}\n21 {}\n31 0\n", a.0, a.1, b.0, b.1)
+    };
+    let followed = vec![(20.0, -1.0), (29.0, -1.0), (29.0, 1.0), (20.0, 1.0)];
+    for (n, gap, want) in [(14, 0.0, followed), (15, 0.0, rect.to_vec()), (15, 2e-8, rect.to_vec())] {
+        let mut lines = String::new();
+        let mut sources: Vec<String> = Vec::new();
+        for k in 1..=n {
+            let h = format!("{:X}", 0x3F + k);
+            let x = 35.0 + gap + f64::from(k) * 1e-10;
+            lines.push_str(&line(&h, (x, -1.0), (x, -41.0)));
+            sources.push(h);
+        }
+        for (h, a, b) in [("36", rect[0], rect[1]), ("37", rect[1], rect[2]), ("38", rect[2], rect[3]), ("39", rect[3], rect[0])] {
+            lines.push_str(&line(h, a, b));
+            sources.push(h.to_string());
+        }
+        let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
+        let src = fixture()
+            .replace("71 1\n330 30\n1010 40", "71 4\n330 30\n330 36\n330 37\n330 38\n1010 40")
+            .replace("21 25\n31 0\n0 ENDBLK\n", &format!("21 25\n31 0\n{lines}{}0 ENDBLK\n", hatch("3A", true, &rect, &sources)));
+        let (mut d, r) = door_reference(&src);
+        cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+        assert_eq!(hatch_loops(&d, r), [want], "{n} lines {gap} beside the corner");
+    }
 }
 
 #[test]
@@ -795,4 +1194,56 @@ fn a_dynamic_block_with_handles_above_2_pow_48_is_kept() {
     let before = dynamic_block(&d, "Door").expect("the dynamic block with far handles");
     let again = read_dxf(write_dxf(&d).as_bytes()).unwrap();
     assert_eq!(by_node(dynamic_block(&again, "Door").unwrap()), by_node(before));
+}
+
+/// A multiline attribute (LABEL, two lines) in the stretch's selection: when Width changes, the
+/// reference's attribute moves with its definition, its multiline text too.
+#[test]
+fn a_stretch_moves_a_multiline_attributes_text() {
+    let attdef = "0 ATTDEF\n5 3A\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbText\n10 35\n20 0\n30 0\n40 1\n1 SITE\n7 Standard\n100 AcDbAttributeDefinition\n280 0\n3 Label\n2 LABEL\n70 0\n280 1\n71 4\n72 0\n11 35\n21 0\n31 0\n101 Embedded Object\n10 35\n20 0\n30 0\n40 1\n41 0\n46 0\n71 1\n72 5\n1 SITE\\PNAME\n7 Standard\n73 1\n44 1\n";
+    let src = fixture().replace("71 1\n330 30\n1010 40", "71 2\n330 30\n330 3A\n1010 40");
+    // Into Door's block, before its end.
+    let door = src.find("2 Door\n70 0").unwrap();
+    let end = door + src[door..].find("0 ENDBLK").unwrap();
+    let src = format!("{}{attdef}{}", &src[..end], &src[end..]);
+    let mut d = read_dxf(dxf(&src).as_bytes()).unwrap();
+    let def = d
+        .block("Door")
+        .unwrap()
+        .entities
+        .iter()
+        .find_map(|e| if let cadcraft_doc::EntityKind::AttDef(a) = &e.kind { Some(a.clone()) } else { None })
+        .expect("the attribute definition");
+    assert!(def.multiline.is_some(), "a multiline definition");
+    // A reference at (100, 0) with its attribute where the definition puts it.
+    let r = door_at_100(&mut d);
+    d.modify_entity(r, |e| {
+        if let cadcraft_doc::EntityKind::Insert(i) = &mut e.kind {
+            let mut a = def.clone();
+            let m = cadcraft_doc::geom::Mat3::translate(cadcraft_doc::geom::Vec2::new(100.0, 0.0));
+            let mut k = cadcraft_doc::EntityKind::Text(a.text.clone());
+            k.transform(&m);
+            if let cadcraft_doc::EntityKind::Text(t) = k {
+                a.text = t;
+            }
+            a.transform_multiline(&m);
+            i.attribs.push(a);
+        }
+    })
+    .unwrap();
+    // Width 36 → 30: the attribute moves 6 to the left, its multiline text with it.
+    cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+    let Some(cadcraft_doc::EntityKind::Insert(i)) = d.entity(r).map(|e| &e.kind) else { panic!("no reference") };
+    let a = &i.attribs[0];
+    assert_eq!(a.text.insert.x, 129.0);
+    assert_eq!(a.multiline.as_ref().unwrap().mtext.insert.x, 129.0);
+    // Saved (in the drawing's version, 2018: R2000 DXF has no multiline attributes) and reopened:
+    // the moved attribute and its multiline text stay where they went.
+    let again = cadcraft_io::read(&cadcraft_io::write(&d, "door.dxf").unwrap(), "door.dxf").unwrap();
+    let Some(cadcraft_doc::EntityKind::Insert(i)) = again.entity(r).map(|e| &e.kind) else { panic!("no reference after reopening") };
+    let a = &i.attribs[0];
+    assert_eq!((a.text.insert.x, a.text.insert.y), (129.0, 0.0));
+    let m = &a.multiline.as_ref().expect("still multiline").mtext;
+    assert_eq!((m.insert.x, m.insert.y), (129.0, 0.0));
+    assert_eq!(m.contents, r"SITE\PNAME");
 }

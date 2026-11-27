@@ -747,6 +747,15 @@ fn script_runs_commands() {
 }
 
 #[test]
+fn scripts_allow_one_leading_utf8_bom() {
+    for text in ["\u{feff}LINE 0,0 10,10\n\n", "\u{feff}; first comment\r\nLINE 0,0 10,10\r\n\r\n"] {
+        let mut s = Session::new();
+        s.script(text).unwrap();
+        assert_eq!(kinds(&s), vec!["Line"]);
+    }
+}
+
+#[test]
 fn script_splits_line_at_keyword_prompt() {
     let mut s = Session::new();
     s.script("POLYGON 6 200,20 I 15").unwrap();
@@ -1300,6 +1309,62 @@ fn pline_width_answers_taper_the_next_segment() {
     assert_eq!(widths(&p), (0.0, vec![(0.0, 0.0), (0.0, 0.0)]));
 }
 
+/// PLINE against what AutoCAD 2024 stores for the same typed input (black-box: synthetic input
+/// in accoreconsole, read back with `entget` and GETVAR).
+#[test]
+fn pline_undo_mode_and_plinewid_match_autocad() {
+    // Undo after an arc segment returns to line mode, where `_L` is Length (a point gives the
+    // length, along the last segment).
+    let p = typed_pline(
+        "pline -0.702422643378533,-28.46727901968281 -27.912058384977463,-34.74188138168937 -22.546524604415925,32.44142803067136 _U \
+         25.831317263304115,13.510616645626207 _A -33.2372517304228,12.083585785350365 _U _L -22.546524604415925,32.44142803067136",
+    );
+    let want = [
+        (-0.7024226433785329, -28.4672790196828),
+        (-27.91205838497746, -34.74188138168937),
+        (25.83131726330411, 13.5106166456262),
+        (64.48701958199356, 48.21692560701169),
+    ];
+    assert_eq!(p.vertices.len(), want.len(), "{p:?}");
+    for (v, (x, y)) in p.vertices.iter().zip(want) {
+        assert!(v.p.near(Vec2::new(x, y), 1e-9 * x.abs().max(y.abs())) && v.bulge == 0.0, "{p:?}");
+    }
+    // PLINEWID is the width a new polyline starts with…
+    let mut s = Session::new();
+    s.cmdline("(setvar \"PLINEWID\" 0.75)").unwrap();
+    s.cmdline("pline -21.06802233135781,9.943678105070298 -29.261665218975015,-28.460093326613574 7.898763272534772,6.73634194079888").unwrap();
+    s.cmdline("").unwrap();
+    assert!(matches!(&s.doc().unwrap().model.last().unwrap().kind, EntityKind::LwPolyline(p) if p.const_width == 0.75));
+    // …and the ending width of the last Width or Halfwidth answer (half-width 0.5: PLINEWID 1).
+    let mut s = Session::new();
+    s.cmdline("pline -9.151085154682761,12.9438035725412 _W 0.0934460985004879 1.547654372298795").unwrap();
+    assert_eq!(s.doc().unwrap().header.f64("PLINEWID", 0.0), 1.547654372298795);
+    s.cmdline("19.161590651864245,38.23079339857958 26.720225103092986,-9.028145532375504 _H 0.5 0.5 -24.7035288980598,-14.309723714209586").unwrap();
+    s.cmdline("").unwrap();
+    assert_eq!(s.doc().unwrap().header.f64("PLINEWID", 0.0), 1.0);
+    // PLINEWID is an ordinary system variable: 0 until set, typed at the command line or set
+    // with SETVAR, and that width is where the next polyline starts.
+    let mut s = Session::new();
+    let r = s.execute("getvar", &json!({"name": "PLINEWID"})).unwrap();
+    assert_eq!(r["value"].as_f64(), Some(0.0), "{r}");
+    s.cmdline("plinewid 0.5").unwrap();
+    assert_eq!(s.doc().unwrap().header.f64("PLINEWID", 0.0), 0.5);
+    s.cmdline("pline 0,0 10,0").unwrap();
+    s.cmdline("").unwrap();
+    assert!(matches!(&s.doc().unwrap().model.last().unwrap().kind, EntityKind::LwPolyline(p) if p.const_width == 0.5));
+    // The JSON form starts there too, unless it gives a width or its vertices give theirs.
+    let width = |s: &mut Session, p: serde_json::Value| {
+        s.execute("pline", &p).unwrap();
+        match &s.doc().unwrap().model.last().unwrap().kind {
+            EntityKind::LwPolyline(p) => p.const_width,
+            k => panic!("{k:?}"),
+        }
+    };
+    assert_eq!(width(&mut s, json!({"vertices": [[0, 0], [10, 0]]})), 0.5);
+    assert_eq!(width(&mut s, json!({"vertices": [[0, 0], [10, 0]], "width": 0})), 0.0);
+    assert_eq!(width(&mut s, json!({"vertices": [{"p": [0, 0], "startWidth": 1, "endWidth": 2}, [10, 0]]})), 0.0);
+}
+
 #[test]
 fn press_and_drag_selection_window() {
     let mut s = Session::new();
@@ -1549,5 +1614,59 @@ fn setvar_rejects_non_finite_text_for_real_variables() {
             assert!(r.is_err(), "SETVAR {name} {text} was accepted");
             assert_eq!(s.execute("getvar", &json!({"name": name})).unwrap(), before);
         }
+    }
+}
+
+#[test]
+fn a_proxy_is_drawn_but_no_selection_takes_it_in() {
+    // A proxy's graphics are drawn and measured, but saving writes its record unchanged: an edit
+    // could not hold. So a window round a line and a proxy, ALL, SELECTALL and a pick on the
+    // proxy's graphics leave the proxy out, and MOVE moves the line alone.
+    use cadcraft_doc::{Common, Entity, Handle, Line, Space, Unknown, entity_bounds};
+    use cadcraft_geom::Vec3;
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let line = s.doc().unwrap().model.last().unwrap().handle;
+    let drawn = Entity::new(Handle(0), EntityKind::Line(Line { a: Vec3::new(0.0, 5.0, 0.0), b: Vec3::new(10.0, 5.0, 0.0) }));
+    let unknown = Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics: vec![drawn] };
+    let proxy = s.doc_mut().unwrap().add(&Space::Model, Common::default(), EntityKind::Unknown(unknown)).unwrap();
+    let bounds = |s: &Session| entity_bounds(s.doc().unwrap(), s.doc().unwrap().entity(proxy).unwrap(), 0);
+    let before = bounds(&s);
+    assert!(!before.is_empty(), "the proxy measures as its graphics");
+
+    s.idle_click(Vec2::new(5.0, 5.0), false).unwrap();
+    assert_eq!(s.selection(), Vec::<Handle>::new(), "a pick on the proxy's graphics");
+    s.idle_click(Vec2::new(-1.0, -1.0), false).unwrap();
+    s.idle_click(Vec2::new(11.0, 6.0), false).unwrap();
+    assert_eq!(s.selection(), vec![line], "a window round both");
+    s.execute("selectall", &json!({})).unwrap();
+    assert_eq!(s.selection(), vec![line], "SELECTALL");
+
+    s.execute("move", &json!({"delta": [0, 20]})).unwrap();
+    let d = s.doc().unwrap();
+    assert!(matches!(&d.entity(line).unwrap().kind, EntityKind::Line(l) if l.a.y == 20.0), "the line moved");
+    assert_eq!(bounds(&s), before, "the proxy stayed where its record puts it");
+
+    // Handles named outright leave the proxy out too.
+    s.execute("select", &json!({"handles": [proxy.hex(), line.hex()]})).unwrap();
+    assert_eq!(s.selection(), vec![line], "SELECT by handles");
+
+    // Last passes over the proxy drawn last: it takes the line.
+    s.set_selection(Vec::new());
+    s.start("erase").unwrap();
+    s.input(Input::Text("L".into())).unwrap();
+    s.input(Input::Enter).unwrap();
+    let d = s.doc().unwrap();
+    assert!(d.entity(line).is_none(), "Last took the line");
+    assert!(d.entity(proxy).is_some(), "the proxy is kept");
+}
+
+#[test]
+fn additional_tools_keeps_compatible_command_ids() {
+    assert_eq!(crate::cmd::resolve_alias("-blockreplace"), "blockreplace");
+    for id in ["blockreplace", "burst", "breakline", "mocoro", "txt2mtxt"] {
+        let command = crate::cmd::find_command(id).expect("existing command id");
+        assert!(command.menu.contains(&"Additional Tools"), "{id}: {:?}", command.menu);
+        assert!(!command.menu.contains(&"Express Tools"));
     }
 }

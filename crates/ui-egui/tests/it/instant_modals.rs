@@ -25,7 +25,7 @@ fn text_opacity(shapes: &[egui::epaint::ClippedShape], needle: &str) -> Vec<f32>
 fn close_prompt_is_fully_drawn_in_the_frame_of_the_menu_choice() {
     let mut app = CadApp::new(Session::default(), Services::default());
     app.ui.start_tab = false;
-    let mut h = Harness::builder().with_size(vec2(1280.0, 800.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(vec2(1280.0, 800.0)).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(&ui.ctx().clone());
             app.ui(ui);

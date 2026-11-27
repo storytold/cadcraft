@@ -10,13 +10,17 @@ use egui_kittest::kittest::Queryable;
 use serde_json::json;
 
 fn harness(app: CadApp) -> Harness<'static, CadApp> {
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(cadcraft_ui_egui::framework::install_headless)
+        .with_size(vec2(1600.0, 1000.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(5);
     h
 }
@@ -44,6 +48,7 @@ fn copy_in_one_drawing_and_paste_in_another() {
     // CADCraft window pastes): checked on a frame of its own, where egui's output is kept.
     let text = {
         let ctx = egui::Context::default();
+        cadcraft_ui_egui::framework::install_headless(&ctx);
         let mut out = ctx.run_ui(egui::RawInput::default(), |ui| cadcraft_ui_egui::clipboard::mirror(h.state(), ui.ctx()));
         out.textures_delta.clear();
         out.platform_output.commands.iter().find_map(|c| match c {
@@ -70,7 +75,8 @@ fn copy_in_one_drawing_and_paste_in_another() {
     assert_eq!(h.state().session.active, second);
     assert_ne!(second, first);
     assert!(h.state().session.doc().unwrap().model.is_empty());
-    assert!(!h.ctx.egui_wants_keyboard_input(), "the clicked tab doesn't hold the keyboard");
+    let drawing = h.ctx.memory(|memory| memory.has_focus(egui::Id::unique("cadcraft-drawing")));
+    assert!(drawing, "the drawing has the keyboard, not the clicked tab");
     // Ctrl+V: egui reports it as a Paste event with the system clipboard's text.
     h.event(Event::Paste(text));
     h.run_steps(3);
@@ -86,4 +92,19 @@ fn copy_in_one_drawing_and_paste_in_another() {
     assert_eq!(d.model.len(), 2);
     assert!(d.model.iter().any(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block == "DOT")));
     assert!(d.block("DOT").is_some());
+
+    // Smart Excel paste: non-DXF TSV clipboard starts `pastetable` and places a native TABLE.
+    h.event(Event::Paste("Item\tQty\nBolt\t10\nNut\t20\n".into()));
+    h.run_steps(3);
+    assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("pastetable"));
+    h.state_mut().session.input(Input::Point(Vec2::new(200.0, 200.0))).unwrap();
+    h.run_steps(2);
+    let d = h.state().session.doc().unwrap();
+    assert_eq!(d.model.len(), 3);
+    assert!(
+        d.model
+            .iter()
+            .any(|e| matches!(&e.kind, EntityKind::Table(t) if t.cells.len() == 3 && t.col_widths.len() == 2 && t.cells[1][0].text == "Bolt")),
+        "expected 3x2 native Table from pasted TSV"
+    );
 }

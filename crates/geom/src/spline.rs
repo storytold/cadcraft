@@ -6,7 +6,7 @@ use crate::{Bounds2, Vec2};
 /// Largest B-spline degree treated as valid. Basis evaluation is O(degree²) per sample and
 /// tessellation takes O(degree) samples, so an unbounded degree (DXF/HATCH can declare up to
 /// 100 000) turns a tiny spline into billions of iterations (CWE-407). Real splines are low
-/// degree (AutoCAD caps at 11); above this a spline evaluates to its control polygon instead.
+/// degree (`AutoCAD` caps at 11); above this a spline evaluates to its control polygon instead.
 pub const MAX_DEGREE: usize = 64;
 
 /// A (possibly rational) B-spline curve, DXF SPLINE style.
@@ -43,10 +43,10 @@ impl Spline {
         Spline::fit_with(fit, false, FitOptions::default())
     }
 
-    /// Smooth closed (periodic) cubic interpolation through fit points. Chord-length parameters
-    /// include the closing chord; the knot vector is the periodic (unclamped) extension and the
-    /// first `degree` control points repeat at the end, so the curve has continuous tangent and
-    /// curvature at the seam. A repeated closing fit point is dropped.
+    /// Smooth closed cubic interpolation through fit points, as AutoCAD 2024 builds it: through
+    /// the fit points and back to the first, with chord-length parameters, clamped, and with the
+    /// same first derivative at both ends (see `Spline::fit_with`). A repeated closing fit point
+    /// is dropped.
     pub fn from_fit_points_closed(fit: &[Vec2]) -> Spline {
         Spline::fit_with(fit, true, FitOptions::default())
     }
@@ -56,9 +56,29 @@ impl Spline {
         Spline::fit_with(fit, closed, FitOptions::default())
     }
 
-    /// Closed with an unclamped (periodic) knot vector, as DXF flags it (group 70 bit 2).
+    /// Closed and smooth where it closes: AutoCAD's "periodic" (DXF group 70 bit 2), which
+    /// AutoCAD 2024 sets from the curve itself. Either the control points wrap round
+    /// ([`Spline::wraps`]), or the knots are clamped and the curve has the same first derivative
+    /// at both ends, as in AutoCAD's closed fit-point spline. The same direction with another
+    /// length is not enough: AutoCAD clears the bit then too.
     pub fn is_periodic(&self) -> bool {
+        self.wraps() || (self.closed && self.is_valid() && self.closes_smoothly())
+    }
+
+    /// Closed with an unclamped knot vector: the first `degree` control points repeat at the end,
+    /// so the control points wrap round the seam (the knot shape; see [`Spline::is_periodic`]
+    /// for the curve's).
+    pub fn wraps(&self) -> bool {
         self.closed && self.knots.first() != self.knots.get(self.degree)
+    }
+
+    /// The ends meet with the same first derivative (to 1e-9 of its length). The spline must be
+    /// valid.
+    fn closes_smoothly(&self) -> bool {
+        let (lo, hi) = self.domain();
+        let (d0, d1) = (self.derivative(lo), self.derivative(hi));
+        let speed = d0.len().max(d1.len());
+        speed > 0.0 && d0.near(d1, 1e-9 * speed) && self.eval(lo).near(self.eval(hi), 1e-9 * speed * (hi - lo))
     }
 
     pub fn is_valid(&self) -> bool {
@@ -87,6 +107,7 @@ impl Spline {
 
     /// `eval` on a spline `is_valid` has accepted, given its `domain()`, so sampling many points
     /// validates once (`is_valid` walks the knot vector).
+    #[expect(clippy::many_single_char_names, reason = "De Boor evaluation keeps the standard p/w/b/k notation shared with basis_ref.")]
     fn eval_valid(&self, t: f64, lo: f64, hi: f64) -> Vec2 {
         let n = self.control.len().saturating_sub(1);
         let t = t.clamp(lo, hi);
@@ -128,16 +149,22 @@ impl Spline {
 
     /// The segments for a control polygon `ratio` times the tolerance: dimensionless, so a
     /// spline and its scaled copy sample alike at any scale.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "The floating count is clamped to 8..=2000 before its truncating conversion to usize."
+    )]
     fn segments_for(&self, ratio: f64) -> usize {
         let n = (ratio.sqrt() * 2.0).clamp(8.0, 2000.0) as usize * self.degree.max(1);
         n.min(MAX_SAMPLES)
     }
 
     fn polygon_length(&self) -> f64 {
-        self.control.windows(2).map(|w| w.first().zip(w.get(1)).map(|(a, b)| a.dist(*b)).unwrap_or(0.0)).sum()
+        self.control.windows(2).map(|w| w.first().zip(w.get(1)).map_or(0.0, |(a, b)| a.dist(*b))).sum()
     }
 
     /// `n + 1` points evenly spaced in parameter over the domain (the spline must be valid).
+    #[expect(clippy::cast_precision_loss, reason = "Internal callers cap sample counts at MAX_SAMPLES (4000), so every index is exact as f64.")]
     fn samples(&self, n: usize) -> impl Iterator<Item = Vec2> + '_ {
         let (lo, hi) = self.domain();
         (0..=n).map(move |i| self.eval_valid(lo + (hi - lo) * i as f64 / n as f64, lo, hi))
@@ -159,6 +186,12 @@ impl Spline {
     /// is its control polygon, so its control box is exact; a degenerate spline gets its control
     /// box, which contains the curve (the box of the finite control points when one is not
     /// finite: `hull` skips it, but it would poison every sample).
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "Budgets and per-span counts are capped at MAX_SAMPLES; span fractions are nonnegative before conversion."
+    )]
     pub fn bounds(&self) -> Bounds2 {
         let hull = Bounds2::from_points(self.control.iter().copied());
         let diag = hull.min.dist(hull.max);
@@ -275,6 +308,10 @@ impl Spline {
 /// control points took minutes).
 const MAX_SAMPLES: usize = 4000;
 
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "Knot indices are sampled as normalized f64 parameters; any precision loss would only be beyond 2^53 allocated control points."
+)]
 pub(crate) fn clamped_uniform_knots(n: usize, degree: usize) -> Vec<f64> {
     let mut k = vec![0.0; degree + 1];
     let inner = n.saturating_sub(degree + 1);
@@ -292,7 +329,7 @@ pub(crate) fn find_span(n: usize, p: usize, u: f64, knots: &[f64]) -> usize {
     }
     let mut low = p;
     let mut high = n + 1;
-    let mut mid = (low + high) / 2;
+    let mut mid = usize::midpoint(low, high);
     let mut guard = 0;
     while guard < 200 {
         guard += 1;
@@ -305,7 +342,7 @@ pub(crate) fn find_span(n: usize, p: usize, u: f64, knots: &[f64]) -> usize {
         } else {
             break;
         }
-        mid = (low + high) / 2;
+        mid = usize::midpoint(low, high);
     }
     mid
 }
@@ -325,6 +362,11 @@ pub(crate) fn basis(span: usize, u: f64, p: usize, knots: &[f64]) -> Vec<f64> {
 
 /// `basis` into `n[..=p]`, with `left` and `right` as scratch; each must hold `p + 1` values or
 /// `n` stays as it was.
+#[expect(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    reason = "Spline indices are bounded by slice lengths, and max(0) makes the converted index nonnegative."
+)]
 fn basis_into(span: usize, u: f64, p: usize, knots: &[f64], n: &mut [f64], left: &mut [f64], right: &mut [f64]) {
     if n.len() <= p || left.len() <= p || right.len() <= p {
         return;
@@ -347,21 +389,65 @@ fn basis_into(span: usize, u: f64, p: usize, knots: &[f64], n: &mut [f64], left:
     }
 }
 
-/// Gaussian elimination with partial pivoting.
+/// Gaussian elimination with partial pivoting. The interpolation and least-squares matrices are
+/// banded, so every loop is limited to the band (lower width `kl`, upper width `ku`, measured from
+/// the matrix; partial pivoting widens the upper band to at most `kl + ku`). The skipped operations
+/// only combine entries that are exactly `+0.0` (they stay `+0.0` through the full sweep), so the
+/// result is bit for bit that of the full sweep (for finite input that does not overflow). A matrix with full bandwidth (the cyclic matrix of
+/// a closed fit) costs what it did before.
+///
+/// A skipped `0 * x` is not zero when `x` is NaN or infinite, so a matrix or right-hand side with
+/// NaN, infinity or magnitudes above `1e100` (which could overflow) takes the full sweep, and so
+/// does a back-substitution row whose banded sum is zero (skipped zero terms can flip its sign).
 #[allow(clippy::needless_range_loop)]
+#[expect(clippy::many_single_char_names, reason = "Gaussian elimination keeps conventional matrix/row/column notation.")]
 pub(crate) fn solve(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
+    #[cfg(test)]
+    if tests::DENSE_ORACLE.get() {
+        return tests::solve_dense(a, b);
+    }
     let n = b.len();
+    // Per row: how far its non-zero entries reach left and right of the diagonal, and whether one
+    // is NaN, infinite or large enough to overflow.
+    let measure = |r: usize, row: &[f64]| {
+        // Bit test, not `!= 0.0`: a stored `-0.0` is not the `+0.0` the skipped entries rely on.
+        let row = row.get(..n).unwrap_or(row);
+        let Some(first) = row.iter().position(|v| v.to_bits() != 0) else { return (0, 0, false) };
+        let last = row.iter().rposition(|v| v.to_bits() != 0).unwrap_or(first);
+        let wild = row.get(first..=last).is_some_and(|band| band.iter().any(|v| v.is_nan() || v.abs() > 1e100));
+        (r.saturating_sub(first), last.saturating_sub(r), wild)
+    };
+    let join = |x: (usize, usize, bool), m: (usize, usize, bool)| (x.0.max(m.0), x.1.max(m.1), x.2 | m.2);
+    // A last row that reaches column 0 (the cyclic matrix of a closed fit) makes every range of the
+    // sweep full-width whatever the other rows hold, so they need no measuring.
+    let mut m = (0usize, 0usize, false);
+    for r in [0, n.saturating_sub(1)] {
+        if let Some(row) = a.get(r) {
+            m = join(m, measure(r, row));
+        }
+    }
+    // (kl = n - 1 widens every range to the full matrix, so the unmeasured rows cannot matter.)
+    if m.0 + 1 < n {
+        m = a.iter().enumerate().take(n).fold(m, |x, (r, row)| join(x, measure(r, row)));
+    }
+    let (mut kl, mut ku, wild) = m;
+    if wild || b.iter().any(|v| v.is_nan() || v.abs() > 1e100) {
+        (kl, ku) = (n, n);
+    }
+    let kw = ku + kl;
     for c in 0..n {
-        let piv = (c..n).max_by(|&i, &j| a[i][c].abs().total_cmp(&a[j][c].abs()))?;
+        let end = (c + kl).min(n - 1) + 1;
+        let piv = (c..end).max_by(|&i, &j| a[i][c].abs().total_cmp(&a[j][c].abs()))?;
         if a[piv][c].abs() < 1e-14 {
             return None;
         }
         a.swap(c, piv);
         b.swap(c, piv);
-        for r in c + 1..n {
+        let kend = (c + kw).min(n - 1) + 1;
+        for r in c + 1..end {
             let f = a[r][c] / a[c][c];
             if f != 0.0 {
-                for k in c..n {
+                for k in c..kend {
                     a[r][k] -= f * a[c][k];
                 }
                 b[r] -= f * b[c];
@@ -370,7 +456,12 @@ pub(crate) fn solve(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
     }
     let mut x = vec![0.0; n];
     for r in (0..n).rev() {
-        let s: f64 = (r + 1..n).map(|k| a[r][k] * x[k]).sum();
+        let end = (r + kw).min(n - 1) + 1;
+        let mut s: f64 = (r + 1..end).map(|k| a[r][k] * x[k]).sum();
+        if s == 0.0 && end < n {
+            // The skipped terms are signed zeros; added to a zero they can flip its sign.
+            s = (r + 1..n).map(|k| a[r][k] * x[k]).sum();
+        }
         x[r] = (b[r] - s) / a[r][r];
     }
     Some(x)

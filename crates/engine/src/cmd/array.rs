@@ -27,6 +27,10 @@ mod edit;
 
 /// Most preview entities drawn while the array is edited.
 const PREVIEW_LIMIT: usize = 2000;
+/// Most objects whose key points are searched for a Key point base point.
+const MAX_KEY_OBJECTS: usize = 10_000;
+/// The prompt after the Key point option of a base point.
+const KEY_POINT_PROMPT: &str = "Specify key point on source objects to use as base point";
 /// Keyword-only prompts: each typed token is matched on its own (no free text).
 const KEYWORDS: Accept = Accept { point: false, number: false, text: false, select: false, enter: true };
 
@@ -41,13 +45,13 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("arrayrect", "Rectangular Array", run_arrayrect)
             .menu(&["Modify", "Array", "Rectangular Array"])
             .params(
-                "{handles?, rows, cols, rowSpacing, colSpacing, levels? (1), levelSpacing?, rowElevation?, axisAngle? (degrees), base? ([x, y], default the objects' centre), associative?: bool (default ARRAYASSOCIATIVITY, on)} → {handle (the array, when associative), created (copies)}",
+                "{handles?, rows, cols, rowSpacing, colSpacing, levels? (1), levelSpacing?, rowElevation?, axisAngle? (degrees), base? ([x, y], default the objects' centre), keyPoint? ([x, y]: the base point is the objects' key point nearest it), associative?: bool (default ARRAYASSOCIATIVITY, on)} → {handle (the array, when associative), created (copies)}",
             )
             .interactive(|_| Ok(Box::new(RectM::default()))),
         CommandSpec::new("arraypolar", "Polar Array", run_arraypolar)
             .menu(&["Modify", "Array", "Polar Array"])
             .params(
-                "{handles?, center, count, angle? (degrees, default 360), rotate?: bool, rows? (1), rowSpacing?, rowElevation?, levels? (1), levelSpacing?, base? ([x, y], default the first object's centre), associative?: bool (default ARRAYASSOCIATIVITY, on)} → {handle (the array, when associative), created (copies)}",
+                "{handles?, center, count, angle? (degrees, default 360), rotate?: bool, rows? (1), rowSpacing?, rowElevation?, levels? (1), levelSpacing?, base? ([x, y], default the first object's centre), keyPoint? ([x, y]: the base point is the objects' key point nearest it), associative?: bool (default ARRAYASSOCIATIVITY, on)} → {handle (the array, when associative), created (copies)}",
             )
             .interactive(|_| Ok(Box::new(PolarM::default()))),
         CommandSpec::new("-array", "Array", classic::run_classic)
@@ -178,14 +182,34 @@ fn create(s: &mut Session, objs: &[Handle], base: Vec2, p: ArrayParams, assoc: b
     Ok(json!({ "created": n }))
 }
 
+/// The most objects EXPLODE of one associative array makes from its source objects (ten times the
+/// default MAXARRAY).
+const MAX_EXPLODED_OBJECTS: usize = 1_000_000;
+
 /// EXPLODE of an associative array: every item becomes the objects of its block (the source
 /// objects, or a replacement block's reference), in world coordinates. `None` for other objects.
+///
+/// An array that would explode into more than [`MAX_EXPLODED_OBJECTS`] objects (items times the
+/// objects of the source block, which a file sets freely) is not expanded here: `None`, so EXPLODE
+/// takes the array block's own items.
 pub(crate) fn explode_array(d: &Drawing, e: &Entity) -> Option<Vec<Entity>> {
     let EntityKind::Insert(ins) = &e.kind else { return None };
     let p = d.array_params(e)?;
     let blk = d.block(&ins.block)?;
     let m = ins.transform(blk.base.xy());
-    let mut out = Vec::new();
+    // Count first: a hostile array must be refused before any entity is cloned.
+    let total = blk
+        .entities
+        .iter()
+        .map(|it| match &it.kind {
+            EntityKind::Insert(i) if i.block.eq_ignore_ascii_case(&p.source) => d.block(&i.block).map_or(1, |b| b.entities.len()),
+            _ => 1,
+        })
+        .fold(0usize, usize::saturating_add);
+    if total > MAX_EXPLODED_OBJECTS {
+        return None;
+    }
+    let mut out = Vec::with_capacity(total);
     for item in blk.entities.iter() {
         let item = placed(e, item, &m);
         let source = match &item.kind {
@@ -193,7 +217,9 @@ pub(crate) fn explode_array(d: &Drawing, e: &Entity) -> Option<Vec<Entity>> {
             _ => None,
         };
         match source {
-            Some((im, b)) => out.extend(b.entities.iter().map(|se| placed(&item, se, &im))),
+            Some((im, b)) => {
+                out.extend(b.entities.iter().map(|se| placed(&item, se, &im)));
+            }
             None => out.push(item),
         }
     }
@@ -222,6 +248,62 @@ fn placed(parent: &Entity, child: &Entity, m: &Mat3) -> Entity {
 
 fn bounds(d: &Drawing, hs: &[Handle]) -> Bounds2 {
     hs.iter().filter_map(|h| d.entity(*h).map(|e| cadcraft_doc::entity_bounds(d, e, 0))).fold(Bounds2::EMPTY, |a, b| a.union(&b))
+}
+
+/// The key point of `ents`, placed by `m`, nearest `at`: one of their grips (end points,
+/// midpoints, centres, vertices, insertion points). `None` when they have none. More than
+/// [`MAX_KEY_OBJECTS`] objects are refused: searching only some could miss the nearest one.
+pub(crate) fn nearest_key_point<'a>(ents: impl Iterator<Item = &'a Entity>, m: &Mat3, at: Vec2) -> Result<Option<Vec2>> {
+    if !at.is_finite() {
+        return Ok(None);
+    }
+    let stretched = m.similarity_scale().is_none();
+    let mut best: Option<(Vec2, f64)> = None;
+    for (n, e) in ents.enumerate() {
+        if n >= MAX_KEY_OBJECTS {
+            return Err(other(format!("Too many objects to search for a key point (at most {MAX_KEY_OBJECTS}); specify a point.")));
+        }
+        let k = match &e.kind {
+            // Under an uneven scale a circle is drawn as an ellipse: its key points are the ellipse's.
+            EntityKind::Circle(c) if stretched => {
+                let g = cadcraft_geom::Ellipse::full(c.center.xy(), Vec2::X * c.radius, 1.0).transformed(m);
+                EntityKind::Ellipse(cadcraft_doc::Ellipse {
+                    center: g.center.to3(c.center.z),
+                    major: g.major.to3(0.0),
+                    ratio: g.ratio,
+                    start: g.start,
+                    end: g.end,
+                })
+            }
+            kind => {
+                let mut k = kind.clone();
+                k.transform(m);
+                k
+            }
+        };
+        for g in k.grips().into_iter().filter(|g| g.is_finite()) {
+            let d = g.dist(at);
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((g, d));
+            }
+        }
+    }
+    Ok(best.map(|b| b.0))
+}
+
+/// `keyPoint` of a JSON form: absent or null is none; anything else must be a point, rather than
+/// be taken as none and the base point found another way.
+pub(crate) fn key_point_param(cmd: &str, p: &Value) -> Result<Option<Vec2>> {
+    match p.get("keyPoint") {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => point_param(p, "keyPoint").map(Some).ok_or_else(|| bad(cmd, "`keyPoint` must be a point [x, y]")),
+    }
+}
+
+/// The key point of objects `hs` in the drawing nearest `at`.
+pub(crate) fn key_point_of(d: &Drawing, hs: &[Handle], at: Vec2) -> Result<Vec2> {
+    nearest_key_point(hs.iter().filter_map(|h| d.entity(*h)).map(|e| &**e), &Mat3::IDENTITY, at)?
+        .ok_or_else(|| other("The objects have no key point; specify a point."))
 }
 
 /// The centre of the first object (the point a non-rotated polar copy is moved by).
@@ -286,21 +368,36 @@ fn preview_copies(s: &Session, hs: &[Handle], mats: impl Iterator<Item = Mat3>) 
 fn other(m: impl Into<String>) -> EngineError {
     EngineError::Other(m.into())
 }
+/// The fill angle (degrees) that gives `b` between `items` items, with the command
+/// line's own rule and error messages.
+fn fill_for_between(items: u64, b: f64) -> Result<f64> {
+    if !b.is_finite() || b.abs() < 1e-9 {
+        return Err(other("Requires a nonzero angle."));
+    }
+    let n = items.max(1) as f64;
+    let fill = if (b.abs() * n - 360.0).abs() < 1e-9 { 360.0 * b.signum() } else { b * (n - 1.0).max(1.0) };
+    if fill.abs() > 360.0 + 1e-9 {
+        return Err(other("The items would span more than 360 degrees; enter a smaller angle or fewer items."));
+    }
+    Ok(fill.clamp(-360.0, 360.0))
+}
 
 fn fmt(v: f64) -> String {
     format!("{v:.4}")
 }
 
-/// A count typed at a prompt (Enter keeps `cur`); `None` for inputs the prompt ignores.
+/// A count typed at a prompt (Enter keeps `cur`); `None` for inputs the prompt ignores. A whole
+/// number as typed: AutoCAD 2024 takes +3 and 03 at its array counts and refuses 5.0, 1e1, 8/2
+/// and 3' (measured at ARRAYRECT's rows and columns, ARRAYPOLAR's items and rows, and -ARRAY).
 fn count(i: &Input, cur: u64, max: u64) -> Result<Option<u64>> {
     match i {
         Input::Enter => Ok(Some(cur)),
         Input::Text(t) => t
             .trim()
-            .parse::<f64>()
+            .parse::<u64>()
             .ok()
-            .filter(|v| v.fract() == 0.0 && *v >= 1.0 && *v <= max as f64)
-            .map(|v| Some(v as u64))
+            .filter(|v| (1..=max).contains(v))
+            .map(Some)
             .ok_or_else(|| other(format!("Requires an integer between 1 and {max} (MAXARRAY limits the size of the array)."))),
         _ => Ok(None),
     }
@@ -342,7 +439,7 @@ fn run_array(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// A count parameter (at least 1); a missing key gives the default, an invalid value is refused.
-fn count_or(cmd: &str, p: &Value, key: &str, default: u64) -> Result<u64> {
+pub(crate) fn count_or(cmd: &str, p: &Value, key: &str, default: u64) -> Result<u64> {
     match p.get(key) {
         None | Some(Value::Null) => Ok(default),
         Some(v) => v.as_u64().filter(|n| *n >= 1).ok_or_else(|| bad(cmd, format!("`{key}` must be a whole number of at least 1"))),
@@ -364,9 +461,10 @@ fn run_arrayrect(s: &mut Session, p: &Value) -> Result<Value> {
         row_elevation: f64_or(p, "rowElevation", 0.0),
     });
     let rs = f64_or(p, "rowSpacing", 1.0);
-    let base = match point_param(p, "base") {
-        Some(b) => b,
-        None => Some(bounds(s.doc()?, &hs).center()).filter(|c| c.is_finite()).unwrap_or_default(),
+    let base = match (key_point_param("arrayrect", p)?, point_param(p, "base")) {
+        (Some(k), _) => key_point_of(s.doc()?, &hs, k)?,
+        (None, Some(b)) => b,
+        (None, None) => Some(bounds(s.doc()?, &hs).center()).filter(|c| c.is_finite()).unwrap_or_default(),
     };
     let p2 = params(kind, levels, f64_or(p, "levelSpacing", rs));
     let associative = bool_or(p, "associative", assoc_default(s));
@@ -380,7 +478,10 @@ fn run_arraypolar(s: &mut Session, p: &Value) -> Result<Value> {
     let rows = count_or("arraypolar", p, "rows", 1)?;
     let levels = count_or("arraypolar", p, "levels", 1)?;
     check_size(s, n.saturating_mul(rows).saturating_mul(levels), hs.len())?;
-    let base = point_param(p, "base").or_else(|| s.doc().ok().and_then(|d| first_center(d, &hs))).unwrap_or(c);
+    let base = match key_point_param("arraypolar", p)? {
+        Some(k) => key_point_of(s.doc()?, &hs, k)?,
+        None => point_param(p, "base").or_else(|| s.doc().ok().and_then(|d| first_center(d, &hs))).unwrap_or(c),
+    };
     let row_spacing = f64_or(p, "rowSpacing", 1.0);
     let fill = f64_or(p, "angle", 360.0);
     if !(fill.abs() >= 1e-9 && fill.abs() <= 360.0 + 1e-9) {
@@ -481,6 +582,8 @@ enum RStage {
     Main,
     Assoc,
     Base,
+    /// Base point: Key point (a grip of the source objects).
+    BaseKey,
     /// COUnt: columns, then rows.
     CountCols,
     CountRows,
@@ -604,6 +707,45 @@ impl RectM {
         };
         Ok(Step::Continue)
     }
+
+    fn live(&self) -> crate::ArrayLive {
+        crate::ArrayLive {
+            kind: crate::ArrayLiveKind::Rectangular,
+            cols: self.cols,
+            rows: self.rows,
+            col_spacing: self.cs,
+            row_spacing: self.rs,
+            levels: self.levels,
+            level_spacing: self.ls,
+            row_elevation: self.elev,
+            associative: self.assoc,
+            items: 0,
+            fill: 0.0,
+            rotate: false,
+            center: None,
+            between: None,
+        }
+    }
+
+    /// Apply the array window's values: they are validated first, so a refused value leaves the
+    /// command exactly as it was.
+    fn apply_live(&mut self, s: &Session, v: &crate::ArrayLive) -> Result<()> {
+        if v.kind != crate::ArrayLiveKind::Rectangular {
+            return Err(other("That is a polar array; these are the rectangular parameters."));
+        }
+        if v.cols < 1 || v.rows < 1 || v.levels < 1 {
+            return Err(other("Requires at least one column, row and level."));
+        }
+        let levels = if v.associative { v.levels } else { 1 };
+        check_size(s, v.rows.saturating_mul(v.cols).saturating_mul(levels), self.objs.len())?;
+        if ![v.col_spacing, v.row_spacing, v.level_spacing, v.row_elevation].iter().all(|d| d.is_finite()) {
+            return Err(other("Requires finite distances."));
+        }
+        (self.cols, self.rows, self.levels) = (v.cols, v.rows, v.levels);
+        (self.cs, self.rs, self.ls, self.elev) = (v.col_spacing, v.row_spacing, v.level_spacing, v.row_elevation);
+        self.assoc = v.associative;
+        Ok(())
+    }
 }
 
 fn yes(b: bool) -> &'static str {
@@ -616,6 +758,16 @@ fn assoc_prompt(cur: bool) -> Prompt {
 }
 
 impl Interactive for RectM {
+    fn array_live(&self) -> Option<crate::ArrayLive> {
+        Some(self.live())
+    }
+    fn set_array_live(&mut self, s: &mut Session, v: &crate::ArrayLive) -> Result<()> {
+        self.apply_live(s, v)
+    }
+    fn array_set_main(&mut self) -> bool {
+        self.stage = RStage::Main;
+        true
+    }
     fn name(&self) -> &'static str {
         "ARRAYRECT"
     }
@@ -641,6 +793,7 @@ impl Interactive for RectM {
                 .default("eXit"),
             Assoc => assoc_prompt(self.assoc),
             Base => Prompt::new("Specify base point", Accept::POINT).kw(&["Key point"]).default("centroid"),
+            BaseKey => Prompt::new(KEY_POINT_PROMPT, Accept::POINT),
             CountCols | ColsCount => cols(),
             CountRows | RowsCount => rows(),
             SpaceCols => dist("Specify the distance between columns", self.cs).kw(&["Unit cell"]),
@@ -690,10 +843,12 @@ impl Interactive for RectM {
                 self.base = self.centroid;
                 Main
             }
-            (Base, Input::Keyword(_)) => {
-                s.echo("Key points are not available yet; specify a point.");
-                Base
+            (Base, Input::Keyword(_)) => BaseKey,
+            (BaseKey, Input::Point(p)) => {
+                self.base = key_point_of(s.doc()?, &self.objs, *p)?;
+                Main
             }
+            (BaseKey, Input::Enter) => Base,
             (CountCols | ColsCount, _) => match count(&i, self.cols, max_count(s, self.rows.saturating_mul(self.levels), n))? {
                 Some(c) => {
                     self.cols = c;
@@ -836,6 +991,9 @@ enum PStage {
     Main,
     Assoc,
     Base,
+    /// Key point of the base point asked from the center prompt, or from the main prompt.
+    CenterBaseKey,
+    BaseKey,
     Items,
     Between,
     Fill,
@@ -902,9 +1060,15 @@ impl PolarM {
     fn ready(&mut self, s: &mut Session) -> Step {
         self.stage = PStage::Center;
         self.assoc = assoc_default(s);
+        // Start at the centre prompt, pre-filled with the selection's centre.
+        self.center = Vec2::ZERO;
         // Rows and levels default to 1.5 × the selection's size apart.
         if let Ok(d) = s.doc() {
             let b = bounds(d, &self.objs);
+            let c = b.center();
+            if c.is_finite() {
+                self.center = c;
+            }
             let size = b.width().max(b.height());
             if size.is_finite() && size > 1e-9 {
                 (self.rs, self.ls) = (size * 1.5, size * 1.5);
@@ -989,9 +1153,89 @@ impl PolarM {
         };
         d.filter(|d| d.is_finite() && d.abs() > 1e-12).map(Some).ok_or_else(|| other("Requires a nonzero distance."))
     }
+    fn live(&self) -> crate::ArrayLive {
+        crate::ArrayLive {
+            kind: crate::ArrayLiveKind::Polar,
+            cols: 0,
+            rows: self.rows,
+            col_spacing: 0.0,
+            row_spacing: self.rs,
+            levels: self.levels,
+            level_spacing: self.ls,
+            row_elevation: self.elev,
+            associative: self.assoc,
+            items: self.items,
+            fill: self.fill,
+            rotate: self.rotate,
+            center: Some(self.center),
+            between: Some(self.between()),
+        }
+    }
+
+    /// Apply the array window's values: they are validated first, so a refused value leaves the
+    /// command exactly as it was.
+    fn apply_live(&mut self, s: &Session, v: &crate::ArrayLive) -> Result<()> {
+        if v.kind != crate::ArrayLiveKind::Polar {
+            return Err(other("That is a rectangular array; these are the polar parameters."));
+        }
+        if v.items < 1 || v.rows < 1 || v.levels < 1 {
+            return Err(other("Requires at least one item, row and level."));
+        }
+        let levels = if v.associative { v.levels } else { 1 };
+        check_size(s, v.rows.saturating_mul(v.items).saturating_mul(levels), self.objs.len())?;
+        // The Angle between field derives the fill; an edited Fill angle always wins.
+        let between_changed = v.between.is_some_and(|b| !b.is_finite() || (b - self.between()).abs() > 1e-9);
+        let fill_changed = (v.fill - self.fill).abs() > 1e-9;
+        let fill = match v.between {
+            Some(b) if between_changed && !fill_changed => fill_for_between(v.items, b)?,
+            _ => v.fill,
+        };
+        if !fill.is_finite() || fill.abs() <= 0.0 || fill.abs() > 360.0 {
+            return Err(other("Requires a fill angle between -360 and 360 degrees (not 0)."));
+        }
+        if ![v.row_spacing, v.level_spacing, v.row_elevation].iter().all(|d| d.is_finite()) {
+            return Err(other("Requires finite distances."));
+        }
+        if let Some(c) = v.center
+            && !c.is_finite()
+        {
+            return Err(other("Requires a finite center point."));
+        }
+        (self.items, self.rows, self.levels) = (v.items, v.rows, v.levels);
+        (self.rs, self.ls, self.elev) = (v.row_spacing, v.level_spacing, v.row_elevation);
+        self.fill = fill;
+        self.rotate = v.rotate;
+        self.assoc = v.associative;
+        // The centre is always taken, but the command only moves on when it actually changed;
+        // the window copying the prefilled centre straight back never advances.
+        if let Some(c) = v.center {
+            if c != self.center && self.stage == PStage::Center {
+                self.stage = PStage::Main;
+            }
+            self.center = c;
+        }
+        Ok(())
+    }
 }
 
 impl Interactive for PolarM {
+    fn array_live(&self) -> Option<crate::ArrayLive> {
+        Some(self.live())
+    }
+    fn set_array_live(&mut self, s: &mut Session, v: &crate::ArrayLive) -> Result<()> {
+        self.apply_live(s, v)
+    }
+    fn array_set_main(&mut self) -> bool {
+        if matches!(self.stage, PStage::Center | PStage::CenterBase | PStage::CenterBaseKey) {
+            return false;
+        }
+        self.stage = PStage::Main;
+        true
+    }
+    fn array_pick_center(&mut self) -> bool {
+        self.stage = PStage::Center;
+        true
+    }
     fn name(&self) -> &'static str {
         "ARRAYPOLAR"
     }
@@ -1012,6 +1256,7 @@ impl Interactive for PolarM {
         match self.stage {
             Center => Prompt::new("Specify center point of array", Accept::POINT).kw(&["Base point", "Axis of rotation"]),
             CenterBase | Base => Prompt::new("Specify base point", Accept::POINT).kw(&["Key point"]).default("centroid"),
+            CenterBaseKey | BaseKey => Prompt::new(KEY_POINT_PROMPT, Accept::POINT),
             Main => Prompt::new("Select grip to edit array", Accept::POINT)
                 .kw(&["ASsociative", "Base point", "Items", "Angle between", "Fill angle", "ROWs", "Levels", "ROTate items", "eXit"])
                 .default("eXit"),
@@ -1070,10 +1315,14 @@ impl Interactive for PolarM {
                 self.base = None;
                 if stage == CenterBase { Center } else { Main }
             }
-            (CenterBase | Base, Input::Keyword(_)) => {
-                s.echo("Key points are not available yet; specify a point.");
-                stage
+            (CenterBase, Input::Keyword(_)) => CenterBaseKey,
+            (Base, Input::Keyword(_)) => BaseKey,
+            (CenterBaseKey | BaseKey, Input::Point(p)) => {
+                self.base = Some(key_point_of(s.doc()?, &self.objs, *p)?);
+                if stage == CenterBaseKey { Center } else { Main }
             }
+            (CenterBaseKey, Input::Enter) => CenterBase,
+            (BaseKey, Input::Enter) => Base,
             (Items, _) => match count(&i, self.items, max_count(s, self.rows.saturating_mul(self.levels), n))? {
                 Some(c) => {
                     self.items = c;
@@ -1142,15 +1391,7 @@ impl Interactive for PolarM {
             (Between, Input::Enter) => Main,
             (Between, _) => match angle(&i, self.between(), &s.angle_settings())? {
                 Some(b) => {
-                    if b.abs() < 1e-9 {
-                        return Err(other("Requires a nonzero angle."));
-                    }
-                    let n = self.items as f64;
-                    let fill = if (b.abs() * n - 360.0).abs() < 1e-9 { 360.0 * b.signum() } else { b * (n - 1.0).max(1.0) };
-                    if fill.abs() > 360.0 + 1e-9 {
-                        return Err(other("The items would span more than 360 degrees; enter a smaller angle or fewer items."));
-                    }
-                    self.fill = fill;
+                    self.fill = fill_for_between(self.items, b)?;
                     Main
                 }
                 None => stage,
@@ -1212,5 +1453,23 @@ mod tests {
         // A full clockwise circle does not put the last item on top of the source.
         let c = at(&polar(4, -360.0));
         assert!(c[2].near(Vec2::new(0.0, 1.0), 1e-9));
+    }
+
+    #[test]
+    fn a_circle_under_an_uneven_scale_offers_the_drawn_ellipses_key_points() {
+        let c = Entity {
+            handle: Handle(1),
+            common: Default::default(),
+            kind: EntityKind::Circle(cadcraft_doc::Circle { center: v3(Vec2::ZERO), radius: 1.0 }),
+        };
+        // Scaled (2, 1) the circle is drawn as an ellipse with semi-axes 2 and 1.
+        let m = Mat3::scale(2.0, 1.0);
+        let key = |at: Vec2| nearest_key_point(std::iter::once(&c), &m, at).unwrap().unwrap();
+        assert!(key(Vec2::new(0.1, 1.2)).near(Vec2::new(0.0, 1.0), 1e-9), "{:?}", key(Vec2::new(0.1, 1.2)));
+        assert!(key(Vec2::new(2.2, 0.1)).near(Vec2::new(2.0, 0.0), 1e-9), "{:?}", key(Vec2::new(2.2, 0.1)));
+        // A uniform scale keeps the circle.
+        let m = Mat3::scale(2.0, 2.0);
+        let k = nearest_key_point(std::iter::once(&c), &m, Vec2::new(0.1, 2.2)).unwrap().unwrap();
+        assert!(k.near(Vec2::new(0.0, 2.0), 1e-9), "{k:?}");
     }
 }

@@ -92,6 +92,33 @@ impl Interactive for Guarded {
             Vec::new()
         })
     }
+    fn live_value(&self, s: &Session, cursor: Vec2) -> Option<String> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.live_value(s, cursor))).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in preview"));
+            None
+        })
+    }
+    fn highlight(&self, s: &Session, h: cadcraft_doc::Handle, cursor: Vec2) -> Option<Vec<EntityKind>> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.highlight(s, h, cursor))).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in preview"));
+            None
+        })
+    }
+    fn highlight_all(&self, s: &Session, cursor: Vec2) -> Option<Vec<(cadcraft_doc::Handle, EntityKind)>> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.highlight_all(s, cursor))).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in preview"));
+            None
+        })
+    }
     fn drag(&self, s: &Session, cursor: Vec2) -> Option<crate::prompt::Drag> {
         if self.broken.get().is_some() {
             return None;
@@ -110,6 +137,15 @@ impl Interactive for Guarded {
             None
         })
     }
+    fn text_editor(&self) -> Option<crate::TextEditor> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.text_editor())).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in prompt"));
+            None
+        })
+    }
     fn display_only(&self, s: &Session) -> Option<crate::prompt::DisplayOnly> {
         if self.broken.get().is_some() {
             return None;
@@ -117,6 +153,48 @@ impl Interactive for Guarded {
         catch_unwind(AssertUnwindSafe(|| self.inner.display_only(s))).unwrap_or_else(|_| {
             self.broken.set(Some("panic in preview"));
             None
+        })
+    }
+    fn attribute_entry(&self) -> Option<crate::prompt::AttribEntry> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.attribute_entry())).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in prompt"));
+            None
+        })
+    }
+    fn array_live(&self) -> Option<crate::ArrayLive> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.array_live())).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in prompt"));
+            None
+        })
+    }
+    fn set_array_live(&mut self, s: &mut Session, v: &crate::ArrayLive) -> Result<()> {
+        if let Some(m) = self.broken.get() {
+            return Err(EngineError::Internal(self.inner.name().to_ascii_lowercase(), m.into()));
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.set_array_live(s, v))).unwrap_or_else(|p| Err(self.internal(&*p)))
+    }
+    fn array_set_main(&mut self) -> bool {
+        if self.broken.get().is_some() {
+            return false;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.array_set_main())).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in prompt"));
+            false
+        })
+    }
+    fn array_pick_center(&mut self) -> bool {
+        if self.broken.get().is_some() {
+            return false;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.array_pick_center())).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in prompt"));
+            false
         })
     }
 }
