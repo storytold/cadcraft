@@ -217,10 +217,25 @@ impl RectM2 {
         let loc = (p - a).rotate(-self.rotation);
         Some(match self.dims {
             Some((l, w)) => (if loc.x < 0.0 { -l } else { l }, if loc.y < 0.0 { -w } else { w }),
-            // In centre mode the picked point is one corner, mirrored across the centre.
-            None if self.center => (2.0 * loc.x, 2.0 * loc.y),
-            None => (loc.x, loc.y),
+            None => self.free_size(p)?,
         })
+    }
+    /// The signed full size with `p` as the other corner, ignoring any `dims`.
+    fn free_size(&self, p: Vec2) -> Option<(f64, f64)> {
+        let loc = (p - self.first?).rotate(-self.rotation);
+        // In centre mode the picked point is one corner, mirrored across the centre.
+        Some(if self.center { (2.0 * loc.x, 2.0 * loc.y) } else { (loc.x, loc.y) })
+    }
+    /// The size the rubber band shows for the cursor at `c`: the other corner, or while the
+    /// Dimensions option asks for the length, the cursor's size, and while it asks for the
+    /// width, the length just entered with the cursor's width.
+    fn preview_size(&self, c: Vec2) -> Option<(f64, f64)> {
+        match self.asking {
+            None => self.other_corner(c),
+            Some(RAsk::DimL) => self.free_size(c),
+            Some(RAsk::DimW) => Some((self.other_corner(c)?.0, self.free_size(c)?.1)),
+            Some(_) => None,
+        }
     }
 }
 
@@ -392,12 +407,10 @@ impl Interactive for RectM2 {
         }
     }
     /// The rubber-band rectangle for the cursor at `c`, mapped through the same size-and-origin
-    /// rules as the committed entity so centre mode previews where it will land.
+    /// rules as the committed entity so centre mode previews where it will land. It stays on
+    /// screen while the Dimensions option asks for the length and width.
     fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
-        if self.asking.is_some() {
-            return Vec::new();
-        }
-        match self.other_corner(c).and_then(|(w, h)| self.origin(w, h).map(|a| (a, w, h))) {
+        match self.preview_size(c).and_then(|(w, h)| self.origin(w, h).map(|a| (a, w, h))) {
             Some((a, w, h)) if w.abs() > 1e-12 && h.abs() > 1e-12 => {
                 vec![rect_kind(a, (w, h), self.rotation, self.fillet, self.chamfer, self.width, self.elevation)]
             }
