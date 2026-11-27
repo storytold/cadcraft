@@ -1066,5 +1066,560 @@
 	Back to CADCraft's shortcut	Revenir au raccourci de CADCraft
 	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Un raccourci que vous définissez l'emporte sur celui de CADCraft. Les modifications s'appliquent tout de suite et sont conservées.
 
+	3 Point	3 points
+	3D Mouse Navigation	Navigation à la souris 3D
+	3D Mouse...	Souris 3D...
+	<style overrides>	<remplacements du style>
+	A dimension style with this name already exists.	Un style de cote portant ce nom existe déjà.
+	A drawing opened from a file keeps that file's format.	Un dessin ouvert depuis un fichier conserve le format de ce fichier.
+	A variable name starts with a letter and has only letters, digits and _	Un nom de variable commence par une lettre et ne contient que des lettres, des chiffres et _
+	Above	Au-dessus
+	Above text	Au-dessus du texte
+	Add Current Scale	Ajouter l'échelle courante
+	Add/Delete Scales...	Ajouter/supprimer des échelles...
+	Add: Pick points	Ajouter : choisir des points
+	Add: Select objects	Ajouter : sélectionner des objets
+	Additional angles	Angles supplémentaires
+	Add…	Ajouter…
+	Alias	Alias
+	Alias file: {file}	Fichier d'alias : {file}
+	Aliases are saved in your CADCraft profile and survive restarts.	Les alias sont enregistrés dans votre profil CADCraft et sont conservés après un redémarrage.
+	Align Multileaders	Aligner les repères multiples
+	All Annotation Objects	Tous les objets annotatifs
+	All Scales	Toutes les échelles
+	All properties of {style}	Toutes les propriétés de {style}
+	All styles	Tous les styles
+	Alt enabled	Unités alt. activées
+	Alt format	Format alt.
+	Alt precision	Précision alt.
+	Alt prefix	Préfixe alt.
+	Alt prefix and suffix	Préfixe et suffixe alt.
+	Alt round	Arrondi alt.
+	Alt scale factor	Facteur d'échelle alt.
+	Alt suffix	Suffixe alt.
+	Alt zero suppression	Suppression des zéros alt.
+	Alternate Units	Unités alternatives
+	An array that would create more objects than this is refused.	Un réseau qui créerait plus d'objets que cette valeur est refusé.
+	Analyze Usage	Analyser l'utilisation
+	Angle between	Angle entre
+	Angle format	Format d'angle
+	Angle precision	Précision d'angle
+	Angular zero suppression	Suppression des zéros angulaires
+	Annotative	Annotatif
+	Annotative Object Scale	Échelle des objets annotatifs
+	Annotative Update	Mise à jour annotative
+	Apply	Appliquer
+	Arc length symbol	Symbole de longueur d'arc
+	Architectural	Architecturales
+	Architectural stacked	Architecturales empilées
+	Architectural tick	Trait oblique architectural
+	Arrow 1	Flèche 1
+	Arrow 2	Flèche 2
+	Arrow size	Taille des flèches
+	Arrowheads	Pointes de flèche
+	Arrows	Flèches
+	Associative	Associatif
+	At Ext Line 1	Sur la ligne d'attache 1
+	At Ext Line 2	Sur la ligne d'attache 2
+	At least	Au moins
+	Attach DWG...	Joindre un DWG...
+	Automatic save every	Enregistrement automatique toutes les
+	Automatic save file location	Emplacement des fichiers d'enregistrement automatique
+	Backup copy	Copie de sauvegarde
+	Baseline spacing	Espacement des lignes de base
+	Before text	Avant le texte
+	Below	En dessous
+	Best fit	Meilleur ajustement
+	Bind	Lier
+	Bind...	Lier...
+	Block to create or edit	Bloc à créer ou à modifier
+	Bottom	Bas
+	Bottom center	En bas au centre
+	Bottom left	En bas à gauche
+	Bottom right	En bas à droite
+	Boundaries	Contours
+	Boundaries picked: {n}	Contours choisis : {n}
+	Box blank	Carré vide
+	Box filled	Carré plein
+	Break-line Symbol	Symbole de ligne de coupure
+	Bring Above Objects	Mettre au-dessus des objets
+	Bring Annotations to Front	Mettre les annotations au premier plan
+	Bulleted list	Liste à puces
+	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	CADCraft conserve ces préférences, les modes d'accrochage aux objets et les aides au dessin pour votre compte utilisateur, et les rétablit au démarrage.
+	Calibrate 3D Mouse	Calibrer la souris 3D
+	Center mark size	Taille de la marque de centre
+	Centered	Centré
+	Change	Modifier
+	Change Properties	Modifier les propriétés
+	Changed: {n}	Modifiés : {n}
+	Changes apply at once and are kept for next time.	Les modifications s'appliquent tout de suite et sont conservées.
+	Check for updates when CADCraft starts	Rechercher des mises à jour au démarrage de CADCraft
+	Choose the command the alias starts.	Choisissez la commande que lance l'alias.
+	Clear Command History	Effacer l'historique des commandes
+	Clear History	Effacer l'historique
+	Clear Recent Files	Effacer les fichiers récents
+	Click the ruler to add a tab stop, right-click to remove one	Cliquez sur la règle pour ajouter une tabulation, clic droit pour la supprimer
+	Click to set new origin	Cliquez pour définir la nouvelle origine
+	Clip	Découper
+	Clip Viewport	Découper la fenêtre
+	Clip Xref	Découper la Xréf
+	Close Array Editing	Fermer la modification du réseau
+	Close Block Editor	Fermer l'éditeur de blocs
+	Close Comparison	Fermer la comparaison
+	Close panel	Fermer le panneau
+	Close {panel}	Fermer {panel}
+	Closed blank	Fermée vide
+	Closed filled	Fermée pleine
+	Collapse Palettes	Réduire les palettes
+	Collect	Rassembler
+	Collect Multileaders	Rassembler les repères multiples
+	Color 1	Couleur 1
+	Color 2	Couleur 2
+	Column spacing	Espacement des colonnes
+	Columns	Colonnes
+	Comma	Virgule
+	Command	Commande
+	Command Aliases	Alias de commande
+	Command Mode	Mode commande
+	Command line history	Historique de la ligne de commande
+	Compare	Comparer
+	Compare Dimension Styles	Comparer les styles de cote
+	Compare Drawings...	Comparer des dessins...
+	Compare...	Comparer...
+	Convert	Convertir
+	Convert Text to Mtext	Convertir le texte en texte multiligne
+	Copy as JSON	Copier en JSON
+	Count List	Liste de comptage
+	Count Table	Tableau de comptage
+	Create New Dimension Style	Créer un style de cote
+	Create backup copy with each save	Créer une copie de sauvegarde à chaque enregistrement
+	Create separate hatches	Créer des hachures séparées
+	Crosshair size	Taille du réticule
+	Crossing selection color:	Couleur de la sélection par capture :
+	Current Scale Only	Échelle courante uniquement
+	Current dimension style: {style}	Style de cote courant : {style}
+	Curved	Courbe
+	Customize	Personnaliser
+	DView	DView
+	DWG Reference...	Référence DWG...
+	Data Extraction...	Extraction de données...
+	Data Link...	Lien de données...
+	Datum triangle	Triangle de référence
+	Datum triangle filled	Triangle de référence plein
+	Decimal	Décimales
+	Decimal degrees	Degrés décimaux
+	Decimal separator	Séparateur décimal
+	Default Mode	Mode par défaut
+	Default Save Version	Version d'enregistrement par défaut
+	Default save version	Version d'enregistrement par défaut
+	Default to boundary extents	Étendue du contour par défaut
+	Define each corner of the selection window with a separate click.	Définissez chaque coin de la fenêtre de sélection par un clic distinct.
+	Degrees Minutes Seconds	Degrés minutes secondes
+	Degrees of Freedom	Degrés de liberté
+	Degrees of freedom: {n}	Degrés de liberté : {n}
+	Delete Current Scale	Supprimer l'échelle courante
+	Detach	Détacher
+	Diagonal stacking	Empilement en diagonale
+	Dim line color	Couleur de la ligne de cote
+	Dim line ext	Dépassement de la ligne de cote
+	Dim line forced	Ligne de cote forcée
+	Dim line linetype	Type de ligne de la ligne de cote
+	Dim line lineweight	Épaisseur de la ligne de cote
+	Dim prefix	Préfixe de cote
+	Dim roundoff	Arrondi de cote
+	Dim scale linear	Échelle linéaire de cote
+	Dim scale overall	Échelle globale de cote
+	Dim suffix	Suffixe de cote
+	Dim units	Unités de cote
+	Dimension Break	Coupure de cote
+	Dimension Edit	Modifier la cote
+	Dimension Objects Only	Objets de cotation uniquement
+	Dimension Style	Style de cote
+	Dimension Style Manager	Gestionnaire des styles de cote
+	Dimension Style Overrides	Remplacements du style de cote
+	Discard	Abandonner
+	Dot	Point
+	Dot blank	Point vide
+	Dot small	Petit point
+	Drag Dynamic Grip	Faire glisser la poignée dynamique
+	Drawing Recovery Manager...	Gestionnaire de récupération de dessins...
+	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Les dessins qui n'ont pas encore de fichier sont enregistrés dans la version par défaut. 0 minute désactive l'enregistrement automatique.
+	Dynamic	Dynamique
+	Dynamic Block Data	Données du bloc dynamique
+	Dynamic Block Grips	Poignées du bloc dynamique
+	Dynamic Block Reference	Référence de bloc dynamique
+	ENTER	ENTRÉE
+	Edit Array	Modifier le réseau
+	Edit Block Definition	Modifier la définition de bloc
+	Edit Command Aliases (PGP)...	Modifier les alias de commande (PGP)...
+	Edit Mode	Mode modification
+	Edit Multileader	Modifier le repère multiple
+	Edit Table Cell	Modifier la cellule du tableau
+	Edit…	Modifier…
+	End Object Isolation	Terminer l'isolement des objets
+	Engineering	Ingénierie
+	Evaluate	Évaluer
+	Evaluate LISP	Évaluer du LISP
+	Exactly	Exactement
+	Exclude:	Exclure :
+	Explode Attributes to Text	Décomposer les attributs en texte
+	Export Comparison	Exporter la comparaison
+	Export Table	Exporter le tableau
+	Ext line 1 linetype	Type de ligne de la ligne d'attache 1
+	Ext line 2 linetype	Type de ligne de la ligne d'attache 2
+	Ext line color	Couleur des lignes d'attache
+	Ext line ext	Dépassement des lignes d'attache
+	Ext line fixed	Lignes d'attache de longueur fixe
+	Ext line length	Longueur des lignes d'attache
+	Ext line lineweight	Épaisseur des lignes d'attache
+	Ext line offset	Décalage des lignes d'attache
+	Extended Trim	Ajustement étendu
+	External Reference	Référence externe
+	External References	Références externes
+	Fill angle	Angle à remplir
+	Fit	Ajuster
+	Font	Police
+	Fraction format	Format des fractions
+	Fractional	Fractionnaires
+	Fractional stacked	Fractionnaires empilées
+	Generate Boundary	Générer le contour
+	Get from the Drawing	Récupérer depuis le dessin
+	Gradians	Grades
+	Grid snap	Accrochage à la grille
+	Grip Edit	Modification par poignées
+	Grip Option	Option de poignée
+	Grip size	Taille des poignées
+	Grips	Poignées
+	Group Options	Options de groupe
+	Group Selection	Sélection de groupe
+	Groups	Groupes
+	Hatch Patterns	Motifs de hachures
+	Hatch Pick	Choix des hachures
+	Hatch and Gradient	Hachures et dégradé
+	Hatch origin	Origine des hachures
+	Hatches	Hachures
+	Hemispherical	Hémisphérique
+	Hide Objects	Cacher les objets
+	Hide dim line 1	Masquer la ligne de cote 1
+	Hide dim line 2	Masquer la ligne de cote 2
+	Hide ext line 1	Masquer la ligne d'attache 1
+	Hide ext line 2	Masquer la ligne d'attache 2
+	History	Historique
+	Hold Shift to add to the selection	Maintenez Maj pour ajouter à la sélection
+	Horizontal stacking	Empilement horizontal
+	Ignore	Ignorer
+	Imperial (inches)	Impériales (pouces)
+	Implied Loops	Boucles implicites
+	Import PDF...	Importer un PDF...
+	Import and replace	Importer et remplacer
+	Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.	Import : il n'y a pas de boîte de dialogue de fichier ici ; lancez ALIASEDIT avec le contenu du fichier dans son paramètre text.
+	Importing a file replaces your {n} aliases, and any changes not applied yet.	Importer un fichier remplace vos {n} alias, ainsi que les modifications pas encore appliquées.
+	Import…	Importer…
+	Indicate selection area	Indiquer la zone de sélection
+	Infer Constraints	Déduire les contraintes
+	Insert Table Formula	Insérer une formule de tableau
+	Insert tab	Insérer une tabulation
+	Inspection	Contrôle
+	Integral	Intégrale
+	Interface language	Langue de l'interface
+	Interface scale	Échelle de l'interface
+	Interface theme	Thème de l'interface
+	Inverted	Inversé
+	Island	Îlot
+	Island detection	Détection des îlots
+	Isolate Objects	Isoler les objets
+	Isometric Plane	Plan isométrique
+	Isometric snap	Accrochage isométrique
+	Italic	Italique
+	Items	Éléments
+	JIS	JIS
+	Jog angle	Angle de raccourci
+	Jogged	Raccourcie
+	Jogged Linear	Linéaire raccourcie
+	Justification	Justification
+	Justify	Justifier
+	Keep dim line with text	Garder la ligne de cote avec le texte
+	Keep my aliases	Conserver mes alias
+	Keep the system cursor visible over the drawing area	Garder le curseur système visible sur la zone de dessin
+	Largest array	Plus grand réseau
+	Layout paper	Papier de la présentation
+	Leader arrow	Flèche du repère
+	Leaders Only	Repères uniquement
+	Leading	Zéros de tête
+	Level spacing	Espacement des niveaux
+	Levels	Niveaux
+	Limits	Limites
+	Line space distance	Distance d'interligne
+	Line space factor	Facteur d'interligne
+	Line space style	Style d'interligne
+	Lines	Lignes
+	Lines & Arrows	Lignes et flèches
+	Load Application...	Charger une application...
+	Lock viewport	Verrouiller la fenêtre
+	Longer click duration:	Durée du clic long :
+	Lower tolerance	Tolérance inférieure
+	Make it a block of this drawing, keeping its layer names	En faire un bloc de ce dessin, en conservant ses noms de calque
+	Make it a block of this drawing; its layers become NAME$0$LAYER	En faire un bloc de ce dessin ; ses calques deviennent NOM$0$CALQUE
+	Measurement	Mesure
+	Menu Bar	Barre de menus
+	Metric (millimetres)	Métriques (millimètres)
+	Middle	Milieu
+	Middle center	Milieu au centre
+	Middle left	Milieu à gauche
+	Middle right	Milieu à droite
+	Misc	Divers
+	Model background	Arrière-plan de l'espace objet
+	Modify Dimension Style: {style}	Modifier le style de cote : {style}
+	Modify...	Modifier...
+	More than {n} aliases.	Plus de {n} alias.
+	More toolbar commands	Autres commandes de la barre d'outils
+	Move text, add leader	Déplacer le texte, ajouter un repère
+	Move text, no leader	Déplacer le texte, sans repère
+	Move/Copy/Rotate	Déplacer/Copier/Faire pivoter
+	Multiline Style...	Style de multiligne...
+	Multiline text	Texte multiligne
+	Multiline...	Multiligne...
+	Multiple Insert	Insertion multiple
+	Named Views...	Vues nommées...
+	New Dimension Style: {style}	Nouveau style de cote : {style}
+	New UCS	Nouveau SCU
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Nouveau et le premier dessin au démarrage utilisent ces unités, sauf si un gabarit par défaut est défini (QNEWTEMPLATE).
+	New block	Nouveau bloc
+	New from Template...	Nouveau à partir d'un gabarit...
+	New style name	Nom du nouveau style
+	New...	Nouveau...
+	Next Change	Modification suivante
+	No alias file loaded. REINIT replaces these aliases with a file's.	Aucun fichier d'alias chargé. REINIT remplace ces alias par ceux d'un fichier.
+	No external references are attached.	Aucune référence externe n'est jointe.
+	No objects selected and no command running:	Aucun objet sélectionné et aucune commande en cours :
+	Not stacked	Non empilé
+	Numbered list	Liste numérotée
+	Object Snap Tracking Settings	Paramètres du repérage par accrochage aux objets
+	Object grouping	Groupement d'objets
+	Object selection limit for display of grips	Limite de sélection d'objets pour l'affichage des poignées
+	Object snap aperture	Ouverture de l'accrochage aux objets
+	Object snap marker size	Taille du marqueur d'accrochage aux objets
+	Objects on locked layers	Objets sur des calques verrouillés
+	Objects selected and no command running:	Objets sélectionnés et aucune commande en cours :
+	Oblique	Oblique
+	Obliquing	Inclinaison
+	Only in this drawing: {n}	Uniquement dans ce dessin : {n}
+	Only in {name}: {n}	Uniquement dans {name} : {n}
+	Open	Ouvrir
+	Open 30	Ouverte 30
+	Open Recent	Ouvrir un fichier récent
+	Open Xref	Ouvrir la Xréf
+	Open arrow	Flèche ouverte
+	Open in Block Editor	Ouvrir dans l'éditeur de blocs
+	Options...	Options...
+	Origin	Origine
+	Origin indicator	Indicateur d'origine
+	Origin indicator 2	Indicateur d'origine 2
+	Origin: {x}, {y}	Origine : {x}, {y}
+	Outer	Extérieur
+	Outside	À l'extérieur
+	Over Ext Line 1	Au-dessus de la ligne d'attache 1
+	Over Ext Line 2	Au-dessus de la ligne d'attache 2
+	Over-constrained	Surcontraint
+	Overlay	Superposition
+	Overline	Surligné
+	Override Current Style: {style}	Remplacer le style courant : {style}
+	Override...	Remplacer...
+	Overrides the dimension style. Right-click to use the style's value.	Remplace le style de cote. Clic droit pour utiliser la valeur du style.
+	Paste Table	Coller le tableau
+	Paste to Command Line	Coller sur la ligne de commande
+	Period	Point
+	Pick center	Choisir le centre
+	Pickbox size	Taille de la boîte de sélection
+	Plot Window	Fenêtre de tracé
+	Plotter Manager	Gestionnaire de traceurs
+	Plotter Manager...	Gestionnaire de traceurs...
+	Polar angle measurement	Mesure de l'angle polaire
+	Polar distance	Distance polaire
+	PolarSnap	Accrochage polaire
+	Polygonal Viewport	Fenêtre polygonale
+	Precision	Précision
+	Prefix and suffix	Préfixe et suffixe
+	Preview	Aperçu
+	Preview of: {style}	Aperçu de : {style}
+	Preview of: {style} (overrides)	Aperçu de : {style} (remplacements)
+	Previous Change	Modification précédente
+	Primary Units	Unités principales
+	QuickCalc Pick	Choix CalcRapide
+	Radians	Radians
+	Raster Image Reference...	Référence d'image raster...
+	Raster Images	Images raster
+	Recalculate Table Formulas	Recalculer les formules du tableau
+	Rectangular snap	Accrochage rectangulaire
+	Reference Manager	Gestionnaire de références
+	Reference Name	Nom de la référence
+	References: {n}	Références : {n}
+	Reinitialize	Réinitialiser
+	Relative to last segment	Relatif au dernier segment
+	Reload	Recharger
+	Reload All	Tout recharger
+	Remove Style Overrides	Supprimer les remplacements du style
+	Rename	Renommer
+	Repeat last command	Répéter la dernière commande
+	Reset keeps the interface language.	La réinitialisation conserve la langue de l'interface.
+	Reset to Defaults	Rétablir les valeurs par défaut
+	Right angle	Angle droit
+	Right-Click Customization	Personnalisation du clic droit
+	Right-Click Customization...	Personnalisation du clic droit...
+	Rotate items	Faire pivoter les éléments
+	Row elevation	Élévation des rangées
+	Row spacing	Espacement des rangées
+	Rows	Rangées
+	Run ALIASEDIT with the file's contents using its text parameter.	Lancez ALIASEDIT avec le contenu du fichier dans son paramètre text.
+	Run Script...	Exécuter un script...
+	Save Block	Enregistrer le bloc
+	Save Block As	Enregistrer le bloc sous
+	Save Layout as Template	Enregistrer la présentation comme gabarit
+	Save alias	Enregistrer l'alias
+	Save as New Style...	Enregistrer comme nouveau style...
+	Save changes to block "{name}"?	Enregistrer les modifications du bloc « {name} » ?
+	Save new drawings as	Enregistrer les nouveaux dessins en
+	Save to current style	Enregistrer dans le style courant
+	Saved Path	Chemin enregistré
+	Scale List...	Liste des échelles...
+	Scientific	Scientifiques
+	Screen magnifiers, screen readers and recorders follow the system cursor.	Les loupes d'écran, les lecteurs d'écran et les enregistreurs suivent le curseur système.
+	Select Similar	Sélectionner les objets similaires
+	Select boundaries to remove	Sélectionnez les contours à supprimer
+	Select objects first	Sélectionnez d'abord les objets
+	Select objects first, then choose a command	Sélectionnez d'abord les objets, puis choisissez une commande
+	Select using two clicks only	Sélectionner en deux clics uniquement
+	Selection Area Effect	Effet de la zone de sélection
+	Selection Preview Filter	Filtre de l'aperçu de sélection
+	Selection area opacity:	Opacité de la zone de sélection :
+	Selection effect color	Couleur de l'effet de sélection
+	Selection modes	Modes de sélection
+	Selection preview	Aperçu de la sélection
+	Send Hatches to Back	Mettre les hachures en arrière-plan
+	Send Under Objects	Mettre sous les objets
+	Set Current Viewport	Définir la fenêtre courante
+	Set Dynamic Property	Définir la propriété dynamique
+	Set Table Cell Style	Définir le style de cellule
+	Set by text style "{style}", which has a fixed height. Give the style a height of 0 to use the dimension text height.	Défini par le style de texte « {style} », qui a une hauteur fixe. Donnez au style une hauteur de 0 pour utiliser la hauteur du texte de cote.
+	Shape	Forme
+	Sheet Books to PDF...	Jeux de feuilles en PDF...
+	Shortcut Menu	Menu contextuel
+	Shortcut Menu: always enabled	Menu contextuel : toujours activé
+	Shortcut Menu: enabled when command options are present	Menu contextuel : activé quand la commande a des options
+	Show Annotative Objects	Afficher les objets annotatifs
+	Show Quick Properties for selected objects	Afficher les propriétés rapides des objets sélectionnés
+	Show and hide the tools of this category	Afficher et masquer les outils de cette catégorie
+	Show command prompting near the crosshairs	Afficher l'invite de commande près du réticule
+	Show grips	Afficher les poignées
+	Show in Tool Sets	Afficher dans les jeux d'outils
+	Small	Petite
+	Snap type	Type d'accrochage
+	Snap, grid, polar tracking and Dynamic Input:	Accrochage, grille, repérage polaire et saisie dynamique :
+	Solid Editing	Modification de solides
+	Some of these dimensions take their text height from a fixed-height text style.	Certaines de ces cotes prennent leur hauteur de texte d'un style de texte à hauteur fixe.
+	Space	Espace
+	Specified origin	Origine spécifiée
+	Spherical	Sphérique
+	Start with	Commencer par
+	Style	Style
+	Styles	Styles
+	Styles in use	Styles utilisés
+	Suppress arrows	Supprimer les flèches
+	Symbols and Arrows	Symboles et flèches
+	Synchronize Multiple-scale Positions	Synchroniser les positions multi-échelles
+	Table Breaks	Coupures de tableau
+	Table Cell Style	Style de cellule
+	Tables	Tableaux
+	Text Objects Only	Objets texte uniquement
+	Text alignment X	Alignement du texte X
+	Text alignment Y	Alignement du texte Y
+	Text and arrows	Texte et flèches
+	Text color	Couleur du texte
+	Text inside	Texte à l'intérieur
+	Text inside align	Alignement du texte à l'intérieur
+	Text movement	Déplacement du texte
+	Text offset	Décalage du texte
+	Text outside align	Alignement du texte à l'extérieur
+	Text pos hor	Position horiz. du texte
+	Text pos vert	Position vert. du texte
+	Text position X	Position du texte X
+	Text position Y	Position du texte Y
+	Text rotation	Rotation du texte
+	Text vertical position	Position verticale du texte
+	The aperture is how near the cursor must come to a point for an object snap to find it.	L'ouverture est la distance à laquelle le curseur doit s'approcher d'un point pour que l'accrochage aux objets le trouve.
+	Tick size	Taille du trait oblique
+	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Clic droit temporisé : un clic rapide vaut Entrée, un clic maintenu ouvre le menu
+	To	À
+	Tolerance height	Hauteur de la tolérance
+	Tolerance pos vert	Position vert. de la tolérance
+	Tolerance precision	Précision de la tolérance
+	Tolerance zero suppression	Suppression des zéros de la tolérance
+	Tolerance...	Tolérance...
+	Tolerances	Tolérances
+	Top	Haut
+	Top center	En haut au centre
+	Top left	En haut à gauche
+	Top right	En haut à droite
+	Track orthogonally only	Repérage orthogonal uniquement
+	Track using all polar angle settings	Repérage avec tous les angles polaires
+	Trailing	Zéros de fin
+	Turn on time-sensitive right-click	Activer le clic droit temporisé
+	Turned off, CADCraft never offers an update on its own; Help ▸ Check for Updates… still looks.	Désactivé, CADCraft ne propose jamais de mise à jour de lui-même ; Aide ▸ Rechercher des mises à jour… vérifie toujours.
+	Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode.	Désactivé, un clic droit pendant une commande fait ce que la Personnalisation du clic droit définit pour le mode commande.
+	Type an alias name.	Saisissez un nom d'alias.
+	UCS	SCU
+	UCS Icon at Origin	Icône SCU à l'origine
+	Underline	Souligné
+	Units	Unités
+	Units Conversion	Conversion d'unités
+	Units of new drawings	Unités des nouveaux dessins
+	Unload	Décharger
+	Unlock viewport	Déverrouiller la fenêtre
+	Unnamed	Sans nom
+	Unsaved changes	Modifications non enregistrées
+	Update Data Links	Mettre à jour les liens de données
+	Upper tolerance	Tolérance supérieure
+	Use current origin	Utiliser l'origine courante
+	Use the style's value	Utiliser la valeur du style
+	Variable	Variable
+	Variables	Variables
+	Version 2000	Version 2000
+	Version 2004	Version 2004
+	Version 2007	Version 2007
+	Version 2010	Version 2010
+	Version 2013	Version 2013
+	Version 2018	Version 2018
+	Viewport is locked	La fenêtre est verrouillée
+	Viewport scale	Échelle de la fenêtre
+	Visual Effect Settings	Paramètres des effets visuels
+	Visual Effect Settings...	Paramètres des effets visuels...
+	When a command is active	Quand une commande est active
+	When no command is active	Quand aucune commande n'est active
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	Pendant une commande, un clic rapide vaut Entrée et un clic plus long ouvre le menu contextuel.
+	While a command runs:	Pendant une commande :
+	Window selection color:	Couleur de la sélection par fenêtre :
+	Windows desktop	Bureau Windows
+	With	Avec
+	With no command running, a quick click repeats the last command or runs what was typed.	Sans commande en cours, un clic rapide répète la dernière commande ou exécute ce qui a été saisi.
+	World	Général
+	Write Block Pick	Choix pour l'enregistrement du bloc
+	Xref	Xréf
+	Xref Clip Frame	Cadre de découpage des Xréf
+	Xrefs	Xréf
+	Z	Z
+	Zero suppression	Suppression des zéros
+	Zoom Dynamic	Zoom dynamique
+	Zoom Realtime	Zoom en temps réel
+	built-in	intégré
+	milliseconds	millisecondes
+	min	min
+	objects	objets
+	overrides built-in	remplace l'intégré
+	{alias} is already defined; select it and use Edit.	{alias} est déjà défini ; sélectionnez-le et utilisez Modifier.
+	{command} is an unknown command.	{command} est une commande inconnue.
+	{count} differences	{count} différences
+	{n} more warnings; see the command line.	{n} avertissements de plus ; voir la ligne de commande.
+	{property}: that value can't be used here.	{property} : cette valeur ne peut pas être utilisée ici.
+
 # ArtCraft feature naming
 	Additional Tools	Outils supplémentaires
