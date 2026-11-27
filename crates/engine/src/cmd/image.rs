@@ -15,6 +15,8 @@ use super::file::base64_decode;
 use super::{CommandSpec, bad, point_value, str_param};
 use crate::{Result, Session};
 
+mod refs;
+
 /// Most image files loaded per drawing.
 const MAX_IMAGE_FILES: usize = 1000;
 /// Largest image file read (bytes).
@@ -45,8 +47,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         CommandSpec::new("image", "Raster Images", run_image)
             .alias(&["im"])
-            .params("{} → {images: [{name, path, foundAt, status: Loaded|Not Found|Not loaded, references, pixels?: [w, h]}]}")
+            .params(
+                "{option?: \"?\"|path|reload|detach (none: list), names?: \"A,B*\" (image names; required for path and detach, default * for reload and ?),                  path? (path: the file the images are read from; a relative path is relative to this drawing's folder)} → {images: [{name, path, foundAt,                  status: Loaded|Not Found|Not loaded, references, pixels?: [w, h]}]} | {detached: [names], erased: number of images removed}",
+            )
             .noundo(),
+        CommandSpec::new("-image", "Raster Images", |s, p| refs::run(s, p, "-image"))
+            .alias(&["-im"])
+            .params("{option?: \"?\"|path|reload|detach (none: list), names?: \"A,B*\", path? (path)}: IMAGE's options (the command line asks for them)")
+            .noundo()
+            .interactive(|_| Ok(Box::new(refs::DashImageM::default()))),
     ]
 }
 
@@ -445,7 +454,10 @@ fn pixels(s: &Session, p: &Value, path: &str) -> Result<Arc<Raster>> {
     Ok(Arc::new(decode(&bytes).map_err(|e| bad(ID, format!("{path}: {e}")))?))
 }
 
-fn run_image(s: &mut Session, _p: &Value) -> Result<Value> {
+fn run_image(s: &mut Session, p: &Value) -> Result<Value> {
+    if p.get("option").is_some_and(|o| !o.is_null()) {
+        return refs::run(s, p, "image");
+    }
     let host = s.state()?.path.clone();
     let d = s.doc()?;
     // Per file: its definition name and how many images show it.
