@@ -662,9 +662,10 @@ fn covers_tamil(face: &cadcraft_fonts::ttf::Face) -> bool {
     tamil_letters().iter().all(|c| face.has_glyph(*c))
 }
 
-/// An installed font with the Tamil letters, for the தமிழ் interface; fonts are never bundled
-/// (only looked for where the OS or common packages put them). The file's first face, the one
-/// egui uses, must have every Tamil letter the interface shows. Checked once.
+/// An installed font with the Tamil letters, for the தமிழ் interface; fonts are never bundled.
+/// It is looked for where the OS or common packages put fonts, then wherever the system keeps
+/// them (`installed`: NixOS, Guix, Flatpak). The file's first face, the one egui uses, must have
+/// every Tamil letter the interface shows. Checked once.
 pub fn tamil_font() -> Option<&'static std::path::Path> {
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -702,7 +703,7 @@ pub fn tamil_font() -> Option<&'static std::path::Path> {
                         .and_then(|bytes| cadcraft_fonts::ttf::faces(&std::sync::Arc::new(bytes)).into_iter().next())
                         .is_some_and(|face| covers_tamil(&face))
                 };
-                candidates.iter().map(std::path::PathBuf::from).find(|p| covers(p))
+                installed(candidates).find(|p| covers(p))
             })
             .as_deref()
     }
