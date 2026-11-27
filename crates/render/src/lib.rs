@@ -130,6 +130,10 @@ struct Builder<'a> {
     points: &'a std::sync::atomic::AtomicUsize,
     /// The most points the build may hold: [`MAX_DISPLAY_POINTS`] (less in tests).
     max_points: usize,
+    /// Primitives the whole build has charged so far, shared like `points`.
+    prims: &'a std::sync::atomic::AtomicUsize,
+    /// The most primitives the build may hold: [`MAX_DISPLAY_PRIMS`] (less in tests).
+    max_prims: usize,
 }
 
 /// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy
@@ -147,6 +151,27 @@ pub const MAX_BLOCK_EXPANSION: usize = 2_000_000;
 /// drawing (a million objects with tens of thousands of texts, drawn at screen detail or in full
 /// for a plot) is expected to hold a few tens of millions.
 pub const MAX_DISPLAY_POINTS: usize = 64_000_000;
+
+/// Upper bound on the primitives one display list holds. Each primitive is charged at least one
+/// point, so on a 64-bit target [`MAX_DISPLAY_POINTS`] bounds them already and this is the same
+/// number. A 32-bit target (the web build) has 2 GiB per allocation and 4 GiB in all: at 40 bytes
+/// a primitive, a list of more than 2^25 one-point primitives (a dotted linetype) needed more than
+/// 2 GiB when its primitive vector grew, and the build panicked with "capacity overflow" (#1603).
+/// There a list holds at most 2^24 primitives (640 MiB of them), below that limit to leave room
+/// for the canvas's vertex data and for the next list, built while this one is still shown. Past
+/// the limit nothing more is drawn and [`DisplayList::truncated`] is set.
+pub const MAX_DISPLAY_PRIMS: usize = if usize::BITS >= 64 { MAX_DISPLAY_POINTS } else { 1 << 24 };
+
+// A vector holding the most primitives (or points) a list may hold can still double without
+// passing `isize::MAX` bytes, the most one allocation can take; the wasm build checks this for
+// 32-bit memory.
+const _: () = assert!(MAX_DISPLAY_PRIMS <= isize::MAX as usize / 2 / std::mem::size_of::<DPrim>());
+const _: () = assert!(MAX_DISPLAY_POINTS <= isize::MAX as usize / 2 / std::mem::size_of::<Vec2>());
+const _: () = assert!(MAX_DISPLAY_PRIMS <= isize::MAX as usize / 2 / std::mem::size_of::<Pen>());
+// Plotted text and images hold at most one entry per primitive and grow one push at a time, so by
+// doubling from a power of two: the most they reach is the power of two at or above the limit.
+const _: () = assert!(MAX_DISPLAY_PRIMS.next_power_of_two() <= isize::MAX as usize / std::mem::size_of::<PlotText>());
+const _: () = assert!(MAX_DISPLAY_PRIMS.next_power_of_two() <= isize::MAX as usize / std::mem::size_of::<DImage>());
 
 impl<'a> Builder<'a> {
     /// `color` and `lw` as the plot style table prints them.
@@ -380,13 +405,16 @@ impl<'a> Builder<'a> {
             transparency: self.transparency,
             points: self.points,
             max_points: self.max_points,
+            prims: self.prims,
+            max_prims: self.max_prims,
         }
     }
     /// Take one unit of the block-expansion budget; false once it is spent, or once the build
-    /// holds all the points it may ([`MAX_DISPLAY_POINTS`]), so block copies stop being visited.
+    /// holds all the points ([`MAX_DISPLAY_POINTS`]) or primitives ([`MAX_DISPLAY_PRIMS`]) it may,
+    /// so block copies stop being visited.
     fn expand(&mut self) -> bool {
         self.list.expanded = self.list.expanded.saturating_add(1);
-        let ok = !self.points_spent()
+        let ok = !self.spent()
             && match self.shared_budget {
                 Some(spent) => spent.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < MAX_BLOCK_EXPANSION,
                 None => self.list.expanded <= MAX_BLOCK_EXPANSION,
@@ -396,21 +424,62 @@ impl<'a> Builder<'a> {
         }
         ok
     }
-    /// Whether the build holds all the points it may: nothing more is drawn.
-    fn points_spent(&self) -> bool {
-        self.points.load(std::sync::atomic::Ordering::Relaxed) >= self.max_points
+    /// Whether the build holds all the points or all the primitives it may: nothing more is drawn.
+    fn spent(&self) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.points.load(Relaxed) >= self.max_points || (self.counts_prims() && self.prims.load(Relaxed) >= self.max_prims)
     }
-    /// Charge `n` points to the build's [`MAX_DISPLAY_POINTS`] budget before they are pushed;
-    /// false (and the list marked truncated) when they don't fit, and nothing is pushed. Once the
-    /// budget is spent nothing more is added to the count, so it stays within the limit plus one
-    /// primitive per thread building in parallel.
+    /// Whether the primitive budget can bind. Every primitive is charged at least one point, so a
+    /// primitive limit at or above the point limit (64-bit targets) never does and isn't counted.
+    fn counts_prims(&self) -> bool {
+        self.max_prims < self.max_points
+    }
+    /// Spend the build: nothing more is drawn, as when a budget runs out. For a list without room
+    /// for what is appended to it (see [`Limits`]), so the objects left are not worked out only to
+    /// be refused.
+    fn spend(&mut self) {
+        self.points.fetch_max(self.max_points, std::sync::atomic::Ordering::Relaxed);
+        self.list.truncated = true;
+    }
+    /// Charge one primitive of `n` points to the build's budgets ([`MAX_DISPLAY_POINTS`] and
+    /// [`MAX_DISPLAY_PRIMS`]) before it is pushed; false (and the list marked truncated) when it
+    /// doesn't fit, and nothing is pushed. Once a budget is spent nothing more is added to the
+    /// counts, so they stay within their limits plus one primitive per thread building in parallel.
+    /// The list itself must have room too: clipped copies appended to it are not in the counts. A
+    /// list without room spends the build.
     fn charge(&mut self, n: usize) -> bool {
         use std::sync::atomic::Ordering::Relaxed;
-        let ok = !self.points_spent() && self.points.fetch_add(n, Relaxed).saturating_add(n) <= self.max_points;
+        if !self.spent() && !self.limits().room(&mut self.list, n) {
+            self.spend();
+        }
+        let ok = !self.spent()
+            && self.points.fetch_add(n, Relaxed).saturating_add(n) <= self.max_points
+            && (!self.counts_prims() || self.prims.fetch_add(1, Relaxed) < self.max_prims);
         if !ok {
             self.list.truncated = true;
         }
         ok
+    }
+    /// What one list of this build may hold, for the clipped copies appended to it.
+    fn limits(&self) -> Limits {
+        Limits { points: self.max_points, prims: self.max_prims }
+    }
+    /// Join the parts of a list built on all cores to this builder's list, in drawing order and
+    /// within its limits ([`Limits`]): the clipped copies a part holds are in no count, so the
+    /// parts can hold more together than one list may. At the first part that doesn't fit the build
+    /// is spent and the parts left are not joined.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn join(&mut self, parts: Vec<DisplayList>) {
+        let points = |l: &DisplayList| l.verts.len().saturating_add(l.tris.len());
+        for part in parts {
+            if self.list.prims.len().saturating_add(part.prims.len()) > self.max_prims
+                || points(&self.list).saturating_add(points(&part)) > self.max_points
+            {
+                self.spend();
+                return;
+            }
+            display::append(&mut self.list, part);
+        }
     }
 }
 
@@ -449,7 +518,7 @@ pub use pipeline::{Options, build, build_entities, build_plot};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;
 pub use text_entity::{fitted_text_entity, layout_mtext_entity, place_text_entity, style_font, text_align};
-use viewports::{Clip, append_clipped_keep};
+use viewports::{Clip, Limits, append_clipped_keep};
 pub use viewports::{clip_list, viewport_clip, viewport_content};
 
 #[cfg(test)]

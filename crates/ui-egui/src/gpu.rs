@@ -180,11 +180,27 @@ fn premultiplied(c: Rgb, a: u8) -> [u8; 4] {
 }
 
 /// Convert a display list into vertex data relative to `origin`, colours resolved against `bg`.
+///
+/// Each array is counted first and allocated once at its final size. Grown by doubling, the quads
+/// (wide-line segments and point markers) of a list near its budget passed 1 GiB, and their next
+/// size was more than one allocation can take on a 32-bit target (the web build), which panics
+/// with "capacity overflow" (#1603). For a list within the display budget (`MAX_DISPLAY_POINTS`,
+/// 64M points) no array here passes 1.8 GB.
 pub fn build_mesh(list: &DisplayList, origin: Vec2, bg: Rgb, lwdisplay: bool) -> MeshData {
+    let (mut lines, mut quads) = (0usize, 0usize);
+    for prim in &list.prims {
+        let n = list.points(prim).len();
+        match prim.kind {
+            Kind::Polyline if wide_width(prim.lw, lwdisplay).is_some() => quads = quads.saturating_add(n.saturating_sub(1)),
+            Kind::Polyline => lines = lines.saturating_add(n.saturating_sub(1).saturating_mul(2)),
+            Kind::Point => quads = quads.saturating_add(n.min(1)),
+            _ => {}
+        }
+    }
     let mut m = MeshData {
-        lines: Vec::with_capacity(list.segment_count().saturating_mul(2 * VERTEX_SIZE)),
+        lines: Vec::with_capacity(lines.saturating_mul(VERTEX_SIZE)),
         tris: Vec::with_capacity(list.tris.len().saturating_mul(VERTEX_SIZE)),
-        quads: Vec::new(),
+        quads: Vec::with_capacity(quads.saturating_mul(INSTANCE_SIZE)),
         breaks: Vec::new(),
         uploaded: None,
     };
@@ -940,6 +956,23 @@ mod tests {
         assert_eq!(m.quad_instances(), 3);
         assert_eq!(wide_width(0.25, true), None, "thin lineweights stay hairlines");
         assert_eq!(wide_width(0.7, false), None);
+    }
+
+    #[test]
+    fn vertex_data_is_allocated_once_at_its_final_size() {
+        // Grown by doubling, the quads of a list near its budget needed more than a 32-bit target
+        // can allocate (#1603). A wide copy of the polyline and five more point markers: with
+        // lineweights shown the wide one becomes quads, otherwise lines.
+        let mut l = list();
+        let mut prims = l.prims.clone();
+        prims.extend(l.prims.iter().take(1).map(|p| DPrim { lw: 0.7, ..*p }));
+        prims.extend(l.prims.iter().filter(|p| p.kind == Kind::Point).cycle().take(5).copied());
+        l.prims = prims;
+        for lwdisplay in [false, true] {
+            let m = build_mesh(&l, Vec2::ZERO, Rgb(0, 0, 0), lwdisplay);
+            assert!(m.line_vertices() > 0 && m.tri_vertices() > 0 && m.quad_instances() >= 6, "{lwdisplay}");
+            assert_eq!([m.lines.capacity(), m.tris.capacity(), m.quads.capacity()], [m.lines.len(), m.tris.len(), m.quads.len()], "{lwdisplay}");
+        }
     }
 
     #[test]

@@ -108,7 +108,10 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                 if let (Some(part), Some((region, inverted))) = (part, &clip) {
                     b.list.expanded = part.list.expanded;
                     b.list.truncated |= part.list.truncated;
-                    append_clipped_keep(&mut b.list, &part.list, &if *inverted { Clip::Outside(region) } else { Clip::Poly(region) });
+                    let limits = b.limits();
+                    if !append_clipped_keep(&mut b.list, &part.list, &if *inverted { Clip::Outside(region) } else { Clip::Poly(region) }, limits) {
+                        b.spend();
+                    }
                     xclip_frame(b, ctx, region, rgb);
                 }
                 if stop {
@@ -122,7 +125,11 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
     let mut part = attr_clip.as_ref().map(|_| b.part());
     attributes(part.as_mut().unwrap_or(&mut *b), ctx, e, ins, rgb, own);
     if let (Some(part), Some((region, inverted))) = (part, &attr_clip) {
-        append_clipped_keep(&mut b.list, &part.list, &if *inverted { Clip::Outside(region) } else { Clip::Poly(region) });
+        b.list.truncated |= part.list.truncated;
+        let limits = b.limits();
+        if !append_clipped_keep(&mut b.list, &part.list, &if *inverted { Clip::Outside(region) } else { Clip::Poly(region) }, limits) {
+            b.spend();
+        }
     }
 }
 

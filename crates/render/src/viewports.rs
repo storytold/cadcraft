@@ -1,13 +1,11 @@
-#[cfg(not(target_arch = "wasm32"))]
-use super::display::append;
 use super::display::{DImage, DPrim, DisplayList, Kind, NO_LAYER, PlotText, VIEWPORT_CONTENT};
 use super::draw::entity;
 #[cfg(not(target_arch = "wasm32"))]
 use super::pipeline::PARALLEL_CHUNK;
 use super::pipeline::{Options, style_table, top_ctx, with_point_view};
 use super::{
-    Bounds2, Builder, Ctx, Drawing, Entity, EntityKind, Handle, MAX_BLOCK_EXPANSION, MAX_DISPLAY_POINTS, Mat3, Pen, Space, Vec2, clip, paper, pen,
-    plotstyle,
+    Bounds2, Builder, Ctx, Drawing, Entity, EntityKind, Handle, MAX_BLOCK_EXPANSION, MAX_DISPLAY_POINTS, MAX_DISPLAY_PRIMS, Mat3, Pen, Space, Vec2,
+    clip, paper, pen, plotstyle,
 };
 
 /// Upper bound on viewports drawn per layout (hostile files).
@@ -70,7 +68,7 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
     }
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, false).map(|t| plotstyle::Styler::new(d, t));
-    let points = std::sync::atomic::AtomicUsize::new(0);
+    let (points, prims) = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
     let mut b = Builder {
         list: DisplayList::default(),
         opts,
@@ -81,6 +79,8 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
         transparency: 0,
         points: &points,
         max_points: MAX_DISPLAY_POINTS,
+        prims: &prims,
+        max_prims: MAX_DISPLAY_PRIMS,
     };
     contents(&mut b, d, vp, area, &Clip::Rect(area), paper::unit_mm_of(d, handle));
     b.list
@@ -135,6 +135,8 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
         transparency: 0,
         points: b.points,
         max_points: b.max_points,
+        prims: b.prims,
+        max_prims: b.max_prims,
     };
     #[cfg(not(target_arch = "wasm32"))]
     let parallel = !b.plotting && b.styles.is_none() && d.model.len() >= 2 * PARALLEL_CHUNK;
@@ -146,7 +148,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
             // As `build_parallel`: chunks built side by side, joined in drawing order.
             use rayon::prelude::*;
             let ents: Vec<&std::sync::Arc<Entity>> = d.model.iter().collect();
-            let (opts, points, max_points) = (b.opts, b.points, b.max_points);
+            let (opts, points, max_points, prims, max_prims) = (b.opts, b.points, b.max_points, b.prims, b.max_prims);
             let parts: Vec<DisplayList> = ents
                 .par_chunks(PARALLEL_CHUNK)
                 .map(|chunk| {
@@ -160,6 +162,8 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
                         transparency: 0,
                         points,
                         max_points,
+                        prims,
+                        max_prims,
                     };
                     let c = ctx();
                     for me in chunk.iter().filter(|me| seen(me)) {
@@ -168,9 +172,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
                     part.list
                 })
                 .collect();
-            for part in parts {
-                append(&mut sub.list, part);
-            }
+            sub.join(parts);
         }
     } else {
         let c = ctx();
@@ -193,7 +195,10 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     pen::apply(&mut sub.list, unit_mm);
     b.list.expanded = b.list.expanded.saturating_add(sub.list.expanded);
     b.list.truncated |= sub.list.truncated;
-    append_clipped(&mut b.list, &sub.list, clip);
+    let limits = b.limits();
+    if !append_clipped(&mut b.list, &sub.list, clip, limits) {
+        b.spend();
+    }
 }
 
 /// The clip region of a clipped viewport: the outline of its clip boundary entity, when that
@@ -209,8 +214,33 @@ pub fn viewport_clip(d: &Drawing, handle: Handle, vp: &cadcraft_doc::Viewport) -
 /// drawn inside a clipped viewport apart from its contents.
 pub fn clip_list(list: &DisplayList, clip: &clip::PolyClip) -> DisplayList {
     let mut out = DisplayList::default();
-    append_clipped(&mut out, list, &Clip::Poly(clip));
+    append_clipped(&mut out, list, &Clip::Poly(clip), Limits::BUILD);
     out
+}
+
+/// What one display list may hold. Clipping can cut one primitive into many pieces, each with
+/// points of its own where it crosses the clip, and the build's budgets count the primitive, not
+/// its pieces: the pieces appended to a list stop at these limits, which mark it truncated, and
+/// what the build draws into a list afterwards checks them too.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Limits {
+    pub points: usize,
+    pub prims: usize,
+}
+
+impl Limits {
+    /// A build's own limits: [`MAX_DISPLAY_POINTS`] and [`MAX_DISPLAY_PRIMS`].
+    const BUILD: Limits = Limits { points: MAX_DISPLAY_POINTS, prims: MAX_DISPLAY_PRIMS };
+
+    /// Whether `list` has room for one more primitive of `n` points; when it has none, the list
+    /// is marked truncated.
+    pub(crate) fn room(self, list: &mut DisplayList, n: usize) -> bool {
+        let ok = list.prims.len() < self.prims && list.verts.len().saturating_add(list.tris.len()).saturating_add(n) <= self.points;
+        if !ok {
+            list.truncated = true;
+        }
+        ok
+    }
 }
 
 /// What viewport contents are clipped to.
@@ -223,21 +253,21 @@ pub(crate) enum Clip<'a> {
     Outside(&'a clip::PolyClip),
 }
 
-/// Append `src` to `dst`, clipped to `clip`.
-pub(crate) fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
-    for p in &src.prims {
-        clip_prim(dst, src, p, clip);
-    }
+/// Append `src` to `dst`, clipped to `clip`, within `limits`; false once a piece did not fit
+/// (`dst` is then marked truncated and nothing after that piece is appended).
+pub(crate) fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip, limits: Limits) -> bool {
+    src.prims.iter().all(|p| clip_prim(dst, src, p, clip, limits))
 }
 
-/// Append `src` to `dst` clipped to `clip`, keeping each primitive's plot style pen and, for a
-/// glyph that the clip leaves whole, its plotted text (an XCLIP-clipped block reference).
-pub(crate) fn append_clipped_keep(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
+/// Append `src` to `dst` clipped to `clip` within `limits`, keeping each primitive's plot style
+/// pen and, for a glyph that the clip leaves whole, its plotted text (an XCLIP-clipped block
+/// reference); false once a piece did not fit, as [`append_clipped`].
+pub(crate) fn append_clipped_keep(dst: &mut DisplayList, src: &DisplayList, clip: &Clip, limits: Limits) -> bool {
     let texts: std::collections::HashMap<usize, &PlotText> =
         src.texts.iter().filter(|t| t.prim != PlotText::NONE && t.prim != PlotText::CLIPPED).map(|t| (t.prim as usize, t)).collect();
     for (i, p) in src.prims.iter().enumerate() {
         let first = dst.prims.len();
-        clip_prim(dst, src, p, clip);
+        let fits = clip_prim(dst, src, p, clip, limits);
         // Each piece keeps its source's layer (block contents not on layer 0 keep theirs).
         if let Some(layer) = src.prim_layers.get(i).copied() {
             for k in first..dst.prims.len() {
@@ -259,122 +289,105 @@ pub(crate) fn append_clipped_keep(dst: &mut DisplayList, src: &DisplayList, clip
         {
             dst.texts.push(PlotText { prim, ..(**t).clone() });
         }
+        if !fits {
+            return false;
+        }
     }
+    true
 }
 
-/// Append primitive `p` of `src` to `dst`, clipped to `clip`.
-fn clip_prim(dst: &mut DisplayList, src: &DisplayList, p: &DPrim, clip: &Clip) {
-    {
-        let pts = src.points(p);
-        match (p.kind, clip) {
-            (Kind::Polyline, Clip::Rect(rect)) => {
-                for piece in clip::clip_polyline(pts, rect) {
-                    push_raw(dst, p, Kind::Polyline, &piece);
-                }
+/// Append primitive `p` of `src` to `dst`, clipped to `clip`, within `limits`; false when a piece
+/// did not fit (the pieces after it are not appended).
+fn clip_prim(dst: &mut DisplayList, src: &DisplayList, p: &DPrim, clip: &Clip, limits: Limits) -> bool {
+    let pts = src.points(p);
+    let pieces = |dst: &mut DisplayList, cut: Vec<Vec<Vec2>>| cut.iter().all(|piece| push_raw(dst, p, Kind::Polyline, piece, limits));
+    match (p.kind, clip) {
+        (Kind::Polyline, Clip::Rect(rect)) => pieces(dst, clip::clip_polyline(pts, rect)),
+        (Kind::Polyline, Clip::Poly(c)) => pieces(dst, c.clip_polyline(pts)),
+        (Kind::Polyline, Clip::Outside(c)) => pieces(dst, c.clip_polyline_outside(pts)),
+        (Kind::Tris | Kind::Mask, Clip::Rect(rect)) => push_raw(dst, p, p.kind, &clip::clip_triangles(pts, rect), limits),
+        (Kind::Tris | Kind::Mask, Clip::Poly(c)) => push_raw(dst, p, p.kind, &c.clip_triangles(pts), limits),
+        (Kind::Tris | Kind::Mask, Clip::Outside(c)) => push_raw(dst, p, p.kind, &c.clip_triangles_outside(pts), limits),
+        (Kind::Point, _) => {
+            let inside = |q: Vec2| match clip {
+                Clip::Rect(rect) => rect.contains(q),
+                Clip::Poly(c) => c.contains(q),
+                Clip::Outside(c) => !c.contains(q),
+            };
+            match pts.first() {
+                Some(q) if inside(*q) => push_raw(dst, p, Kind::Point, &[*q], limits),
+                _ => true,
             }
-            (Kind::Polyline, Clip::Poly(c)) => {
-                for piece in c.clip_polyline(pts) {
-                    push_raw(dst, p, Kind::Polyline, &piece);
-                }
-            }
-            (Kind::Polyline, Clip::Outside(c)) => {
-                for piece in c.clip_polyline_outside(pts) {
-                    push_raw(dst, p, Kind::Polyline, &piece);
-                }
-            }
-            (Kind::Tris | Kind::Mask, Clip::Rect(rect)) => {
-                let t = clip::clip_triangles(pts, rect);
-                push_raw(dst, p, p.kind, &t);
-            }
-            (Kind::Tris | Kind::Mask, Clip::Poly(c)) => {
-                let t = c.clip_triangles(pts);
-                push_raw(dst, p, p.kind, &t);
-            }
-            (Kind::Tris | Kind::Mask, Clip::Outside(c)) => {
-                let t = c.clip_triangles_outside(pts);
-                push_raw(dst, p, p.kind, &t);
-            }
-            (Kind::Point, _) => {
-                let inside = |q: Vec2| match clip {
-                    Clip::Rect(rect) => rect.contains(q),
-                    Clip::Poly(c) => c.contains(q),
-                    Clip::Outside(c) => !c.contains(q),
-                };
-                if let Some(q) = pts.first()
-                    && inside(*q)
-                {
-                    push_raw(dst, p, Kind::Point, &[*q]);
-                }
-            }
-            (Kind::Image { index }, _) => {
-                if let Some(img) = src.images.get(index as usize) {
-                    push_clipped_image(dst, p, img, pts, clip);
-                }
-            }
-            (Kind::Infinite { ray }, Clip::Rect(rect)) => {
-                if let (Some(base), Some(dir)) = (pts.first(), pts.get(1))
-                    && let Some((a, c)) = clip::clip_infinite(*base, *dir, ray, rect)
-                {
-                    push_raw(dst, p, Kind::Polyline, &[a, c]);
-                }
-            }
-            (Kind::Infinite { ray }, Clip::Poly(c)) => {
-                if let (Some(base), Some(dir)) = (pts.first(), pts.get(1)) {
-                    for piece in c.clip_infinite(*base, *dir, ray) {
-                        push_raw(dst, p, Kind::Polyline, &piece);
-                    }
-                }
-            }
-            (Kind::Infinite { ray }, Clip::Outside(c)) => {
-                if let (Some(base), Some(dir)) = (pts.first(), pts.get(1)) {
-                    for piece in c.clip_infinite_outside(*base, *dir, ray) {
-                        push_raw(dst, p, Kind::Polyline, &piece);
-                    }
-                }
+        }
+        (Kind::Image { index }, _) => match src.images.get(index as usize) {
+            Some(img) => push_clipped_image(dst, p, img, pts, clip, limits),
+            None => true,
+        },
+        (Kind::Infinite { ray }, _) => {
+            let (Some(base), Some(dir)) = (pts.first(), pts.get(1)) else { return true };
+            match clip {
+                Clip::Rect(rect) => match clip::clip_infinite(*base, *dir, ray, rect) {
+                    Some((a, c)) => push_raw(dst, p, Kind::Polyline, &[a, c], limits),
+                    None => true,
+                },
+                Clip::Poly(c) => pieces(dst, c.clip_infinite(*base, *dir, ray)),
+                Clip::Outside(c) => pieces(dst, c.clip_infinite_outside(*base, *dir, ray)),
             }
         }
     }
 }
 
 /// Append image `img` (primitive `p`, corners `corners`) to `dst`, to be cut to `clip` when it
-/// is drawn: the picture is not cut here, the outline is added to those it carries.
-fn push_clipped_image(dst: &mut DisplayList, p: &DPrim, img: &DImage, corners: &[Vec2], clip: &Clip) {
+/// is drawn: the picture is not cut here, the outline is added to those it carries. False when
+/// it did not fit.
+fn push_clipped_image(dst: &mut DisplayList, p: &DPrim, img: &DImage, corners: &[Vec2], clip: &Clip, limits: Limits) -> bool {
     let (outline, area) = match clip {
         Clip::Rect(rect) => (vec![rect.min, Vec2::new(rect.max.x, rect.min.y), rect.max, Vec2::new(rect.min.x, rect.max.y)], *rect),
         Clip::Poly(c) => (c.polygon().to_vec(), c.bounds()),
         // An image can only be cut to the inside of an outline: under an inverted XCLIP it is
         // drawn whole, which shows too much rather than losing any of it.
         Clip::Outside(_) => {
-            let Ok(index) = u32::try_from(dst.images.len()) else { return };
+            let Ok(index) = u32::try_from(dst.images.len()) else { return true };
+            if !limits.room(dst, corners.len()) {
+                return false;
+            }
             dst.images.push(img.clone());
-            push_raw(dst, p, Kind::Image { index }, corners);
-            return;
+            return push_raw(dst, p, Kind::Image { index }, corners, limits);
         }
     };
     let own = Bounds2::from_points(corners.iter().copied());
     if !own.intersects(&area) {
-        return;
+        return true;
     }
-    let Ok(index) = u32::try_from(dst.images.len()) else { return };
+    if !limits.room(dst, corners.len()) {
+        return false;
+    }
+    let Ok(index) = u32::try_from(dst.images.len()) else { return true };
     let mut img = img.clone();
     img.clips.push(outline);
     dst.images.push(img);
     // The list's bounds take only the part inside the clip, as for the other primitives.
     let before = dst.bounds;
-    push_raw(dst, p, Kind::Image { index }, corners);
+    let fits = push_raw(dst, p, Kind::Image { index }, corners, limits);
     dst.bounds = before;
     dst.bounds.add(own.min.max(area.min));
     dst.bounds.add(own.max.min(area.max));
+    fits
 }
 
-fn push_raw(dst: &mut DisplayList, p: &DPrim, kind: Kind, pts: &[Vec2]) {
+/// Append one piece; false when `dst` has no room for it ([`Limits::room`]). A piece too short
+/// to draw is left out and counts as appended.
+fn push_raw(dst: &mut DisplayList, p: &DPrim, kind: Kind, pts: &[Vec2], limits: Limits) -> bool {
     let min = match kind {
         Kind::Polyline => 2,
         Kind::Tris | Kind::Mask => 3,
         _ => 1,
     };
     if pts.len() < min {
-        return;
+        return true;
+    }
+    if !limits.room(dst, pts.len()) {
+        return false;
     }
     let tris = matches!(kind, Kind::Tris | Kind::Mask);
     let start = if tris { dst.tris.len() } else { dst.verts.len() } as u32;
@@ -396,4 +409,5 @@ fn push_raw(dst: &mut DisplayList, p: &DPrim, kind: Kind, pts: &[Vec2]) {
         start,
         len: pts.len() as u32,
     });
+    true
 }
