@@ -188,10 +188,23 @@ fn subcommand_help_requests() {
             ),
             case("help after an extra argument", &["info", "{b}", "extra", "-h"], 0, Line("Print a drawing's summary as JSON"), Empty),
             case("--help after -- is a file name", &["run", "--", "--help"], 1, Empty, Starts("error: invalid parameters for `open`: --help:")),
-            case("run --version", &["run", "--version"], 2, Empty, Line("error: unexpected argument '--version' found")),
-            case("info --version", &["info", "--version"], 2, Empty, Line("error: unexpected argument '--version' found")),
         ],
     );
+}
+
+/// RFC-0018 rule 1.1: `--version` and `-V` work on every subcommand, print one line on stdout and
+/// return without running it (`mcp` would otherwise wait for a client).
+#[test]
+fn every_subcommand_prints_the_version() {
+    for sub in ["info", "convert", "run", "commands", "mcp", "perf", "sample", "roundtrip"] {
+        for flag in ["--version", "-V"] {
+            let top = invoke(&[flag]);
+            let release = top.stdout.strip_prefix("cadcraft-cli ").unwrap_or_else(|| panic!("{:?}", top.stdout));
+            let got = invoke(&[sub, flag]);
+            assert_eq!((got.code, got.stderr.as_str()), (0, ""), "{sub} {flag}");
+            assert_eq!(got.stdout, format!("cadcraft-cli-{sub} {release}"), "{sub} {flag}");
+        }
+    }
 }
 
 #[test]

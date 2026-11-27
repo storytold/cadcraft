@@ -66,7 +66,7 @@ fn convert_long_about() -> &'static str {
 
 /// cadcraft-cli: headless CADCraft
 #[derive(Parser)]
-#[command(name = "cadcraft-cli", version = cadcraft_engine::build_version(), arg_required_else_help = true)]
+#[command(name = "cadcraft-cli", version = cadcraft_engine::build_version(), propagate_version = true, arg_required_else_help = true)]
 pub(crate) struct Cli {
     #[command(subcommand)]
     pub(crate) command: Command,
