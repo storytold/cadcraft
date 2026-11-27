@@ -57,6 +57,15 @@ pub(super) fn hatch_at(app: &CadApp, w: Vec2, scale: f64) -> Option<Handle> {
     matches!(st.doc.entity(h)?.kind, cadcraft_doc::EntityKind::Hatch(_)).then_some(h)
 }
 
+/// The block reference under world point `w` within the pick aperture (PICKBOX × 1.5 pixels at
+/// `scale` pixels per unit), if any.
+pub(super) fn insert_at(app: &CadApp, w: Vec2, scale: f64) -> Option<Handle> {
+    let st = app.session.state().ok()?;
+    let aperture = app.session.settings.pickbox.max(1.0) * 1.5 / scale.max(1e-12);
+    let h = cadcraft_engine::select::pick_in(&st.doc, &st.edit_space(), st.viewport_frozen(), w, aperture)?;
+    matches!(st.doc.entity(h)?.kind, cadcraft_doc::EntityKind::Insert(_)).then_some(h)
+}
+
 #[cfg(test)]
 mod hatch_pick_tests {
     use cadcraft_engine::Session;
@@ -103,5 +112,208 @@ mod hatch_pick_tests {
         assert_eq!(app.hatch_dlg.as_ref().map(|s| s.edit.iter().map(|h| h.hex()).collect::<Vec<_>>()), Some(vec![hx]));
         // The double-click (at the hatch's centre grip) only opens the dialog: no grip edit.
         assert!(app.session.running.is_none(), "{:?}", app.session.running.as_ref().map(|r| r.machine.name()));
+    }
+
+    fn run_frame(app: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>, time: f64) {
+        let screen = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0)));
+        app.logic(ctx);
+        let input = egui::RawInput { screen_rect: screen, events, time: Some(time), ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| app.ui(ui));
+        out.textures_delta.clear();
+    }
+
+    #[test]
+    fn double_clicking_a_block_reference_in_model_space_opens_bedit_and_edits_cleanly() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        // Create a block whose local geometry sits far from (0, 0).
+        let l = app.run("line", json!({ "points": [[4400, -1200], [4500, -1200]] })).unwrap()["handles"][0].clone();
+        app.run("block", json!({ "name": "FRAME", "base": [0, 0], "handles": [l] })).unwrap();
+        app.session.set_selection(Vec::new());
+        let _ = app.session.zoom_extents();
+
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx, Vec::new(), 0.0);
+        let at = app.canvas.xf.unwrap().to_screen(Vec2::new(4450.0, -1200.0));
+        let btn =
+            |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::default() };
+        run_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], 0.1);
+        run_frame(&mut app, &ctx, vec![btn(true), btn(false)], 0.2);
+        run_frame(&mut app, &ctx, vec![btn(true), btn(false)], 0.3);
+        run_frame(&mut app, &ctx, Vec::new(), 0.4);
+
+        let st = app.session.state().unwrap();
+        assert_eq!(st.block_editor(), Some("FRAME"), "double-click opens Block Editor");
+        assert!(app.session.running.is_none(), "no stray grip edit on double-click");
+        assert!(!st.block_unsaved(), "freshly opened block has no unsaved edits");
+        // Block geometry at (4400..4500, -1200) is framed near the view center.
+        let c = st.view().center;
+        assert!((c.x - 4450.0).abs() < 100.0 && (c.y - (-1200.0)).abs() < 100.0, "view should frame offset block geometry: {c:?}");
+
+        // Edit inside the Block Editor, verify unsaved state, then save and close.
+        app.run("line", json!({ "points": [[4400, -1180], [4500, -1180]] })).unwrap();
+        assert!(app.session.state().unwrap().block_unsaved(), "adding geometry flips block_unsaved");
+        app.run("bsave", json!({})).unwrap();
+        assert!(!app.session.state().unwrap().block_unsaved(), "bsave clears block_unsaved");
+        app.run("bclose", json!({})).unwrap();
+        assert_eq!(app.session.state().unwrap().block_editor(), None);
+        assert_eq!(app.session.doc().unwrap().block("FRAME").unwrap().entities.len(), 2);
+    }
+
+    #[test]
+    fn double_clicking_a_paper_space_block_overlapping_a_viewport_opens_bedit() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.run("layout.set", json!({ "name": "Layout1" })).unwrap();
+        // Place a Paper Space title block line directly across the default viewport.
+        let vp_center = app
+            .session
+            .doc()
+            .unwrap()
+            .layout("Layout1")
+            .unwrap()
+            .entities
+            .iter()
+            .find_map(|e| match &e.kind {
+                cadcraft_doc::EntityKind::Viewport(v) if v.id != 1 => Some(v.center.xy()),
+                _ => None,
+            })
+            .unwrap_or(Vec2::new(5.0, 4.0));
+        let l =
+            app.run("line", json!({ "points": [[vp_center.x - 2.0, vp_center.y], [vp_center.x + 2.0, vp_center.y]] })).unwrap()["handles"][0].clone();
+        app.run("block", json!({ "name": "TITLE", "base": [vp_center.x, vp_center.y], "handles": [l] })).unwrap();
+        app.session.set_selection(Vec::new());
+        let _ = app.session.zoom_extents();
+
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx, Vec::new(), 0.0);
+        let at = app.canvas.xf.unwrap().to_screen(vp_center);
+        let btn =
+            |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::default() };
+        run_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], 0.1);
+        run_frame(&mut app, &ctx, vec![btn(true), btn(false)], 0.2);
+        run_frame(&mut app, &ctx, vec![btn(true), btn(false)], 0.3);
+        run_frame(&mut app, &ctx, Vec::new(), 0.4);
+
+        assert_eq!(app.session.state().unwrap().block_editor(), Some("TITLE"), "opens BEDIT instead of MSPACE");
+        assert!(app.session.state().unwrap().mspace.is_none(), "must not activate MSPACE");
+        app.run("bclose", json!({ "save": false })).unwrap();
+        assert_eq!(app.session.layout_space(), cadcraft_doc::Space::Paper("Layout1".into()));
+    }
+
+    #[test]
+    fn double_clicking_an_xref_refuses_cleanly_with_reason() {
+        use cadcraft_doc::{Block, Common, EntityKind, Insert, Line, Space};
+        use cadcraft_geom::Vec3;
+        use std::sync::Arc;
+
+        let mut app = CadApp::new(Session::new(), Services::default());
+        {
+            let d = app.session.doc_mut().unwrap();
+            let mut xb = Block::new("EXT_TB");
+            xb.xref_path = Some("ext_tb.dwg".into());
+            let h = d.new_handle();
+            xb.entities.push(cadcraft_doc::Entity {
+                handle: h,
+                common: Common::default(),
+                kind: EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) }),
+            });
+            d.blocks.insert("EXT_TB".into(), Arc::new(xb));
+            d.add(&Space::Model, Common::default(), EntityKind::Insert(Insert { block: "EXT_TB".into(), ..Insert::default() })).unwrap();
+        }
+        let _ = app.session.zoom_extents();
+
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx, Vec::new(), 0.0);
+        let at = app.canvas.xf.unwrap().to_screen(Vec2::new(5.0, 0.0));
+        let btn =
+            |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::default() };
+        run_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], 0.1);
+        run_frame(&mut app, &ctx, vec![btn(true), btn(false)], 0.2);
+        run_frame(&mut app, &ctx, vec![btn(true), btn(false)], 0.3);
+        run_frame(&mut app, &ctx, Vec::new(), 0.4);
+
+        assert_eq!(app.session.state().unwrap().block_editor(), None, "xref cannot open in BEDIT");
+        let last_msg = app.session.log.last().map(String::as_str).unwrap_or("");
+        assert!(last_msg.contains("external reference") || last_msg.contains("XOPEN"), "refusal reason echoed: {last_msg}");
+    }
+
+    #[test]
+    fn block_editor_paints_distinct_light_background_with_dark_aci7_contrast() {
+        let dark = crate::theme::Tokens::DARK;
+        let bedit_tokens = dark.for_block_editor();
+        assert_ne!(bedit_tokens.canvas, dark.canvas, "distinct from dark Model Space");
+        assert_ne!(bedit_tokens.canvas, dark.paper, "distinct from pure-white Paper Space sheet");
+        assert!(bedit_tokens.canvas.r() > 180 && bedit_tokens.canvas.g() > 180 && bedit_tokens.canvas.b() > 180, "light background");
+        assert!(bedit_tokens.crosshair.r() < 80, "dark high-contrast crosshair on light Block Editor background");
+
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let l = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap()["handles"][0].clone();
+        app.run("block", json!({ "name": "SYM", "base": [0, 0], "handles": [l] })).unwrap();
+        app.run("bedit", json!({ "name": "SYM" })).unwrap();
+
+        let ctx = egui::Context::default();
+        let screen = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0)));
+        app.logic(&ctx);
+        let mut out = ctx.run_ui(egui::RawInput { screen_rect: screen, ..Default::default() }, |ui| app.ui(ui));
+        out.textures_delta.clear();
+        let mut saw_light_bg = false;
+        let mut saw_dark_stroke = false;
+        fn scan(shape: &egui::Shape, bg: egui::Color32, saw_bg: &mut bool, saw_dark: &mut bool) {
+            match shape {
+                egui::Shape::Rect(r) if r.fill == bg => *saw_bg = true,
+                egui::Shape::LineSegment { stroke, .. } if stroke.color.r() < 40 && stroke.color.g() < 40 && stroke.color.b() < 40 => {
+                    *saw_dark = true;
+                }
+                egui::Shape::Path(egui::epaint::PathShape { stroke, .. }) if matches!(stroke.color, egui::epaint::ColorMode::Solid(c) if c.r() < 40 && c.g() < 40 && c.b() < 40) =>
+                {
+                    *saw_dark = true;
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| scan(s, bg, saw_bg, saw_dark)),
+                _ => {}
+            }
+        }
+        for s in &out.shapes {
+            scan(&s.shape, dark.block_editor_canvas, &mut saw_light_bg, &mut saw_dark_stroke);
+        }
+        assert!(saw_light_bg, "Block Editor canvas should be filled with the light block_editor_canvas token");
+        assert!(saw_dark_stroke, "ACI-7 entity geometry should render dark against the light Block Editor background");
+    }
+
+    #[test]
+    fn block_editor_tiled_viewports_all_use_light_background_palette() {
+        let dark = crate::theme::Tokens::DARK;
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let l = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap()["handles"][0].clone();
+        app.run("block", json!({ "name": "SYM", "base": [0, 0], "handles": [l] })).unwrap();
+        app.run("bedit", json!({ "name": "SYM" })).unwrap();
+        app.run("vports.2", json!({})).unwrap();
+
+        let ctx = egui::Context::default();
+        let screen = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0)));
+        app.logic(&ctx);
+        let mut out = ctx.run_ui(egui::RawInput { screen_rect: screen, ..Default::default() }, |ui| app.ui(ui));
+        out.textures_delta.clear();
+
+        let bedit_ink = dark.for_block_editor().canvas_ink;
+        let mut light_fills = 0usize;
+        let mut dark_labels = 0usize;
+        fn scan_tiles(shape: &egui::Shape, light: egui::Color32, ink: egui::Color32, fills: &mut usize, labels: &mut usize) {
+            match shape {
+                egui::Shape::Rect(r) if r.rect.width() > 200.0 && r.rect.height() > 200.0 && r.fill == light => {
+                    *fills += 1;
+                }
+                egui::Shape::Text(t) if t.galley.text().contains("2D Wireframe") => {
+                    let color = t.override_text_color.or_else(|| t.galley.job.sections.first().map(|sec| sec.format.color));
+                    assert_eq!(color, Some(ink), "viewport label should use Block Editor canvas_ink");
+                    *labels += 1;
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| scan_tiles(s, light, ink, fills, labels)),
+                _ => {}
+            }
+        }
+        for s in &out.shapes {
+            scan_tiles(&s.shape, dark.block_editor_canvas, bedit_ink, &mut light_fills, &mut dark_labels);
+        }
+        assert!(light_fills >= 2, "both active and inactive tiles should use light block_editor_canvas (got {light_fills})");
+        assert!(dark_labels >= 2, "both active and inactive tile viewport labels should use dark canvas_ink (got {dark_labels})");
     }
 }

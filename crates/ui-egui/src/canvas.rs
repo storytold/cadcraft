@@ -35,7 +35,7 @@ use grips::{click_grip, grip_at, grip_menu, grip_options, grip_rect};
 use list::{OnlyList, PrimIndex, ensure_list, rebuilt_preview};
 #[cfg(test)]
 use list::{preview_options, prims_of};
-use pick::{edit_text_at, hatch_at, wheel_zoom_points};
+use pick::{edit_text_at, hatch_at, insert_at, wheel_zoom_points};
 #[cfg(test)]
 use viewport::viewport_highlight_tolerance;
 use viewport::{HoverPart, VpContent, VpHighlight, draw_vp_content, ensure_vp_content};
@@ -567,11 +567,11 @@ fn paint_pointer_overlay(frame: &mut CanvasPaint<'_>, paper_rect: Option<Rect>, 
     if let (Some(hit), Some(_)) = (app.canvas.snap, app.canvas.cursor) {
         draw_snap_marker(painter, xf.to_screen(hit.point), &hit);
     }
-    draw_tiles(app, ui, tiles);
+    draw_tiles(app, ui, tiles, &t);
     // UCS icon, ViewCube and viewport label.
     if app.session.ucsicon_bits() & 1 != 0 {
         let place = crate::viewcube::IconPlace::of(app, rect, xf.twist, |p| xf.to_screen(p));
-        draw_ucs_icon(painter, &place);
+        draw_ucs_icon(painter, &place, &t);
         // Clickable only at the Command prompt: while a command runs, a pick or a snap at the UCS
         // origin (where the icon may sit) reaches the drawing.
         if app.session.running.is_none() && app.session.pending_window.is_none() {
@@ -581,7 +581,7 @@ fn paint_pointer_overlay(frame: &mut CanvasPaint<'_>, paper_rect: Option<Rect>, 
     if app.ui.show_viewcube && sheet.is_none() {
         draw_viewcube(app, ui, rect);
     }
-    viewport_label(painter, rect);
+    viewport_label(painter, rect, &t);
     // Typing and Escape reach the command line even when its overlay is hidden, unless the
     // inline constraint editor already handled this frame's keys (Enter would otherwise repeat
     // `last_command`, e.g. immediately undoing the edit after Cmd+Z).
@@ -637,53 +637,70 @@ struct DoubleClickContext<'a> {
 
 fn handle_double_click(app: &mut CadApp, ctx: DoubleClickContext<'_>) -> Option<bool> {
     let DoubleClickContext { inside, double, hover, xf, xf_paper, scale, active_viewport, active_clip } = ctx;
-    if inside
-        && double
-        && !app.session.prompting()
-        && matches!(app.session.layout_space(), cadcraft_doc::Space::Paper(_))
-        && let Some(hp) = hover
-    {
+    let paper = matches!(app.session.layout_space(), cadcraft_doc::Space::Paper(_));
+    let in_active = if paper && let Some(hp) = hover {
         let pp = xf_paper.to_world(hp);
         let in_rect = |v: &cadcraft_doc::Viewport| (pp.x - v.center.x).abs() <= v.width / 2.0 && (pp.y - v.center.y).abs() <= v.height / 2.0;
-        let in_active = active_viewport.as_ref().is_some_and(|v| active_clip.as_ref().map_or(in_rect(v), |c| c.contains(pp)));
-        if !in_active {
+        active_viewport.as_ref().is_some_and(|v| active_clip.as_ref().map_or(in_rect(v), |c| c.contains(pp)))
+    } else {
+        false
+    };
+    let can_edit_entity = !paper || active_viewport.is_none() || in_active;
+
+    if inside
+        && double
+        && app.session.running.is_none()
+        && can_edit_entity
+        && let Some(hp) = hover
+    {
+        let world = xf.to_world(hp);
+        // Double-click text to edit it, as in AutoCAD: TEXTEDIT with that object already picked.
+        if edit_text_at(app, world) {
+            return None;
+        }
+        // Double-click a block reference to open it in the Block Editor (BEDIT).
+        if let Some(h) = insert_at(app, world, scale) {
             app.canvas.hot_grips.clear();
             app.session.pending_window = None;
             app.canvas.press = None;
-            if app.run("mspace", serde_json::json!({"at": [pp.x, pp.y]})).is_err() && active_viewport.is_some() {
-                let _ = app.run("pspace", serde_json::json!({}));
+            if let Err(e) = app.run("bedit", serde_json::json!({ "handle": h.hex() })) {
+                app.set_status(e);
             }
-            app.session.pending_window = None;
-            app.canvas.press = None;
             app.canvas.list = None;
             return None;
         }
+        // Double-click a hatch (no command running) to edit it in the Hatch Edit dialog. The
+        // click is used up: it must not also start a grip edit on the hatch's centre grip below.
+        if let Some(h) = hatch_at(app, world, scale) {
+            app.session.set_selection(vec![h]);
+            crate::hatchdlg::open_edit(app);
+            return Some(true);
+        }
     }
-    // Double-click text to edit it, as in AutoCAD: TEXTEDIT with that object already picked.
+
+    // In Paper Space, double-clicking inside a viewport activates MSPACE and double-clicking
+    // outside an active viewport returns to PSPACE.
     if inside
         && double
-        && app.session.running.is_none()
+        && !app.session.prompting()
+        && paper
+        && !in_active
         && let Some(hp) = hover
-        && edit_text_at(app, xf.to_world(hp))
     {
+        let pp = xf_paper.to_world(hp);
+        app.canvas.hot_grips.clear();
+        app.session.pending_window = None;
+        app.canvas.press = None;
+        if app.run("mspace", serde_json::json!({"at": [pp.x, pp.y]})).is_err() && active_viewport.is_some() {
+            let _ = app.run("pspace", serde_json::json!({}));
+        }
+        app.session.pending_window = None;
+        app.canvas.press = None;
+        app.canvas.list = None;
         return None;
     }
 
-    let mut hatch_dialog = false;
-    // Double-click a hatch (no command running) to edit it in the Hatch Edit dialog. The click is
-    // used up: it must not also start a grip edit on the hatch's centre grip below.
-    if inside
-        && double
-        && app.session.running.is_none()
-        && let Some(hp) = hover
-        && let Some(h) = hatch_at(app, xf.to_world(hp), scale)
-    {
-        app.session.set_selection(vec![h]);
-        crate::hatchdlg::open_edit(app);
-        hatch_dialog = true;
-    }
-
-    Some(hatch_dialog)
+    Some(false)
 }
 
 fn update_canvas_cursor(
@@ -1192,6 +1209,8 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         raw_world,
     } = frame;
     let scale = xf.scale;
+    let in_block_editor = blockedit::active(app);
+    let t = if in_block_editor { t.for_block_editor() } else { t };
     painter.rect_filled(rect, 0.0, t.canvas);
     let t0 = crate::now_ms();
     let mut views = vec![(xf_paper.world_bounds(), 1.0 / xf_paper.scale)];
@@ -1219,8 +1238,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             (Rgb(t.paper.r(), t.paper.g(), t.paper.b()), Some(paper))
         }
         None => {
-            blockedit::wash(app, painter, rect);
-            draw_grid(app, painter, &xf);
+            draw_grid(app, painter, &xf, &t);
             (Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b()), None)
         }
     };

@@ -124,6 +124,9 @@ pub struct Tokens {
     pub crosshair: Color32,
     /// The sheet of paper on a layout tab.
     pub paper: Color32,
+    /// The drawing-area background while the Block Editor (BEDIT) is open: a light grey distinct
+    /// from both dark Model Space and pure-white Paper Space sheets.
+    pub block_editor_canvas: Color32,
 }
 
 impl Tokens {
@@ -172,6 +175,7 @@ impl Tokens {
         warn: Color32::from_rgb(0xff, 0xd0, 0x80),
         crosshair: Color32::from_rgb(0xe8, 0xe8, 0xe8),
         paper: Color32::WHITE,
+        block_editor_canvas: Color32::from_rgb(0xdc, 0xe0, 0xe6),
     };
 
     /// Light grey chrome with dark text. The drawing-area colours (canvas, grid, axes, selection,
@@ -216,6 +220,12 @@ impl Tokens {
     /// The palette of the theme in use, with the user's drawing-area colours ([`set_canvas`]).
     pub fn get() -> Tokens {
         CANVAS.with(Cell::get).over(Tokens::of(active()))
+    }
+
+    /// These tokens adapted for the Block Editor's light drawing-area background, so the grid,
+    /// axes, crosshair and canvas ink stay legible against [`Self::block_editor_canvas`].
+    pub fn for_block_editor(self) -> Tokens {
+        self.with_model_background(self.block_editor_canvas)
     }
 
     /// These tokens with `bg` as the model-space background: the grid, axes, crosshair and the

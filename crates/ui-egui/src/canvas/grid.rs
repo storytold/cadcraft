@@ -24,12 +24,11 @@ fn grid_index_ranges(wb: &Bounds2, minor: f64) -> Option<((i64, i64), (i64, i64)
     Some((range(wb.min.x, wb.max.x)?, range(wb.min.y, wb.max.y)?))
 }
 
-pub(super) fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
-    let t = Tokens::get();
+pub(super) fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf, t: &Tokens) {
     let s = app.session.drafting_settings();
     let wb = xf.world_bounds();
     if s.gridmode && s.isodraft {
-        draw_iso_grid(app, p, xf);
+        draw_iso_grid(app, p, xf, t);
     } else if s.gridmode {
         let major_n = f64::from(s.gridmajor.max(1));
         let unit = if s.gridunit.x == 0.0 { s.snapunit.x } else { s.gridunit.x };
@@ -75,9 +74,8 @@ pub(super) fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
 
 /// The isometric grid (SNAPSTYL 1): lines at 30°, 90° and 150° through the snap lattice, GRIDUNIT
 /// Y apart along the axes, coarsened while they would crowd closer than 8 pixels.
-fn draw_iso_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
+fn draw_iso_grid(app: &CadApp, p: &egui::Painter, xf: &Xf, t: &Tokens) {
     use cadcraft_engine::snap::iso;
-    let t = Tokens::get();
     let s = app.session.drafting_settings();
     let mut d = s.gridunit.y.max(1e-12);
     for _ in 0..40 {
