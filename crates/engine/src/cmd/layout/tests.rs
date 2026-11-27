@@ -220,10 +220,15 @@ fn pagesetup_paper_table() {
     assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "margins": [1, 2]})).is_err());
     assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "width": 1e308, "height": 5})).is_err());
     assert!(s.execute("pagesetup", &json!({"paper": "A4"})).is_err(), "model tab needs a layout");
-    for area in ["extents", "display", "window", "limits"] {
-        let e = s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": area})).unwrap_err();
-        assert!(e.to_string().contains("not available yet"), "{area}: {e}");
+    for area in ["extents", "display", "window", "layout"] {
+        let r = s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": area})).unwrap();
+        assert_eq!(r["page"]["plotArea"], area);
     }
+    let e = s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "limits"})).unwrap_err();
+    assert!(e.to_string().contains("limits"), "{e}");
+    let r = s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "window", "plotWindow": [4388.0, -1253.0, 5229.0, -659.0]})).unwrap();
+    assert_eq!(r["page"]["plotArea"], "window");
+    assert_eq!(r["page"]["plotWindow"], json!([4388.0, -1253.0, 5229.0, -659.0]));
     let r = s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "Layout"})).unwrap();
     assert_eq!(r["page"]["plotArea"], "layout");
     let report = s.execute("pagesetup", &Value::Null).unwrap();
@@ -322,7 +327,10 @@ fn plot_goes_through_the_hook() {
     assert!(s.execute("plot", &json!({"layout": "Model", "output": "svg", "center": false, "offset": [0, 0]})).is_err());
     assert!(opts(s.execute("plot", &json!({"layout": "Model", "plotArea": "limits"})).unwrap()).contains(r#""window":[[0.0,0.0],"#));
     assert!(s.execute("plot", &json!({"layout": "Model", "plotArea": "window"})).is_err(), "window needs corners");
-    assert!(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "display"})).is_err(), "layouts plot their sheet");
+    assert!(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "limits"})).is_err(), "limits is model-only");
+    let text = opts(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "window", "window": [[4388, -1253], [5229, -659]]})).unwrap());
+    assert!(text.contains(r#""window":[[4388.0,-1253.0],[5229.0,-659.0]]"#), "{text}");
+    assert!(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "extents"})).is_ok());
     assert!(s.execute("plot", &json!({"layout": "Model", "scale": -1})).is_err());
     // Image output holds one sheet: several `layouts` would report pages:N but write one render.
     for out in ["x.png", "x.svg"] {
@@ -465,4 +473,80 @@ fn plot_path_extension_picks_the_format_like_export() {
     assert!(e.contains("svg") && e.contains("png"), "{e}");
     assert!(!dir.join("w.png").exists(), "nothing written when `output` and the path disagree");
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn plot_layout_saved_area_and_explicit_window_precedence() {
+    super::super::file::set_io(super::super::file::IoHooks {
+        read: |_, _| Err("no reader in tests".into()),
+        write: |_, _| Err("no writer in tests".into()),
+        plot: Some(fake_plot),
+    });
+    if io().and_then(|h| h.plot).is_none() {
+        return; // another test installed hooks without a plotter first
+    }
+    let mut s = session_with_model();
+    let opts = |r: Value| String::from_utf8(super::super::file::base64_decode(r["data"].as_str().unwrap()).unwrap()).unwrap();
+
+    // Saved plot_window is used as fallback for explicit `plotArea: "window"` even when saved plot_area is "layout".
+    s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "layout", "plotWindow": [10.0, 20.0, 110.0, 80.0]})).unwrap();
+    let text = opts(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "window"})).unwrap());
+    assert!(text.contains(r#""window":[[10.0,20.0],[110.0,80.0]]"#), "fallback to saved plot_window: {text}");
+
+    // Saved `plotArea: "display"` resolves the layout's current view window when `plot` omits `plotArea`,
+    // leaves `fit` unset in shared options so each sheet resolves its own saved scale-to-fit,
+    // and lets an explicit `window` without `plotArea` take precedence over saved `"display"`.
+    s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "display", "scaleToFit": true})).unwrap();
+    let text = opts(s.execute("plot", &json!({"layout": "Layout1"})).unwrap());
+    assert!(
+        text.contains(r#""window":[["#) && !text.contains(r#""fit":"#),
+        "saved display resolves window without leaking fit into shared opts: {text}"
+    );
+    let text = opts(s.execute("plot", &json!({"layout": "Layout1", "fit": false, "scale": 0.5})).unwrap());
+    assert!(text.contains(r#""fit":false"#) && text.contains(r#""scale":0.5"#), "explicit fit/scale preserved: {text}");
+    let text = opts(s.execute("plot", &json!({"layout": "Layout1", "window": [[15, 25], [85, 75]]})).unwrap());
+    assert!(text.contains(r#""window":[[15,25],[85,75]]"#), "explicit window beats saved display default: {text}");
+    let text = opts(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "display", "window": [[15, 25], [85, 75]]})).unwrap());
+    assert!(!text.contains(r#""window":[[15,25],[85,75]]"#), "explicit plotArea display still resolves current view: {text}");
+
+    // Multi-sheet plot when active tab has saved `plotArea: "display"`: view window is scoped
+    // under `displayWindows` for that layout rather than leaking into shared `window`.
+    s.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout2", "plotArea": "window", "plotWindow": [10.0, 20.0, 110.0, 80.0]})).unwrap();
+    let multi = opts(s.execute("plot", &json!({"layouts": ["Layout1", "Layout2"]})).unwrap());
+    assert!(!multi.contains(r#""window":"#), "multi-sheet plot must not leak active tab display into shared window: {multi}");
+    assert!(multi.contains(r#""displayWindows":{"Layout1":[["#), "display window scoped to Layout1: {multi}");
+    assert!(!multi.contains(r#""Layout2":[["#), "Layout2 does not get a display window: {multi}");
+    // An explicit caller-supplied `window` remains a shared override across sheets.
+    let explicit_multi = opts(s.execute("plot", &json!({"layouts": ["Layout1", "Layout2"], "window": [[15, 25], [85, 75]]})).unwrap());
+    assert!(explicit_multi.contains(r#""window":[[15.0,25.0],[85.0,75.0]]"#), "explicit window stays shared: {explicit_multi}");
+
+    // Explicit `plotArea: "display"` on multi-sheet plots resolves per-sheet display windows (using paper
+    // sheet bounds for unvisited Layout2 rather than View::default()) and strips spoofed `displayWindows`.
+    let disp_multi = opts(
+        s.execute("plot", &json!({"layouts": ["Layout1", "Layout2"], "plotArea": "display", "displayWindows": {"Layout2": [[1, 2], [3, 4]]}}))
+            .unwrap(),
+    );
+    assert!(!disp_multi.contains(r#""window":"#), "explicit multi-sheet display must not write shared window: {disp_multi}");
+    assert!(
+        disp_multi.contains(r#""Layout1":[["#) && disp_multi.contains(r#""Layout2":[[0.0,0.0],"#),
+        "unvisited Layout2 uses paper bounds: {disp_multi}"
+    );
+    assert!(!disp_multi.contains("[[1,2],[3,4]]"), "caller-supplied displayWindows is stripped: {disp_multi}");
+
+    // Explicit `plotArea: "window"` (no `window`) on multi-sheet plots validates each sheet without leaking s.space()'s window.
+    s.execute("layout.set", &json!({"name": "Model"})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout1", "plotWindow": [1.0, 2.0, 50.0, 40.0]})).unwrap();
+    let win_multi = opts(s.execute("plot", &json!({"layouts": ["Layout1", "Layout2"], "plotArea": "window"})).unwrap());
+    assert!(!win_multi.contains(r#""window":"#), "multi-sheet saved window does not copy active tab into shared window: {win_multi}");
+    assert!(
+        s.execute("plot", &json!({"layouts": ["Model", "Layout1"], "plotArea": "window"})).is_err(),
+        "multi-sheet plotArea window without corners rejects Model"
+    );
+
+    // Explicit `plotArea: "limits"` rejects multi-sheet plots containing any paper-space layout even when Model is active.
+    assert!(
+        s.execute("plot", &json!({"layouts": ["Model", "Layout1"], "plotArea": "limits"})).is_err(),
+        "limits is invalid when any target sheet is a layout"
+    );
 }

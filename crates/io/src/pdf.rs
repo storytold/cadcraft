@@ -79,9 +79,12 @@ pub struct PdfOptions {
     /// Flate-compress the content stream.
     pub compress: bool,
     pub title: String,
-    /// Model space only: plot this rectangle (drawing units), fitted to the printable area,
-    /// instead of the extents. Ignored for layouts.
+    /// Plot area override (`layout`, `extents`, `display`, `limits`, `window`).
+    pub plot_area: Option<String>,
+    /// Plot rectangle (drawing units), fitted or placed on the printable area.
     pub window: Option<Bounds2>,
+    /// Per-layout view-derived display windows for multi-sheet plots, keyed by layout name.
+    pub display_windows: Vec<(String, Bounds2)>,
     /// Drawing layers become PDF layers (optional content groups). Default on.
     pub layers: bool,
     /// With `layers`: objects on layers that are off are plotted on PDF layers that start
@@ -119,7 +122,9 @@ impl Default for PdfOptions {
             lineweights: None,
             compress: false,
             title: String::new(),
+            plot_area: None,
             window: None,
+            display_windows: Vec::new(),
             layers: true,
             include_off_layers: false,
             links: Vec::new(),
@@ -159,12 +164,23 @@ impl PdfOptions {
             lineweights: v.get("lineweights").and_then(Value::as_bool),
             compress: v.get("compress").and_then(Value::as_bool).unwrap_or(true),
             title: v.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
+            plot_area: v.get("plotArea").and_then(Value::as_str).map(str::to_ascii_lowercase),
             window: window(v.get("window")),
+            display_windows: display_windows(v.get("displayWindows")),
             margins: margins(v.get("margins")),
             hyperlinks: v.get("hyperlinks").and_then(Value::as_bool).unwrap_or(true),
             plot_transparency: v.get("plotTransparency").and_then(Value::as_bool),
         }
     }
+
+    fn display_window(&self, layout: &str) -> Option<Bounds2> {
+        self.display_windows.iter().find(|(n, _)| n.eq_ignore_ascii_case(layout)).map(|(_, w)| *w)
+    }
+}
+
+fn display_windows(v: Option<&Value>) -> Vec<(String, Bounds2)> {
+    let Some(map) = v.and_then(Value::as_object) else { return Vec::new() };
+    map.iter().filter_map(|(name, val)| window(Some(val)).map(|w| (name.clone(), w))).collect()
 }
 
 fn offset(v: Option<&Value>) -> Option<[f64; 2]> {
@@ -521,24 +537,92 @@ struct SheetPage {
 /// saved setup.
 pub(crate) fn with_saved_setup(d: &Drawing, space: &Space, o: &PdfOptions) -> PdfOptions {
     let mut o = o.clone();
-    let Some(page) = space.layout().and_then(|n| d.layout(n)).map(|l| &l.page) else { return o };
-    // An explicit `fit: false` without a `scale` asks for the plain 1:1 plot of the sheet.
-    if o.fit == Some(false) && o.scale.is_none() {
-        o.window = None;
+    let display_win = o.display_window(space.tab_name());
+    let Some(page) = space.layout().and_then(|n| d.layout(n)).map(|l| &l.page) else {
+        if o.window.is_none() && o.plot_area.as_deref() == Some("display") {
+            o.window = display_win;
+        }
         return o;
-    }
+    };
     let saved = paper::saved_plot(page);
-    // A layout is plotted over its own sheet: only its saved window applies, not one in the options.
-    o.window = saved.window;
-    // An explicit scale beats a saved scale to fit (the scale is ignored while fitting).
-    if o.fit.is_none() && o.scale.is_none() && saved.fit {
-        o.fit = Some(true);
-    }
-    if o.scale.is_none() {
-        o.scale = saved.scale;
-    }
-    if o.center.is_none() && saved.window.is_some() {
-        o.center = Some(saved.center);
+    match o.plot_area.as_deref() {
+        Some("layout") => {
+            // Caller explicitly chose the whole sheet: ignore any saved window and never fit.
+            o.window = None;
+            o.fit = Some(false);
+        }
+        Some("extents") => {
+            // Caller explicitly chose extents: ignore any saved window, default to fitting extents.
+            o.window = None;
+            if o.fit.is_none() && o.scale.is_none() {
+                o.fit = Some(true);
+            }
+            if o.center.is_none() {
+                o.center = Some(saved.center);
+            }
+        }
+        Some("display") => {
+            if o.window.is_none() {
+                o.window = display_win;
+            }
+            if o.fit.is_none() && o.scale.is_none() && page.plot_area.eq_ignore_ascii_case("display") && page.scale_to_fit && o.window.is_some() {
+                o.fit = Some(true);
+            }
+            if o.scale.is_none() {
+                o.scale = saved.scale;
+            }
+            if o.center.is_none() && o.window.is_some() {
+                o.center = Some(saved.center);
+            }
+        }
+        Some("window") => {
+            if o.window.is_none() {
+                o.window = saved.window.or_else(|| {
+                    let [x1, y1, x2, y2] = page.plot_window;
+                    [x1, y1, x2, y2]
+                        .iter()
+                        .all(|v| v.is_finite())
+                        .then(|| Bounds2::new(Vec2::new(x1, y1), Vec2::new(x2, y2)))
+                        .filter(|w| w.width() > 1e-9 && w.height() > 1e-9)
+                });
+            }
+            if o.fit.is_none() && o.scale.is_none() && saved.fit {
+                o.fit = Some(true);
+            }
+            if o.scale.is_none() {
+                o.scale = saved.scale;
+            }
+            if o.center.is_none() && o.window.is_some() {
+                o.center = Some(saved.center);
+            }
+        }
+        _ => {
+            // An explicit `fit: false` without a `scale` or explicit `window` asks for the plain 1:1 plot of the sheet.
+            if o.fit == Some(false) && o.scale.is_none() && o.window.is_none() {
+                o.window = None;
+                return o;
+            }
+            if page.plot_area.eq_ignore_ascii_case("extents") {
+                o.plot_area = Some("extents".into());
+                if o.center.is_none() {
+                    o.center = Some(saved.center);
+                }
+            }
+            if o.window.is_none() {
+                o.window = if page.plot_area.eq_ignore_ascii_case("display") { display_win } else { saved.window };
+            }
+            // An explicit scale beats a saved scale to fit (the scale is ignored while fitting).
+            let saved_fit = saved.fit || (page.plot_area.eq_ignore_ascii_case("display") && page.scale_to_fit && o.window.is_some());
+            if o.fit.is_none() && o.scale.is_none() && saved_fit {
+                o.fit = Some(true);
+            }
+            if o.scale.is_none() {
+                o.scale = saved.scale;
+            }
+            if o.center.is_none() && o.window.is_some() {
+                o.center = Some(saved.center);
+            }
+        }
     }
     o
 }
@@ -579,10 +663,11 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     let list = cadcraft_render::build_plot(d, space, &cadcraft_render::Options { tolerance, view_height, ..ropts });
     let b = window.unwrap_or(list.bounds);
     let s = plot_scale(&b, &sheet, fit, o.scale);
-    // A layout plotted over a window is placed like model space: the window on the printable area.
-    let placed = fit || window.is_some() || matches!(space, Space::Model);
+    // A layout plotted over a window or extents is placed like model space: on the printable area.
+    let extents_area = o.plot_area.as_deref() == Some("extents");
+    let placed = fit || window.is_some() || extents_area || matches!(space, Space::Model);
     let map = if placed {
-        let by = if window.is_some() { &Space::Model } else { space };
+        let by = if window.is_some() || extents_area { &Space::Model } else { space };
         let (from, to) = placement(by, &b, fit, &sheet, o);
         Map { from, s, to, k }
     } else {
@@ -1110,5 +1195,63 @@ mod saved_setup_tests {
         let m = map(&d, json!({"scale": 0.25}));
         assert!((m.s - 0.25).abs() < 1e-12, "{}", m.s);
         assert!(m.from.dist(Vec2::new(428.0, 297.0)) < 1e-9 && m.to.dist(Vec2::new(148.5, 105.0)) < 1e-9, "still placed: {:?} {:?}", m.from, m.to);
+    }
+
+    /// Saved `plot_area: "display"` with `scale_to_fit: true` resolves `fit: true` per sheet without
+    /// overriding another sheet's fixed scale in a multi-sheet plot.
+    #[test]
+    fn saved_display_scale_to_fit_is_resolved_per_sheet() {
+        let mut d = drawing(true, 1.0);
+        d.layouts.iter_mut().find(|l| l.name == "L1").unwrap().page.plot_area = "display".into();
+        let mut l2 = cadcraft_doc::Layout::new("L2", 4);
+        l2.page = cadcraft_doc::PageSetup {
+            width_mm: 297.0,
+            height_mm: 210.0,
+            landscape: true,
+            plot_area: "window".into(),
+            plot_window: [0.0, 0.0, 200.0, 100.0],
+            scale_to_fit: false,
+            scale: 0.5,
+            center: true,
+            ..cadcraft_doc::PageSetup::default()
+        };
+        d.layouts.push(l2);
+
+        let shared = PdfOptions::from_json(&json!({"displayWindows": {"L1": [[0.0, 0.0], [816.0, 584.0]]}}));
+        let l1 = with_saved_setup(&d, &Space::Paper("L1".into()), &shared);
+        let l2 = with_saved_setup(&d, &Space::Paper("L2".into()), &shared);
+        assert_eq!(l1.window, Some(Bounds2::new(Vec2::ZERO, Vec2::new(816.0, 584.0))));
+        assert_eq!(l1.fit, Some(true), "L1 saved display + scale_to_fit fits its resolved window");
+        assert_eq!(l2.window, Some(Bounds2::new(Vec2::ZERO, Vec2::new(200.0, 100.0))), "L2 keeps its own saved plot_window");
+        assert_eq!(l2.fit, None, "L2 fixed scale is not overridden by L1's display fit");
+        assert_eq!(l2.scale, Some(0.5));
+
+        // An explicit caller-supplied `window` remains a shared override across sheets.
+        let explicit_shared = PdfOptions::from_json(&json!({"window": [[15.0, 25.0], [85.0, 75.0]]}));
+        let l2_override = with_saved_setup(&d, &Space::Paper("L2".into()), &explicit_shared);
+        assert_eq!(l2_override.window, Some(Bounds2::new(Vec2::new(15.0, 25.0), Vec2::new(85.0, 75.0))));
+
+        // Explicit `fit: false` and explicit `scale` still win on L1.
+        let explicit_no_fit =
+            with_saved_setup(&d, &Space::Paper("L1".into()), &PdfOptions::from_json(&json!({"window": [[0, 0], [100, 60]], "fit": false})));
+        assert_eq!(explicit_no_fit.fit, Some(false));
+        let explicit_scale =
+            with_saved_setup(&d, &Space::Paper("L1".into()), &PdfOptions::from_json(&json!({"window": [[0, 0], [100, 60]], "scale": 0.25})));
+        assert_eq!((explicit_scale.fit, explicit_scale.scale), (None, Some(0.25)));
+
+        // `"display"` and `"window"` stay strictly separated: `"display"` never falls back to
+        // `saved.window`, and `"window"` never reads `displayWindows`.
+        let disp_no_win = with_saved_setup(&d, &Space::Paper("L2".into()), &PdfOptions::from_json(&json!({"plotArea": "display"})));
+        assert_eq!(disp_no_win.window, None, "display without displayWindows never falls back to saved plot_window");
+        let win_with_disp = with_saved_setup(
+            &d,
+            &Space::Paper("L2".into()),
+            &PdfOptions::from_json(&json!({"plotArea": "window", "displayWindows": {"L2": [[1, 2], [3, 4]]}})),
+        );
+        assert_eq!(win_with_disp.window, Some(Bounds2::new(Vec2::ZERO, Vec2::new(200.0, 100.0))), "window ignores displayWindows");
+
+        // Explicit `plotArea: "layout"` forces `fit: false` and clears `window` (AutoCAD parity).
+        let layout_area = with_saved_setup(&d, &Space::Paper("L2".into()), &PdfOptions::from_json(&json!({"plotArea": "layout", "fit": true})));
+        assert_eq!((layout_area.window, layout_area.fit), (None, Some(false)));
     }
 }

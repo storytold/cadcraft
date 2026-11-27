@@ -757,10 +757,13 @@ fn page_rows(
     });
     ui.end_row();
     ui.label("");
-    let mut fit = page.scale_to_fit;
-    if ui.checkbox(&mut fit, "Fit to paper").changed() {
-        change = Some(("scaleToFit", json!(fit)));
-    }
+    let fit_allowed = page.plot_area != "layout";
+    let mut fit = fit_allowed && page.scale_to_fit;
+    ui.add_enabled_ui(fit_allowed, |ui| {
+        if ui.checkbox(&mut fit, "Fit to paper").changed() {
+            change = Some(("scaleToFit", json!(fit)));
+        }
+    });
     ui.end_row();
     if let Some((center, offset_mm, supported)) = placement {
         ui.label("Plot offset");
@@ -789,7 +792,7 @@ fn page_rows(
     }
     if rows.scale {
         let label = ui.label("Scale");
-        ui.add_enabled_ui(!page.scale_to_fit, |ui| {
+        ui.add_enabled_ui(!(fit_allowed && page.scale_to_fit), |ui| {
             if let Some(v) = expr_field(ui, salt.with("scale"), &fmt_num(page.scale), Some(label.id)).and_then(|t| parse_ratio(&t)) {
                 change = Some(("scale", json!(v)));
             }
@@ -858,7 +861,12 @@ fn apply_page_change(page: &mut cadcraft_doc::PageSetup, key: &str, v: &Value) {
             }
         }
         "plotStyleTable" => page.plot_style_table = v.as_str().unwrap_or_default().chars().take(260).collect(),
-        "plotArea" => page.plot_area = v.as_str().unwrap_or("extents").into(),
+        "plotArea" => {
+            page.plot_area = v.as_str().unwrap_or("extents").into();
+            if page.plot_area == "layout" {
+                page.scale_to_fit = false;
+            }
+        }
         "scale" => page.scale = v.as_f64().filter(|s| s.is_finite() && *s > 0.0).unwrap_or(page.scale),
         _ => {
             let b = v.as_bool().unwrap_or_default();
@@ -884,6 +892,21 @@ const PICKING_WINDOW: &str = "plot_picking_window";
 /// Set by Print... in a preview opened from the Plot dialog: plot as soon as the dialog is back.
 pub(crate) const PLOT_NOW: &str = "plot_now";
 
+/// Switch to the Plot dialog's `target` space (if different from the active tab, or exit MSPACE
+/// when picking a Paper Space layout window) before starting `plotwindow` so picked corners belong
+/// to `target`.
+fn start_plot_window_pick(app: &mut CadApp, ctx: &egui::Context, target: &str) -> bool {
+    if !app.session.layout_space().tab_name().eq_ignore_ascii_case(target) && app.run("layout.set", json!({ "name": target })).is_err() {
+        return false;
+    }
+    if !target.eq_ignore_ascii_case("Model") && app.session.state().is_ok_and(|st| st.mspace.is_some()) && app.run("pspace", json!({})).is_err() {
+        return false;
+    }
+    set_temp(ctx, PICKING_WINDOW, true);
+    app.start("plotwindow");
+    true
+}
+
 /// Every frame: once PLOTWINDOW (started by the Plot dialog's "Window <") ends, bring the dialog
 /// back with its settings, plotting the picked window (unchanged if the pick was cancelled).
 pub fn plot_window_resume(app: &mut CadApp, ctx: &egui::Context) {
@@ -904,8 +927,10 @@ pub(crate) fn set_flag(ctx: &egui::Context, id: &str, on: bool) {
     set_temp(ctx, id, on);
 }
 
-/// Plot areas for model space (a layout always plots its sheet).
+/// Plot areas for model space.
 const MODEL_AREAS: &[&str] = &["extents", "display", "limits", "window"];
+/// Plot areas for paper-space layouts.
+const LAYOUT_AREAS: &[&str] = &["layout", "extents", "display", "window"];
 
 /// The Plot dialog's settings until OK.
 #[derive(Clone)]
@@ -921,12 +946,14 @@ struct PlotState {
     offset_mm: [f64; 2],
 }
 
-/// The page setup a plot of `target` starts from: the layout's, or model-space defaults (fitted
-/// extents on A4 in metric drawings, ANSI A otherwise).
+/// The page setup a plot of `target` starts from: the layout's saved setup (preserving its plot
+/// area, window, scale and centering), or model-space defaults (fitted extents on A4 in metric
+/// drawings, ANSI A otherwise).
 fn plot_page(d: &cadcraft_doc::Drawing, target: &str) -> cadcraft_doc::PageSetup {
     if let Some(l) = d.layouts.iter().find(|l| l.name == target) {
         let mut page = l.page.clone();
-        page.plot_area = "layout".into();
+        let area = page.plot_area.to_ascii_lowercase();
+        page.plot_area = if LAYOUT_AREAS.contains(&area.as_str()) { area } else { "layout".into() };
         return page;
     }
     let mut page = cadcraft_doc::PageSetup { plot_area: "extents".into(), scale_to_fit: true, ..Default::default() };
@@ -940,14 +967,32 @@ fn plot_page(d: &cadcraft_doc::Drawing, target: &str) -> cadcraft_doc::PageSetup
     page
 }
 
+/// Initial plot window for `target`: a layout's valid saved `plot_window`, else the space's
+/// extents (falling back to a default 12x9 box when empty).
+fn plot_window_for(d: &cadcraft_doc::Drawing, target: &str, page: &cadcraft_doc::PageSetup) -> [f64; 4] {
+    if target != "Model" {
+        let [x1, y1, x2, y2] = page.plot_window;
+        if [x1, y1, x2, y2].iter().all(|v| v.is_finite()) && (x2 - x1).abs() > 1e-9 && (y2 - y1).abs() > 1e-9 {
+            return [x1.min(x2), y1.min(y2), x1.max(x2), y1.max(y2)];
+        }
+    }
+    let space = if target == "Model" { cadcraft_doc::Space::Model } else { cadcraft_doc::Space::Paper(target.to_string()) };
+    let mut ext = d.extents(&space);
+    if ext.is_empty() {
+        ext = cadcraft_geom::Bounds2::new(cadcraft_geom::Vec2::ZERO, cadcraft_geom::Vec2::new(12.0, 9.0));
+    }
+    [ext.min.x, ext.min.y, ext.max.x, ext.max.y]
+}
+
 /// The `plot` parameters for the dialog's settings (without the output path). `preview_dpi`
 /// asks for a PNG at that resolution instead of the device's output, on the same sheet.
 fn plot_params(st: &PlotState, preview_dpi: Option<f64>) -> Value {
     let page = &st.page;
+    let fit = !(st.target != "Model" && page.plot_area == "layout") && page.scale_to_fit;
     let mut p = json!({
         "layout": st.target,
         "landscape": page.landscape,
-        "fit": page.scale_to_fit,
+        "fit": fit,
         "lineweights": page.lineweights,
         "plotTransparency": page.plot_transparency,
     });
@@ -981,21 +1026,23 @@ fn plot_params(st: &PlotState, preview_dpi: Option<f64>) -> Value {
         if style_label(page) != "None" {
             o.insert("plotStyleTable".into(), json!(page.plot_style_table));
         }
+        o.insert("plotArea".into(), json!(page.plot_area));
+        if !fit {
+            o.insert("scale".into(), json!(page.scale));
+        }
+        if page.plot_area == "window" {
+            let [x1, y1, x2, y2] = st.window;
+            o.insert("window".into(), json!([[x1, y1], [x2, y2]]));
+        }
         if st.target == "Model" {
-            o.insert("plotArea".into(), json!(page.plot_area));
             if output != "svg" {
                 o.insert("center".into(), json!(st.center));
                 if !st.center {
                     o.insert("offset".into(), json!(st.offset_mm));
                 }
             }
-            if !page.scale_to_fit {
-                o.insert("scale".into(), json!(page.scale));
-            }
-            if page.plot_area == "window" {
-                let [x1, y1, x2, y2] = st.window;
-                o.insert("window".into(), json!([[x1, y1], [x2, y2]]));
-            }
+        } else if page.plot_area != "layout" {
+            o.insert("center".into(), json!(page.center));
         }
     }
     p
@@ -1016,18 +1063,10 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     let generation = PLOT_GEN.load(Ordering::Relaxed);
     let mut st = temp::<PlotState>(ctx, "plot_state").filter(|s| s.generation == generation && targets.contains(&s.target)).unwrap_or_else(|| {
         let target = app.session.layout_space().tab_name().to_string();
-        let mut ext = d.extents(&cadcraft_doc::Space::Model);
-        if ext.is_empty() {
-            ext = cadcraft_geom::Bounds2::new(cadcraft_geom::Vec2::ZERO, cadcraft_geom::Vec2::new(12.0, 9.0));
-        }
-        PlotState {
-            generation,
-            page: plot_page(d, &target),
-            target,
-            window: [ext.min.x, ext.min.y, ext.max.x, ext.max.y],
-            center: true,
-            offset_mm: [0.0, 0.0],
-        }
+        let page = plot_page(d, &target);
+        let window = plot_window_for(d, &target, &page);
+        let center = if target == "Model" { true } else { page.center };
+        PlotState { generation, page, target, window, center, offset_mm: [0.0, 0.0] }
     });
     let model = st.target == "Model";
     let choices = PageChoices::new(ctx, d);
@@ -1045,6 +1084,8 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                 for n in &targets {
                     if ui.selectable_label(*n == st.target, n).clicked() && *n != st.target {
                         st.page = plot_page(d, n);
+                        st.window = plot_window_for(d, n, &st.page);
+                        st.center = if n == "Model" { true } else { st.page.center };
                         st.target = n.clone();
                     }
                 }
@@ -1057,13 +1098,13 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                 let rows = if model {
                     PageRows { areas: MODEL_AREAS, scale: true, center: false, paper_mm: None }
                 } else {
-                    PageRows { areas: &["layout"], scale: false, center: false, paper_mm: None }
+                    PageRows { areas: LAYOUT_AREAS, scale: true, center: st.page.plot_area != "layout", paper_mm: None }
                 };
                 let placement = model.then_some((&mut st.center, &mut st.offset_mm, offset_supported));
                 if let Some((k, v)) = page_rows(ui, egui::Id::unique(("plot", st.target.as_str())), &st.page, &rows, &choices, placement) {
                     apply_page_change(&mut st.page, k, &v);
                 }
-                if model && st.page.plot_area == "window" {
+                if st.page.plot_area == "window" {
                     for (i, label) in [(0, "First corner"), (2, "Opposite corner")] {
                         ui.label(label);
                         ui.horizontal(|ui| {
@@ -1090,17 +1131,23 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         ui.horizontal(|ui| {
             if !model && ui.button("Apply to Layout").on_hover_text("Save these settings in the layout's page setup").clicked() {
                 let page = &st.page;
-                action = Some((
-                    "pagesetup",
-                    json!({
-                        "layout": st.target,
-                        "paper": page.paper,
-                        "landscape": page.landscape,
-                        "scaleToFit": page.scale_to_fit,
-                        "lineweights": page.lineweights,
-                        "plotTransparency": page.plot_transparency,
-                    }),
-                ));
+                let mut params = json!({
+                    "layout": st.target,
+                    "paper": page.paper,
+                    "landscape": page.landscape,
+                    "plotArea": page.plot_area,
+                    "scale": page.scale,
+                    "scaleToFit": page.plot_area != "layout" && page.scale_to_fit,
+                    "center": page.center,
+                    "lineweights": page.lineweights,
+                    "plotTransparency": page.plot_transparency,
+                });
+                if page.plot_area == "window"
+                    && let Some(o) = params.as_object_mut()
+                {
+                    o.insert("plotWindow".into(), json!(st.window));
+                }
+                action = Some(("pagesetup", params));
             }
             preview = ui.button("Preview").on_hover_text("The sheet as these settings plot it").clicked();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1117,9 +1164,9 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     }
     if pick {
         // The dialog comes back with these settings and the picked window (`plot_window_resume`).
-        set_temp(ctx, PICKING_WINDOW, true);
-        *open = false;
-        app.start("plotwindow");
+        if start_plot_window_pick(app, ctx, &st.target) {
+            *open = false;
+        }
         return action;
     }
     if preview {
@@ -1351,6 +1398,49 @@ mod plot_dialog_tests {
     }
 
     #[test]
+    fn layout_plot_page_and_params_preserve_saved_plot_area_and_window() {
+        let mut d = cadcraft_doc::Drawing::new_metric();
+        let l = d.layouts.iter_mut().find(|l| l.name == "Layout1").unwrap();
+        l.page.plot_area = "window".into();
+        l.page.plot_window = [4388.0, -1253.0, 5229.0, -659.0];
+        l.page.scale_to_fit = false;
+        l.page.scale = 0.5;
+        l.page.center = true;
+
+        let page = plot_page(&d, "Layout1");
+        assert_eq!(page.plot_area, "window");
+        assert_eq!(page.plot_window, [4388.0, -1253.0, 5229.0, -659.0]);
+        let window = plot_window_for(&d, "Layout1", &page);
+        assert_eq!(window, [4388.0, -1253.0, 5229.0, -659.0]);
+
+        let st = PlotState { generation: 0, target: "Layout1".into(), page, window, center: true, offset_mm: [0.0, 0.0] };
+        for params in [plot_params(&st, None), plot_params(&st, Some(150.0))] {
+            assert_eq!(params["plotArea"], json!("window"));
+            assert_eq!(params["window"], json!([[4388.0, -1253.0], [5229.0, -659.0]]));
+            assert_eq!(params["fit"], json!(false));
+            assert_eq!(params["scale"], json!(0.5));
+            assert_eq!(params["center"], json!(true));
+        }
+        // Layout SVG export also receives the dialog's `center` setting (e.g. `false` overriding saved `true`).
+        let mut svg_st = st;
+        let svg = cadcraft_engine::cmd::plotters::devices().into_iter().find(|dev| dev.output.as_str() == "svg").expect("built-in SVG device");
+        apply_page_change(&mut svg_st.page, "device", &json!(svg.name));
+        svg_st.page.center = false;
+        assert_eq!(plot_params(&svg_st, None)["center"], json!(false));
+        assert_eq!(plot_params(&svg_st, Some(150.0))["center"], json!(false));
+
+        // Selecting Plot area = Layout disables Fit to paper (AutoCAD parity) even if scale_to_fit was on.
+        svg_st.page.scale_to_fit = true;
+        apply_page_change(&mut svg_st.page, "plotArea", &json!("layout"));
+        assert!(!svg_st.page.scale_to_fit);
+        svg_st.page.scale_to_fit = true; // even if stale true, plot_params enforces fit: false for layout area
+        let layout_params = plot_params(&svg_st, None);
+        assert_eq!(layout_params["plotArea"], json!("layout"));
+        assert_eq!(layout_params["fit"], json!(false));
+        assert_eq!(layout_params["scale"], json!(0.5));
+    }
+
+    #[test]
     fn window_pick_brings_the_dialog_back_with_the_picked_window() {
         let ctx = egui::Context::default();
         let mut app = CadApp::new(Session::new(), crate::Services::default());
@@ -1373,6 +1463,35 @@ mod plot_dialog_tests {
         plot_window_resume(&mut app, &ctx);
         assert_eq!(app.ui.dialog.as_deref(), Some("plot"));
         assert_eq!(temp::<PlotState>(&ctx, "plot_state").unwrap().window, [2.0, 3.0, 12.0, 9.0]);
+    }
+
+    #[test]
+    fn window_pick_switches_to_plot_dialog_target_space() {
+        let ctx = egui::Context::default();
+        let mut app = CadApp::new(Session::new(), crate::Services::default());
+        assert_eq!(app.session.layout_space(), cadcraft_doc::Space::Model);
+        assert!(start_plot_window_pick(&mut app, &ctx, "Layout1"));
+        assert_eq!(app.session.layout_space(), cadcraft_doc::Space::Paper("Layout1".into()));
+        assert_eq!(app.session.space(), cadcraft_doc::Space::Paper("Layout1".into()));
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("plotwindow"));
+        app.session.cancel();
+
+        // While inside MSPACE on Layout1, picking a window for Layout1 must exit MSPACE so picked
+        // corners are in Paper Space rather than Model Space.
+        app.session.execute("mview", &json!({"p1": [10.0, 10.0], "p2": [100.0, 80.0]})).unwrap();
+        app.session.execute("mspace", &json!({"at": [55.0, 45.0]})).unwrap();
+        assert_eq!(app.session.layout_space(), cadcraft_doc::Space::Paper("Layout1".into()));
+        assert_eq!(app.session.space(), cadcraft_doc::Space::Model);
+        assert!(app.session.state().unwrap().mspace.is_some());
+        assert!(start_plot_window_pick(&mut app, &ctx, "Layout1"));
+        assert_eq!(app.session.space(), cadcraft_doc::Space::Paper("Layout1".into()));
+        assert!(app.session.state().unwrap().mspace.is_none());
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("plotwindow"));
+        app.session.cancel();
+
+        assert!(start_plot_window_pick(&mut app, &ctx, "Model"));
+        assert_eq!(app.session.layout_space(), cadcraft_doc::Space::Model);
+        assert_eq!(app.session.space(), cadcraft_doc::Space::Model);
     }
 
     #[test]

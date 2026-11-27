@@ -30,7 +30,14 @@ fn opacity(p: &cadcraft_render::DPrim) -> Option<String> {
 
 /// Write a display list (as [`export_window`] does for a space's own).
 pub fn export_list(list: &cadcraft_render::DisplayList, window: Option<Bounds2>) -> String {
+    export_list_clipped(list, window, None)
+}
+
+/// Write a display list, optionally clipping all primitives to `clip` (world coordinates) inside
+/// the full `window` `viewBox`.
+pub(crate) fn export_list_clipped(list: &cadcraft_render::DisplayList, window: Option<Bounds2>, clip: Option<Bounds2>) -> String {
     let window = window.filter(|w| !w.is_empty());
+    let clip = clip.filter(|c| !c.is_empty());
     let b = window.unwrap_or(list.bounds);
     // A single point (or a zero-size window) has no extent: show a unit box centred on it.
     let point = !b.is_empty() && b.width().max(b.height()) <= 1e-9;
@@ -66,6 +73,20 @@ pub fn export_list(list: &cadcraft_render::DisplayList, window: Option<Bounds2>)
     let white = Rgb(255, 255, 255);
     let tx = |x: f64| x - x0;
     let ty = |y: f64| y1 - y;
+    if let Some(c) = clip {
+        writer.tag("defs").open();
+        writer.tag("clipPath").attr("id", "printable").open();
+        writer
+            .tag("rect")
+            .attr("x", num(tx(c.min.x), dp))
+            .attr("y", num(ty(c.max.y), dp))
+            .attr("width", num(c.width(), dp))
+            .attr("height", num(c.height(), dp))
+            .empty();
+        writer.close();
+        writer.close();
+        writer.tag("g").attr("clip-path", "url(#printable)").open();
+    }
     for p in &list.prims {
         let c = p.display_rgb(white).hex();
         let op = opacity(p);
@@ -125,6 +146,9 @@ pub fn export_list(list: &cadcraft_render::DisplayList, window: Option<Bounds2>)
                 }
             }
         }
+    }
+    if clip.is_some() {
+        writer.close();
     }
     writer.close();
     writer.finish()
