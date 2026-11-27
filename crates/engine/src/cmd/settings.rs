@@ -237,7 +237,7 @@ impl Interactive for SetvarM {
                     }
                 }
             }
-            (Some(n), Input::Text(t)) => match crate::sysvars::set(s, &n, &Value::String(t)) {
+            (Some(n), Input::Text(t)) => match crate::sysvars::set(s, &n, &crate::sysvars::typed_value(&n, &t)) {
                 Ok(()) => {
                     s.touch();
                     Ok(Step::Done)

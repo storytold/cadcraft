@@ -375,8 +375,9 @@ fn write_classes(w: &mut W, cx: &Ctx, every: &[&Entity]) {
         classes.push(("IMAGE", "AcDbRasterImage", 127, true));
         classes.push(("IMAGEDEF", "AcDbRasterImageDef", 0, false));
         classes.push(("IMAGEDEF_REACTOR", "AcDbRasterImageDefReactor", 1, false));
-        classes.push(("RASTERVARIABLES", "AcDbRasterVariables", 0, false));
     }
+    // The RASTERVARIABLES object is written for every drawing: it holds IMAGEFRAME.
+    classes.push(("RASTERVARIABLES", "AcDbRasterVariables", 0, false));
     classes.push(("SCALE", "AcDbScale", 0, false));
     for (dxf_name, cpp, proxy, is_entity) in classes {
         w.s(0, "CLASS");
@@ -724,9 +725,10 @@ fn write_root_group_objects(
     if !cx.images.is_empty() {
         w.s(3, "ACAD_IMAGE_DICT");
         w.s(350, cx.images.dict.clone());
-        w.s(3, "ACAD_IMAGE_VARS");
-        w.s(350, cx.images.vars.clone());
     }
+    // The raster variables entry stays without images: it names the IMAGEFRAME setting.
+    w.s(3, "ACAD_IMAGE_VARS");
+    w.s(350, cx.images.vars.clone());
     w.s(3, "ACAD_LAYOUT");
     w.s(350, layout_dict.clone());
     w.s(3, "ACAD_MLEADERSTYLE");
@@ -1125,8 +1127,9 @@ pub(super) fn tags_kept_for(
         .collect();
     let mut arrow_defs = arrow_block_definitions(d, &every, &user_blocks, &mut w, &mut cx);
     let mut table_defs = table_block_definitions(d, &every, &mut w, &mut cx);
-    // Image definitions (IMAGEDEF objects) of raster images anywhere in the drawing.
-    cx.images = crate::dxf_image::plan(every.iter().copied(), || w.h());
+    // Image definitions (IMAGEDEF objects) of raster images anywhere in the drawing, and the
+    // drawing's IMAGEFRAME, which the RASTERVARIABLES object holds.
+    cx.images = crate::dxf_image::plan(every.iter().copied(), d.header.i64("IMAGEFRAME", 1), || w.h());
     cx.mlines = crate::dxf_mline::plan(d, every.iter().copied(), || w.h());
     plan_dimension_associations(d, &all_spaces, &mut w, &mut cx);
     let default_table_style = [TableStyle::default()];

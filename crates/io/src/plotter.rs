@@ -124,7 +124,13 @@ fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let Space::Model = space else {
         let (sheet, page) = sheet(d, space, &o)?;
         let transparency = o.plot_transparency.unwrap_or(page.plot_transparency);
-        return Ok(crate::svg::export_window_with(d, space, Some(sheet.bounds()), transparency).into_bytes());
+        // A layout is exported from its plotting display list, not with `svg::export_window_with`:
+        // that helper builds with `render::build`, which draws what a plot leaves out (IMAGEFRAME
+        // 2 hides the frame only when plotting). PDF, PNG and model-space SVG plot what this list
+        // holds.
+        let ropts = cadcraft_render::Options { transparency, ..cadcraft_render::Options::default() };
+        let list = cadcraft_render::build_plot(d, space, &ropts);
+        return Ok(crate::svg::export_list(&list, Some(sheet.bounds())).into_bytes());
     };
     // Model space as plotted: the plot style table, lineweights, and the table's ends, joins and
     // fills at the scale that fits the window (or the extents) on the device's paper.

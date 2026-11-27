@@ -311,6 +311,14 @@ pub fn format_angle_list(angles: &[f64]) -> String {
     angles.iter().map(|a| format!("{}", (a.to_degrees() * 1e6).round() / 1e6)).collect::<Vec<_>>().join(";")
 }
 
+/// The value a typed reply to SETVAR's value prompt gives `name`: the integer for a variable that
+/// takes only integer modes (IMAGEFRAME), so a typed `2` is the mode 2 and not the text `"2"`, and
+/// the reply as text for every other variable, whose coercion stays as it was.
+pub fn typed_value(name: &str, text: &str) -> Value {
+    let n = name.trim().to_ascii_uppercase();
+    table::typed_int(&n, text).map_or_else(|| Value::String(text.to_string()), |i| json!(i))
+}
+
 /// Set a system variable, refusing values out of its range and folders the automation roots can't hold.
 pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
     let n = name.trim().to_ascii_uppercase();
