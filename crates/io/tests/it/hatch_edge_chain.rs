@@ -180,6 +180,60 @@ fn ends_that_differ_by_rounding_still_meet() {
 }
 
 #[test]
+fn an_end_just_past_the_tolerance_does_not_meet() {
+    // A 1,000-wide path: ends meet within 1e-3. The triangle A T C is stored with a gap of 5e-4
+    // at T; a second triangle has a corner X 1.7e-3 from T, in the next lookup cell. Listed
+    // before the edge that does meet T, X's edge must still not be joined there.
+    let (a, t, t2, c) = ([0.0, 0.0], [500.0002, 0.0], [500.0007, 0.0], [250.0, 10.0]);
+    let (x, r, q) = ([500.0019, 0.0], [1000.0, 0.0], [750.0, 10.0]);
+    let after = vertices(&[line(a, t), line(t2, c), line(c, a), line(q, x), line(x, r), line(r, q)]);
+    let before = vertices(&[line(a, t), line(q, x), line(t2, c), line(c, a), line(x, r), line(r, q)]);
+    assert_same(&before, &after);
+}
+
+/// Line edges joined in file order: each edge's start unless the list already ends there, then
+/// its end, and the closing point dropped.
+fn in_file_order(edges: &[Edge]) -> Vec<PolyVertex> {
+    let mut out: Vec<PolyVertex> = Vec::new();
+    for edge in edges {
+        let Edge::Line(a, b) = edge else { panic!("lines only") };
+        for p in [a, b] {
+            let p = Vec2::new(p[0], p[1]);
+            if out.last().is_none_or(|last| !last.p.near(p, 1e-9)) {
+                out.push(PolyVertex::new(p));
+            }
+        }
+    }
+    if out.len() > 1 && out[0].p.near(out[out.len() - 1].p, 1e-9) {
+        out.pop();
+    }
+    out
+}
+
+#[test]
+fn a_loop_whose_lookups_take_too_long_is_read_in_file_order() {
+    // Petals from a point Q out and back, and many edges from two points 1.4 tolerances either
+    // side of Q, listed between the first petal and the rest: every return to Q looks at those
+    // on one side (the other is two cells away). Past the lookup budget the loop is read in file
+    // order, as before chaining.
+    let at = |r: f64, k: usize, n: usize| {
+        let a = std::f64::consts::TAU * k as f64 / n as f64;
+        [r * a.cos(), r * a.sin()]
+    };
+    let (q, side) = ([0.0, 0.0], 2.8e-3);
+    let mut edges = vec![line(q, at(1000.0, 0, 1000))];
+    for i in 0..2000 {
+        edges.push(line([if i % 2 == 0 { side } else { -side }, 0.0], at(500.0, i, 2000)));
+    }
+    edges.push(line(at(1000.0, 0, 1000), q));
+    for k in 1..1000 {
+        edges.push(line(q, at(1000.0, k, 1000)));
+        edges.push(line(at(1000.0, k, 1000), q));
+    }
+    assert_eq!(vertices(&edges), in_file_order(&edges));
+}
+
+#[test]
 fn an_open_path_is_chained_from_both_ends() {
     // Three sides of the square, A to D, listed from the middle: the edges before the first
     // listed one go in front, as stored or turned around.

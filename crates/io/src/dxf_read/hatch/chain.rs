@@ -35,6 +35,9 @@ const MEET_SHARE: f64 = 1e-6;
 ///   it, turned around when that end is its first point. Of several, the one listed first.
 /// - An edge that meets no run starts a new one.
 ///
+/// Two ends meet when they are within the tolerance of each other (see [`MEET_SHARE`]). A loop
+/// whose lookups pass their budget ([`CHECKS_PER_END`]) is joined in file order instead.
+///
 /// A closed run, one that ends where it starts, is a loop of its own. The runs left open make up
 /// one loop together, in the order of their first edges, each joined straight to the next as a
 /// path read in file order is (a path with missing edges then still closes as before). The vertex
@@ -43,13 +46,15 @@ const MEET_SHARE: f64 = 1e-6;
 /// twice, so it fills each loop as a loop of its own.
 pub(super) fn chain(points: &[PolyVertex], edges: &[Range<usize>]) -> Vec<PolyVertex> {
     let mut out = Vec::with_capacity(points.len().saturating_add(edges.len()));
-    let Some(frame) = Frame::of(points).filter(|frame| !runs_on(points, edges, frame.tol)) else {
+    let chained = Frame::of(points)
+        .filter(|frame| !runs_on(points, edges, frame.tol))
+        .and_then(|frame| runs(&frame, points, edges, CHECKS_PER_END).map(|runs| (frame, runs)));
+    let Some((frame, (order, run_ends))) = chained else {
         for edge in edges {
             append(&mut out, edge_points(points, edge), false);
         }
         return out;
     };
-    let (order, run_ends) = runs(&frame, points, edges);
     let span = |run: &[(usize, bool)]| {
         let first = run.first().and_then(|&(edge, turned)| placed_ends(points, edges, edge, turned))?;
         let last = run.last().and_then(|&(edge, turned)| placed_ends(points, edges, edge, turned))?;
@@ -98,10 +103,17 @@ fn runs_on(points: &[PolyVertex], edges: &[Range<usize>], tol: f64) -> bool {
     })
 }
 
+/// Ends the lookups may visit, per end of the loop. A lookup visits, in up to nine cells, the
+/// ends after each cell's first unused one and before the best match so far; in a drawing that
+/// is a few. A crafted loop can keep many unused ends just past the tolerance of a point it
+/// returns to again and again, and visit them at every return.
+const CHECKS_PER_END: usize = 32;
+
 /// The edges in the order they are chained, each with whether it is turned around, and where
-/// each run ends in that list.
-fn runs(frame: &Frame, points: &[PolyVertex], edges: &[Range<usize>]) -> (Vec<(usize, bool)>, Vec<usize>) {
-    let mut index = EndIndex::new(frame, points, edges);
+/// each run ends in that list. None when the lookups visit more than `checks_per_end` ends per
+/// end of the loop: the loop is then read in file order.
+fn runs(frame: &Frame, points: &[PolyVertex], edges: &[Range<usize>], checks_per_end: usize) -> Option<(Vec<(usize, bool)>, Vec<usize>)> {
+    let mut index = EndIndex::new(frame, points, edges, checks_per_end);
     let mut used = vec![false; edges.len()];
     let (mut order, mut run_ends) = (Vec::with_capacity(edges.len()), Vec::new());
     let mut run = VecDeque::new();
@@ -127,10 +139,13 @@ fn runs(frame: &Frame, points: &[PolyVertex], edges: &[Range<usize>]) -> (Vec<(u
             run.push_front((edge, !at_last));
             head = if at_last { start } else { end };
         }
+        if index.spent {
+            return None;
+        }
         order.extend(run.drain(..));
         run_ends.push(order.len());
     }
-    (order, run_ends)
+    Some((order, run_ends))
 }
 
 /// Marks an edge used; false when it already was.
@@ -162,57 +177,72 @@ impl Frame {
     }
 }
 
-/// The finite edge ends of a loop by cell. Ends in the same or the next cell meet: ends within
-/// `tol` of each other always do, ends more than three times `tol` apart never.
+/// The finite edge ends of a loop, by cell. A cell is `tol` wide, so an end within `tol` of a
+/// point is in the point's cell or one next to it.
 struct EndIndex {
-    /// Each end's cell and id (twice its edge's index, plus one for the edge's last point),
-    /// sorted.
-    ends: Vec<((i64, i64), usize)>,
+    /// Each end's cell, id (twice its edge's index, plus one for the edge's last point) and
+    /// point, sorted by cell and id.
+    ends: Vec<((i64, i64), usize, Vec2)>,
     /// At a cell's first entry: the cell's first entry that may still be unused.
     next: Vec<usize>,
+    /// Ends lookups may still visit.
+    checks: usize,
+    /// The lookups visited every end they were allowed: they find nothing more.
+    spent: bool,
 }
 
 impl EndIndex {
-    fn new(frame: &Frame, points: &[PolyVertex], edges: &[Range<usize>]) -> EndIndex {
-        let mut ends: Vec<((i64, i64), usize)> = edges
+    fn new(frame: &Frame, points: &[PolyVertex], edges: &[Range<usize>], checks_per_end: usize) -> EndIndex {
+        let mut ends: Vec<((i64, i64), usize, Vec2)> = edges
             .iter()
             .enumerate()
             .filter_map(|(i, edge)| ends(points, edge).map(|(start, end)| (i, start, end)))
-            .flat_map(|(i, start, end)| [(frame.cell(start), 2 * i), (frame.cell(end), 2 * i + 1)])
-            .filter_map(|(cell, id)| cell.map(|cell| (cell, id)))
+            .flat_map(|(i, start, end)| [(2 * i, start), (2 * i + 1, end)])
+            .filter_map(|(id, p)| frame.cell(p).map(|cell| (cell, id, p)))
             .collect();
-        ends.sort_unstable();
+        ends.sort_unstable_by_key(|&(cell, id, _)| (cell, id));
         let next = (0..ends.len()).collect();
-        EndIndex { ends, next }
+        let checks = ends.len().saturating_mul(checks_per_end);
+        EndIndex { ends, next, checks, spent: false }
     }
 
-    /// The unused edge listed first with an end in `p`'s cell or one next to it, and whether
-    /// that end is the edge's last point (its first point when both are there).
+    /// The unused edge listed first with an end within `tol` of `p`, and whether that end is the
+    /// edge's last point (its first point when both are).
     fn find(&mut self, frame: &Frame, p: Vec2, used: &[bool]) -> Option<(usize, bool)> {
         let (x, y) = frame.cell(p)?;
-        let id = (-1..=1).flat_map(|dx| (-1..=1).map(move |dy| (x + dx, y + dy))).filter_map(|cell| self.first_unused(cell, used)).min()?;
-        Some((id / 2, id % 2 == 1))
+        let mut best = None;
+        for cell in (-1..=1).flat_map(|dx| (-1..=1).map(move |dy| (x + dx, y + dy))) {
+            best = self.first_within(cell, p, frame.tol, used, best).or(best);
+        }
+        best.map(|id| (id / 2, id % 2 == 1))
     }
 
-    /// The first end in `cell` whose edge is unused. Used ends are skipped once for good.
-    fn first_unused(&mut self, cell: (i64, i64), used: &[bool]) -> Option<usize> {
-        let first = self.ends.partition_point(|(c, _)| *c < cell);
+    /// The first end in `cell` within `tol` of `p` whose edge is unused, listed before `below`.
+    /// Used ends at the front of the cell are skipped once for good.
+    fn first_within(&mut self, cell: (i64, i64), p: Vec2, tol: f64, used: &[bool], below: Option<usize>) -> Option<usize> {
+        let unused = |id: usize| !used.get(id / 2).copied().unwrap_or(true);
+        let first = self.ends.partition_point(|(c, ..)| *c < cell);
         let mut at = self.next.get(first).copied()?;
-        let found = loop {
-            match self.ends.get(at) {
-                Some(&(c, id)) if c == cell => {
-                    if !used.get(id / 2).copied().unwrap_or(true) {
-                        break Some(id);
-                    }
-                    at += 1;
-                }
-                _ => break None,
-            }
-        };
+        while self.ends.get(at).is_some_and(|&(c, id, _)| c == cell && !unused(id)) {
+            at += 1;
+        }
         if let Some(next) = self.next.get_mut(first) {
             *next = at;
         }
-        found
+        for &(c, id, q) in self.ends.get(at..).unwrap_or_default() {
+            if c != cell || below.is_some_and(|below| id >= below) {
+                break;
+            }
+            if self.checks == 0 {
+                self.spent = true;
+                return None;
+            }
+            self.checks -= 1;
+            if unused(id) && q.near(p, tol) {
+                return Some(id);
+            }
+        }
+        None
     }
 }
 
