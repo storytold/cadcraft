@@ -1,6 +1,11 @@
 use super::*;
 
 /// `basis` before it evaluated on the stack, kept as the reference.
+#[expect(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    reason = "Spline indices are bounded by slice lengths, and max(0) makes the converted index nonnegative."
+)]
 fn basis_ref(span: usize, u: f64, p: usize, knots: &[f64]) -> Vec<f64> {
     let mut n = vec![0.0; p + 1];
     let mut left = vec![0.0; p + 1];
@@ -23,6 +28,7 @@ fn basis_ref(span: usize, u: f64, p: usize, knots: &[f64]) -> Vec<f64> {
 }
 
 /// `eval` before it evaluated on the stack, kept as the reference.
+#[expect(clippy::many_single_char_names, reason = "The reference implementation keeps the NURBS equation notation used by the algorithm under test.")]
 fn eval_ref(s: &Spline, t: f64) -> Vec2 {
     let n = s.control.len() - 1;
     let (lo, hi) = s.domain();
@@ -41,21 +47,26 @@ fn eval_ref(s: &Spline, t: f64) -> Vec2 {
 }
 
 /// Deterministic pseudo-random numbers in `0..1`.
+#[expect(clippy::cast_precision_loss, reason = "The generator keeps exactly 53 random bits, and 2^53 is exactly representable as f64.")]
 fn noise(seed: &mut u64) -> f64 {
-    *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    *seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
     (*seed >> 11) as f64 / (1u64 << 53) as f64
 }
 
 /// Splines of degree 1..=11 over 14 control points: clamped and unclamped (uniform) knots,
 /// unit and random weights.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "The test uses 14 control points and degrees through 11, so every knot index is exactly representable as f64."
+)]
 fn samples() -> Vec<Spline> {
     let mut seed = 7;
     let mut out = Vec::new();
     for degree in 1..=11 {
-        let control: Vec<Vec2> = (0..14).map(|i| Vec2::new(i as f64 * 3.0 + noise(&mut seed), 10.0 * noise(&mut seed) - 5.0)).collect();
+        let control: Vec<Vec2> = (0..14).map(|i| Vec2::new(f64::from(i) * 3.0 + noise(&mut seed), 10.0 * noise(&mut seed) - 5.0)).collect();
         let weights: Vec<f64> = (0..14).map(|_| 0.5 + 1.5 * noise(&mut seed)).collect();
         let clamped = Spline::from_control(control.clone(), degree);
-        let uniform = Spline { knots: (0..control.len() + degree + 1).map(|i| i as f64 * 0.25).collect(), ..clamped.clone() };
+        let uniform = Spline { knots: (0..=(control.len() + degree)).map(|i| i as f64 * 0.25).collect(), ..clamped.clone() };
         for base in [clamped, uniform] {
             out.push(Spline { weights: weights.clone(), ..base.clone() });
             out.push(base);
@@ -70,7 +81,7 @@ fn stack_basis_matches_the_heap_basis_bit_for_bit() {
         assert!(s.is_valid());
         let (lo, hi) = s.domain();
         for i in -20..=1020 {
-            let t = lo + (hi - lo) * i as f64 / 1000.0;
+            let t = lo + (hi - lo) * f64::from(i) / 1000.0;
             let got = s.eval(t);
             let want = eval_ref(&s, t);
             assert_eq!((got.x.to_bits(), got.y.to_bits()), (want.x.to_bits(), want.y.to_bits()), "degree {} at {t}: {got:?} vs {want:?}", s.degree);
@@ -87,14 +98,14 @@ fn basis_into_needs_room_for_every_function() {
     let knots = clamped_uniform_knots(6, 3);
     let (mut n, mut left, mut right) = ([0.5; 3], [0.0; 4], [0.0; 4]);
     basis_into(3, 0.5, 3, &knots, &mut n, &mut left, &mut right);
-    assert_eq!(n, [0.5; 3]);
+    assert_eq!(n.map(f64::to_bits), [0.5; 3].map(f64::to_bits));
 }
 
 /// A cubic through 300 points of a sine wave, open or closed.
 fn wiggly(closed: bool) -> Spline {
     let fit: Vec<Vec2> = (0..300)
         .map(|i| {
-            let x = i as f64 / 299.0;
+            let x = f64::from(i) / 299.0;
             Vec2::new(x * 100.0, 10.0 * (x * 60.0).sin())
         })
         .collect();
@@ -108,6 +119,7 @@ fn fine_box(s: &Spline) -> Bounds2 {
 
 /// The box of `n + 1` samples evenly spaced in parameter over the domain, as `bounds` sampled
 /// before it spread its samples over the knot spans.
+#[expect(clippy::cast_precision_loss, reason = "Test grids are capped at MAX_SAMPLES (4000), so sample indices are exactly representable as f64.")]
 fn uniform_box(s: &Spline, n: usize) -> Bounds2 {
     let (lo, hi) = s.domain();
     Bounds2::from_points((0..=n).map(|i| s.eval(lo + (hi - lo) * i as f64 / n as f64)))
@@ -118,7 +130,7 @@ fn uniform_box(s: &Spline, n: usize) -> Bounds2 {
 /// except for a peak of 50 at t = 0.50035, inside a span of width 1e-4 that no point of a
 /// uniform grid of up to 4000 hits (0.50025 and 0.5005 are the nearest).
 fn narrow_span() -> Spline {
-    let control = (0..7).map(|i| Vec2::new(i as f64, if i == 3 { 100.0 } else { 0.0 })).collect();
+    let control = (0..7).map(|i| Vec2::new(f64::from(i), if i == 3 { 100.0 } else { 0.0 })).collect();
     Spline { degree: 2, knots: vec![0.0, 0.0, 0.0, 0.5003, 0.5003, 0.5004, 0.5004, 1.0, 1.0, 1.0], control, ..Spline::default() }
 }
 
@@ -132,14 +144,14 @@ fn an_off_grid_peak_in_a_narrow_span_is_within_a_percent() {
     s.control[4].y = 30.0;
     assert!(s.is_valid());
     let (a, b) = (0.5003, 0.5004);
-    let peak = (0..=10_000).map(|i| s.eval(a + (b - a) * i as f64 / 10_000.0)).fold(Vec2::ZERO, |m, p| if p.y > m.y { p } else { m });
+    let peak = (0..=10_000).map(|i| s.eval(a + (b - a) * f64::from(i) / 10_000.0)).fold(Vec2::ZERO, |m, p| if p.y > m.y { p } else { m });
     assert!(peak.y > 58.0 && peak.y < 59.0, "{peak:?}");
     let hull = Bounds2::from_points(s.control.iter().copied());
     let diag = hull.min.dist(hull.max);
     let got = s.bounds();
     assert!(got.max.y <= peak.y + 1e-9 * diag && got.max.y >= peak.y - 1e-2 * diag, "{got:?} vs peak {peak:?}");
     // Four segments, the floor before, missed it by more than that.
-    let four = (0..=4).map(|i| s.eval(a + (b - a) * i as f64 / 4.0)).fold(f64::MIN, |m, p| m.max(p.y));
+    let four = (0..=4).map(|i| s.eval(a + (b - a) * f64::from(i) / 4.0)).fold(f64::MIN, |m, p| m.max(p.y));
     assert!(four < peak.y - 1e-2 * diag, "{four} vs {peak:?}");
 }
 
@@ -148,7 +160,7 @@ fn bounds_see_an_extreme_inside_a_narrow_knot_span() {
     let s = narrow_span();
     assert!(s.is_valid());
     let (a, b) = (0.5003, 0.5004);
-    let peak = (0..=1000).map(|i| s.eval(a + (b - a) * i as f64 / 1000.0)).fold(Vec2::ZERO, |m, p| if p.y > m.y { p } else { m });
+    let peak = (0..=1000).map(|i| s.eval(a + (b - a) * f64::from(i) / 1000.0)).fold(Vec2::ZERO, |m, p| if p.y > m.y { p } else { m });
     assert!((peak.x - 3.0).abs() < 1e-9 && (peak.y - 50.0).abs() < 1e-9, "{peak:?}");
     let hull = Bounds2::from_points(s.control.iter().copied());
     let diag = hull.min.dist(hull.max);
@@ -165,6 +177,7 @@ fn bounds_see_an_extreme_inside_a_narrow_knot_span() {
 }
 
 #[test]
+#[expect(clippy::cast_precision_loss, reason = "The test grids contain 1502 or 2502 points, so all sample indices are exact as f64.")]
 fn bounds_keep_their_cap_over_many_spans() {
     // 1500 spans: eight per span would pass the cap, so two; 2500 spans: more than the cap
     // allows two for, so the control box, which contains the curve. A smooth curve stays
@@ -379,4 +392,214 @@ fn a_normal_low_degree_spline_is_valid() {
     let s = Spline::from_control(vec![Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(2.0, 0.0), Vec2::new(3.0, 1.0)], 3);
     assert!(s.is_valid());
     assert!(s.tessellate(1e-3).len() > 4);
+}
+
+thread_local! {
+    /// While set, `solve` runs `solve_dense` (this thread only, so parallel tests do not mix).
+    pub(super) static DENSE_ORACLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `solve` before it was limited to the matrix band, kept as the reference.
+#[allow(clippy::needless_range_loop)]
+pub(super) fn solve_dense(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
+    let n = b.len();
+    for c in 0..n {
+        let piv = (c..n).max_by(|&i, &j| a[i][c].abs().total_cmp(&a[j][c].abs()))?;
+        if a[piv][c].abs() < 1e-14 {
+            return None;
+        }
+        a.swap(c, piv);
+        b.swap(c, piv);
+        for r in c + 1..n {
+            let f = a[r][c] / a[c][c];
+            if f != 0.0 {
+                for k in c..n {
+                    a[r][k] -= f * a[c][k];
+                }
+                b[r] -= f * b[c];
+            }
+        }
+    }
+    let mut x = vec![0.0; n];
+    for r in (0..n).rev() {
+        let s: f64 = (r + 1..n).map(|k| a[r][k] * x[k]).sum();
+        x[r] = (b[r] - s) / a[r][r];
+    }
+    Some(x)
+}
+
+fn bits(v: &[f64]) -> Vec<u64> {
+    v.iter().map(|x| x.to_bits()).collect()
+}
+
+fn bits2(v: &[Vec2]) -> Vec<u64> {
+    v.iter().flat_map(|p| [p.x.to_bits(), p.y.to_bits()]).collect()
+}
+
+/// Both solvers on one system: `None` together, or the same bits.
+fn assert_same_solution(a: &[Vec<f64>], b: &[f64], what: &str) {
+    let old = solve_dense(a.to_vec(), b.to_vec());
+    let new = solve(a.to_vec(), b.to_vec());
+    assert_eq!(old.as_deref().map(bits), new.as_deref().map(bits), "{what}");
+}
+
+/// A random matrix with `kl` sub- and `ku` super-diagonals (some entries exactly zero).
+fn banded(n: usize, kl: usize, ku: usize, seed: &mut u64) -> Vec<Vec<f64>> {
+    let mut a = vec![vec![0.0; n]; n];
+    for (r, row) in a.iter_mut().enumerate() {
+        for (c, v) in row.iter_mut().enumerate() {
+            if c + kl >= r && c <= r + ku && noise(seed) > 0.15 {
+                *v = noise(seed) * 4.0 - 2.0;
+            }
+        }
+    }
+    a
+}
+
+#[test]
+fn banded_solve_matches_the_dense_sweep_bit_for_bit() {
+    let mut seed = 0x5eed_u64;
+    for n in [1, 2, 3, 4, 5, 8, 17, 40, 120] {
+        for (kl, ku) in [(0, 0), (1, 0), (0, 2), (1, 1), (3, 3), (2, 5), (n, n)] {
+            for _ in 0..6 {
+                let a = banded(n, kl, ku, &mut seed);
+                // Right-hand sides with zeros of both signs make the zero-sign cases reachable.
+                let b: Vec<f64> = (0..n)
+                    .map(|i| [noise(&mut seed) * 9.0 - 4.0, 0.0, -0.0][(noise(&mut seed) * 3.0) as usize % 3] * (i % 4 != 0) as u8 as f64)
+                    .collect();
+                assert_same_solution(&a, &b, &format!("n={n} kl={kl} ku={ku}"));
+                assert_same_solution(&a, &vec![0.0; n], &format!("zero rhs n={n} kl={kl} ku={ku}"));
+                assert_same_solution(&a, &vec![-0.0; n], &format!("negative-zero rhs n={n} kl={kl} ku={ku}"));
+            }
+        }
+    }
+}
+
+#[test]
+fn solve_handles_negative_zeros_signed_zero_sums_and_hostile_values() {
+    let mut seed = 77_u64;
+    for n in [3, 6, 30] {
+        let mut a = banded(n, 1, 2, &mut seed);
+        // A stored `-0.0` outside the band is still part of the matrix.
+        a[0][n - 1] = -0.0;
+        a[n - 1][0] = -0.0;
+        let b: Vec<f64> = (0..n).map(|i| if i % 2 == 0 { -0.0 } else { 1.0 }).collect();
+        assert_same_solution(&a, &b, &format!("negative zeros n={n}"));
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1e200, 1e101] {
+            let mut ab = a.clone();
+            ab[n / 2][n / 2] = bad;
+            assert_same_solution(&ab, &b, &format!("{bad:?} in the matrix, n={n}"));
+            let mut bb = b.clone();
+            bb[n - 1] = bad;
+            assert_same_solution(&a, &bb, &format!("{bad:?} in the rhs, n={n}"));
+        }
+    }
+    // Bad values in a narrow band with no corner entry, so the guard (not a full-width matrix) decides.
+    for bad in [f64::NAN, f64::INFINITY, 1e200, 1e101] {
+        let a = banded(12, 1, 2, &mut seed);
+        let mut ab = a.clone();
+        ab[5][5] = bad;
+        ab[5][6] = 1.0;
+        assert_same_solution(&ab, &[1.0; 12], &format!("{bad:?} in a narrow band"));
+        let mut b = vec![1.0; 12];
+        b[3] = bad;
+        assert_same_solution(&a, &b, &format!("{bad:?} in the rhs of a narrow band"));
+    }
+    // Singular and empty systems.
+    assert_same_solution(&[vec![0.0, 0.0], vec![0.0, 1.0]], &[1.0, 1.0], "singular");
+    assert_same_solution(&[], &[], "empty");
+    assert_eq!(solve(Vec::new(), Vec::new()), Some(Vec::new()));
+}
+
+/// Fit points: a wavy line with noise; every `zero_every`-th coordinate is exactly zero.
+fn fit_points(n: usize, seed: &mut u64, zero_every: usize) -> Vec<Vec2> {
+    (0..n)
+        .map(|i| {
+            let x = i as f64 * 3.0 + noise(seed);
+            let y = (i as f64 * 0.3).sin() * 50.0 + noise(seed) * 5.0;
+            if zero_every > 0 && i % zero_every == 0 { Vec2::new(x, 0.0) } else { Vec2::new(x, y) }
+        })
+        .collect()
+}
+
+fn spline_bits(s: &Spline) -> (Vec<u64>, Vec<u64>, Vec<u64>, Vec<u64>, usize) {
+    (bits(&s.knots), bits2(&s.control), bits(&s.weights), bits2(&s.fit), s.degree)
+}
+
+/// Fit with the banded `solve`, then with the dense reference, and compare every bit.
+/// Clears `DENSE_ORACLE` when dropped, so a failing assertion cannot leave it set.
+struct OracleOff;
+impl Drop for OracleOff {
+    fn drop(&mut self) {
+        DENSE_ORACLE.set(false);
+    }
+}
+
+fn assert_fit_unchanged(fit: &[Vec2], closed: bool, opts: FitOptions, what: &str) {
+    let _off = OracleOff;
+    let new = Spline::fit_with(fit, closed, opts);
+    DENSE_ORACLE.set(true);
+    let old = Spline::fit_with(fit, closed, opts);
+    DENSE_ORACLE.set(false);
+    assert_eq!(spline_bits(&old), spline_bits(&new), "{what}");
+}
+
+#[test]
+fn fits_are_bit_identical_to_the_dense_solver() {
+    let mut seed = 2432_u64;
+    let tolerant = FitOptions { tolerance: 0.5, ..FitOptions::default() };
+    let tangents = FitOptions { start_tangent: Some(Vec2::new(0.0, 1.0)), end_tangent: Some(Vec2::new(1.0, -1.0)), ..FitOptions::default() };
+    let chord = FitOptions { knots: crate::KnotParam::Chord, ..FitOptions::default() };
+    // Chord-length knots fit open curves with `chord_interpolate` and closed ones with
+    // `chord_closed`; the others with `interpolate`, whose end tangents add rows of their own, and
+    // with the cyclic matrix.
+    let sqrt = FitOptions { knots: crate::KnotParam::SqrtChord, ..FitOptions::default() };
+    let uniform = FitOptions { knots: crate::KnotParam::Uniform, ..FitOptions::default() };
+    let sqrt_tangents = FitOptions { knots: crate::KnotParam::SqrtChord, ..tangents };
+    for n in [3, 4, 5, 7, 12, 30, 100] {
+        for round in 0..4 {
+            let zero_every = [0, 2, 3, 1][round];
+            let pts = fit_points(n, &mut seed, zero_every);
+            for closed in [false, true] {
+                for (name, opts) in [
+                    ("default", FitOptions::default()),
+                    ("tolerance", tolerant),
+                    ("tangents", tangents),
+                    ("chord", chord),
+                    ("sqrt", sqrt),
+                    ("uniform", uniform),
+                    ("sqrt tangents", sqrt_tangents),
+                ] {
+                    assert_fit_unchanged(&pts, closed, opts, &format!("n={n} closed={closed} {name} zero_every={zero_every}"));
+                }
+            }
+        }
+    }
+    // Large point sets: open and closed interpolation with chord-length and square-root knots (the
+    // closed square-root one is the cyclic matrix, full bandwidth), and a tolerance fit at the size
+    // the approximation search still accepts.
+    let big = fit_points(1000, &mut seed, 0);
+    assert_fit_unchanged(&big, false, FitOptions::default(), "n=1000 open");
+    assert_fit_unchanged(&big, false, sqrt, "n=1000 open sqrt");
+    assert_fit_unchanged(&big[..150], true, FitOptions::default(), "n=150 closed");
+    assert_fit_unchanged(&big[..150], true, sqrt, "n=150 closed sqrt");
+    assert_fit_unchanged(&big[..300], false, tolerant, "n=300 tolerance");
+    // Repeated points are kinks, which fit each piece on its own.
+    let mut kinked = fit_points(40, &mut seed, 0);
+    kinked.insert(10, kinked[10]);
+    kinked.insert(25, kinked[25]);
+    assert_fit_unchanged(&kinked, false, FitOptions::default(), "kinks");
+}
+
+#[test]
+fn the_cyclic_matrix_of_a_closed_fit_keeps_the_full_sweep() {
+    // Corner entries give the closed matrix a full bandwidth; it must still agree with the dense sweep.
+    let mut seed = 9_u64;
+    for n in [4, 9, 60] {
+        let mut a = banded(n, 1, 1, &mut seed);
+        a[0][n - 1] = 0.7;
+        a[n - 1][0] = -0.3;
+        let b: Vec<f64> = (0..n).map(|_| noise(&mut seed)).collect();
+        assert_same_solution(&a, &b, &format!("cyclic n={n}"));
+    }
 }

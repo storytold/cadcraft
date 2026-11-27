@@ -233,6 +233,7 @@ fn picks_merge_into_the_state() {
 
 fn frames(app: &mut CadApp) -> egui::Context {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     app.logic(&ctx);
     let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))), ..Default::default() };
     // Enough frames for a window that grows each frame to show it.
@@ -301,6 +302,28 @@ fn a_failed_ok_keeps_the_dialog_open_with_the_error() {
     let st = app.hatch_dlg.clone().unwrap();
     assert!(st.error.is_some_and(|e| !e.is_empty()));
     assert_eq!(app.session.doc().unwrap().model.len(), n, "drawing unchanged");
+}
+
+/// A user alias of HATCH typed alone opens the dialog as HATCH does, also with the Greek layout
+/// active (ΚΡ is KR); with more on the line it goes to the engine with those inputs.
+#[test]
+fn a_lone_user_alias_of_hatch_opens_the_dialog() {
+    let _aliases = crate::aliasdlg::lock_alias_store();
+    let (mut app, _) = app_with_rect();
+    app.session.execute("aliasedit", &json!({ "set": { "kr": "hatch", "gra": "gradient" } })).unwrap();
+    for (typed, gradient) in [("kr", false), ("KR", false), ("ΚΡ", false), ("gra", true)] {
+        app.ui.dialog = None;
+        app.cmdline(typed);
+        assert_eq!(app.ui.dialog.as_deref(), Some("hatch"), "{typed}");
+        assert_eq!(app.hatch_dlg.clone().unwrap().fill.gradient, gradient, "{typed}");
+        assert!(app.session.running.is_none(), "{typed}");
+    }
+    app.ui.dialog = None;
+    app.cmdline("kr p ansi31");
+    assert_eq!(app.ui.dialog, None, "the rest of the line goes to the engine");
+    assert!(app.session.running.is_some());
+    app.session.cancel();
+    app.session.execute("aliasedit", &json!({ "remove": ["kr", "gra"] })).unwrap();
 }
 
 #[test]
@@ -415,4 +438,36 @@ fn a_gradient_hatch_offers_the_current_pattern_on_the_pattern_tab() {
         cadcraft_doc::EntityKind::Hatch(x) => assert!(x.gradient.is_none() && x.pattern == "ANSI31"),
         k => panic!("{k:?}"),
     }
+}
+
+/// Edit mode opens on the selected hatches. A selected hatch on a layer frozen in the active
+/// viewport is not drawn there, so it is not one of them and the command asks for a hatch.
+#[test]
+fn edit_mode_leaves_out_a_selected_hatch_the_viewport_does_not_draw() {
+    let (mut app, _) = app_with_rect();
+    let hx = app.session.execute("hatch", &json!({ "points": [[5, 5]] })).unwrap()["handle"].as_str().unwrap().to_string();
+    let hatch = Handle::parse_hex(&hx).unwrap();
+    app.session.execute("layer.new", &json!({ "name": "Hidden" })).unwrap();
+    app.session.execute("properties.set", &json!({ "handles": [hx], "layer": "Hidden" })).unwrap();
+    app.session.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+    let made = app.session.execute("mview", &json!({ "count": 2, "p1": [20, 20], "p2": [220, 120] })).unwrap();
+    let viewport = |i: usize| made["viewports"][i].as_str().unwrap().to_string();
+    let (a, b) = (viewport(0), viewport(1));
+    app.session.execute("vplayer", &json!({ "handles": [a], "freeze": ["Hidden"] })).unwrap();
+
+    // Through the viewport that draws the hatch, edit mode opens on it.
+    app.session.execute("mspace", &json!({ "handle": b })).unwrap();
+    app.session.set_selection(vec![hatch]);
+    open_edit(&mut app);
+    assert_eq!(app.ui.dialog.as_deref(), Some("hatch"));
+    assert_eq!(app.hatch_dlg.as_ref().map(|d| d.edit.clone()), Some(vec![hatch]));
+
+    // Through the viewport that freezes its layer there is no hatch to edit yet.
+    (app.ui.dialog, app.hatch_dlg) = (None, None);
+    app.session.execute("mspace", &json!({ "handle": a })).unwrap();
+    app.session.set_selection(vec![hatch]);
+    open_edit(&mut app);
+    assert_eq!(app.ui.dialog, None, "no dialog: the command asks for a hatch first");
+    assert_eq!(app.hatch_dlg.as_ref().map(|d| d.edit.clone()), Some(Vec::new()), "a hatch the viewport does not draw must not be edited");
+    assert!(app.session.running.is_some(), "HATCHPICK must be asking for a hatch");
 }

@@ -6,6 +6,7 @@ use cadcraft_doc::*;
 use cadcraft_geom::{Vec2, Vec3};
 
 fn through_dwg(d: &Drawing) -> Drawing {
+    cadcraft_io::dwg_worker::allow_in_process();
     let dwg = cadcraft_io::write(d, "x.dwg").unwrap();
     cadcraft_io::read(&dwg, "x.dwg").unwrap()
 }
@@ -62,6 +63,7 @@ fn viewport_ids(l: &Layout) -> Vec<u32> {
 /// AutoCAD 2018 (R2000 DWG has neither), while the DXF the bridge reads stays R2000.
 #[test]
 fn dwg_keeps_true_colours_and_transparency() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = Drawing::new_metric();
     d.layers.push(Layer { name: "Fancy".into(), color: Color::True(Rgb(12, 200, 99)), ..Layer::default() });
     let h = line(
@@ -71,7 +73,7 @@ fn dwg_keeps_true_colours_and_transparency() {
     );
 
     let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
-    assert_eq!(cadcraft_dwg::version(&dwg).as_deref(), Some("AC1032"));
+    assert_eq!(craft_dwg::version(&dwg).as_deref(), Some("AC1032"));
     let header = records(&cadcraft_io::write_dxf(&d), "SECTION");
     assert_eq!(header.first().and_then(|h| group(h, "1")), Some("AC1015"), "the DXF stays R2000");
 
@@ -169,7 +171,7 @@ fn the_added_paper_viewport_follows_the_plot_scale() {
     let sheet_width = |scale: f64, fit: bool| {
         let mut d = Drawing::new_metric();
         let page = &mut d.layouts[0].page;
-        (page.width_mm, page.height_mm, page.landscape, page.paper_mm) = (297.0, 420.0, true, true);
+        (page.width_mm, page.height_mm, page.landscape, page.paper_mm) = (297.0, 420.0, true, Some(true));
         (page.scale, page.scale_to_fit) = (scale, fit);
         let first = Space::Paper(d.layouts[0].name.clone());
         d.add(&first, Common::default(), viewport(2)).unwrap();

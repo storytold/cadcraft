@@ -22,7 +22,7 @@ fn long_names_are_cut_short_inside_the_tab() {
     app.run("circle", serde_json::json!({"center": [0, 0], "radius": 1})).unwrap();
     app.session.state_mut().unwrap().title = "LICENCIA COFRE DE PEROTE REPOSICION FINAL.dwg".into();
     app.ui.start_tab = false;
-    let mut h = Harness::builder().with_size(vec2(1200.0, 760.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(vec2(1200.0, 760.0)).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(&ui.ctx().clone());
             app.ui(ui);

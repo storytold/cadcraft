@@ -84,7 +84,7 @@ fn bearings_and_compass_points_turn_with_angbase_and_angdir() {
         assert_near(line_end(&mut s, to), 10.0 * a.cos(), 10.0 * a.sin(), &format!("{to} AUNITS {aunits} ANGBASE {angbase} ANGDIR {angdir}"));
     }
     // `<<` is in degrees only: AutoCAD refuses a bearing or a compass point there.
-    let settings = AngleSettings { aunits: 0, angbase: std::f64::consts::FRAC_PI_2, clockwise: true };
+    let settings = AngleSettings { aunits: 0, angbase: std::f64::consts::FRAC_PI_2, clockwise: true, ucs: 0.0 };
     assert_eq!(settings.direction("<<N45dE"), None);
     assert_eq!(settings.direction("<<N"), None);
     assert!(settings.direction("<<45").is_some_and(|a| (a - std::f64::consts::FRAC_PI_4).abs() < 1e-12));
@@ -161,7 +161,7 @@ fn json_and_default_parsing_keep_degrees_from_east() {
     // SETVAR reports ANGBASE in degrees.
     let v = cadcraft_engine::sysvars::get(&s, "ANGBASE").unwrap();
     assert!((v.as_f64().unwrap() - 90.0).abs() < 1e-9, "{v}");
-    let a = AngleSettings { aunits: 0, angbase: 0.0, clockwise: false };
+    let a = AngleSettings { aunits: 0, angbase: 0.0, clockwise: false, ucs: 0.0 };
     assert_eq!(a.direction(""), None);
     assert_eq!(a.direction("nan"), None);
     assert_eq!(a.direction("1e400"), None);
