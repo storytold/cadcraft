@@ -23,6 +23,22 @@ reply and the connection is closed. To send a longer request (a script, a drawin
 new connection, first send a short one with the token, such as `ping`, and wait for its reply.
 The MCP bridge does this too.
 
+Any program can listen on the port while the app isn't, so a client can first ask the server to
+prove it is the app, before it sends anything else on the connection:
+
+```json
+{"id": "h", "method": "hello", "params": {"nonce": "<32 to 128 hexadecimal digits>"}}
+{"id": "h", "ok": true, "result": {"proof": "<64 hexadecimal digits>"}}
+```
+
+`hello` needs no token and doesn't count as showing it. The proof is HMAC-SHA-256 keyed with the
+session token, over the bytes `cadcraft control server proof v1` and a newline followed by the
+nonce, in lowercase hexadecimal. A client that computes the same value from the token file knows the
+server holds the token; use a fresh random nonce each time. A `hello` without a valid nonce gets an
+error and the connection is closed. The MCP bridge sends a `hello` on every new connection and
+sends nothing more to a server that can't prove it holds the token, or when it can't read a token
+for the port.
+
 Errors come back as `{"id": …, "ok": false, "error": "message"}`. An unknown method's error points
 to `control.methods`, which lists the methods the server answers.
 
@@ -32,7 +48,8 @@ after it runs. Blank lines are skipped.
 
 The server bounds what a client can hold: 16 connections at once (more get an error line and are
 closed), 256 MiB per request line (64 KiB until the connection has shown the token; longer closes
-the connection), 64 queued requests (more are
+the connection), 10 seconds from connecting to the first request with the token (then the
+connection is closed, whatever it has sent), 64 queued requests (more are
 answered `{"ok": false, "error": "busy: …", "state": "not-run"}`), and 10 minutes idle or 30 seconds
 per blocked reply write before the socket is closed.
 

@@ -3,7 +3,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cadcraft_engine::Session;
 use cadcraft_engine::file_access::{self, AutomationRoots};
@@ -35,6 +35,9 @@ pub struct Remote {
     authed: bool,
     /// Longest reply line accepted (`MAX_REPLY_LINE`; smaller in tests).
     max_reply: usize,
+    /// When the current connection was opened: the server closes one that hasn't shown the token
+    /// within `MAX_UNAUTHENTICATED_TIME`.
+    opened: Option<Instant>,
 }
 
 /// The port component of a `HOST:PORT` address, for locating the token file.
@@ -49,6 +52,13 @@ const LAUNCH_WAIT: Duration = Duration::from_secs(30);
 /// cap (256 MiB, room for whole drawings and images as base64), so a peer squatting on the port
 /// can't make the client allocate without bound (#1925).
 const MAX_REPLY_LINE: usize = 256 * 1024 * 1024;
+
+/// Longest reply to a `hello` the client reads: it comes before the peer has proved anything.
+const MAX_HELLO_REPLY: usize = 4096;
+
+/// How long before the server's `MAX_UNAUTHENTICATED_TIME` runs out an unauthenticated connection
+/// is replaced instead of used, so a request is never written to a connection about to close.
+const PREAUTH_MARGIN: Duration = Duration::from_secs(2);
 
 /// Read one `\n`-terminated reply of at most `max` bytes (newline excluded). `Ok(0)` is end of
 /// stream; a longer line is an `InvalidData` error and the rest of it stays unread.
@@ -67,7 +77,7 @@ fn read_reply_line(reader: &mut impl BufRead, reply: &mut String, max: usize) ->
 impl Remote {
     /// Connect to a running control server; its session token is read lazily when the first request is sent.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, launch: false, token: None, authed: false, max_reply: MAX_REPLY_LINE };
+        let mut r = Self::lazy(addr, false);
         r.reconnect()?;
         Ok(r)
     }
@@ -75,12 +85,11 @@ impl Remote {
     /// the server before the app is open. With `launch`, a call that finds nothing at `addr`
     /// opens the app with that control port first (macOS) and waits for it.
     pub fn lazy(addr: &str, launch: bool) -> Self {
-        Self { addr: addr.to_string(), conn: None, next_id: 1, launch, token: None, authed: false, max_reply: MAX_REPLY_LINE }
+        Self { addr: addr.to_string(), conn: None, next_id: 1, launch, token: None, authed: false, max_reply: MAX_REPLY_LINE, opened: None }
     }
 
-    /// The per-session token for this port, read (and cached) from the owner-only token file. A
-    /// missing file is not fatal here: the request is sent without a token and the server replies
-    /// with an authentication error the user can act on.
+    /// The per-session token for this port, read (and cached) from the owner-only token file
+    /// (`None` when there is none; then nothing is sent, see [`Remote::prove_server`]).
     ///
     /// The desktop app listens only on `127.0.0.1:PORT`, so the token goes only to that exact
     /// peer: a name that also resolves elsewhere (`localhost` → `::1`, where another local account
@@ -134,15 +143,65 @@ impl Remote {
                     s.set_read_timeout(Some(Duration::from_secs(90))).ok();
                     let read = s.try_clone()?;
                     self.conn = Some((BufReader::new(read), s));
-                    return Ok(());
+                    self.opened = Some(Instant::now());
+                    // A peer that can't prove it is the app gets nothing; another address may be.
+                    match self.prove_server() {
+                        Ok(()) => return Ok(()),
+                        Err(e) => {
+                            self.conn = None;
+                            last = e;
+                        }
+                    }
                 }
                 Err(e) => last = e,
             }
         }
         Err(last)
     }
+    /// Have the peer just connected to prove it holds this port's session token before anything
+    /// else is sent to it: any program that listens on the port first would otherwise receive the
+    /// requests and could answer them (#1925). The `hello` carries a fresh nonce and no token; the
+    /// app answers with [`crate::control_token::server_proof`]. A proof made with another token is
+    /// checked once more against the token file, which a restarted app has rewritten.
+    fn prove_server(&mut self) -> std::io::Result<()> {
+        let refused = |addr: &str, why: &str| {
+            std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "the program listening at {addr} {why}, so nothing was sent to it; is CADCraft running with its control port under this account?"
+                ),
+            )
+        };
+        if self.token().is_none() {
+            return Err(refused(&self.addr, "is not a CADCraft session whose control token this account can read"));
+        }
+        let nonce = crate::control_token::new_nonce()?;
+        let hello = json!({"method": "hello", "params": {"nonce": nonce}}).to_string();
+        let reply = self.roundtrip_within(&hello, MAX_HELLO_REPLY).map_err(|(e, _)| e)?;
+        let reply = serde_json::from_str::<Value>(&reply).unwrap_or_default();
+        let Some(proof) = reply.pointer("/result/proof").and_then(Value::as_str) else {
+            // The app refuses a connection past its limit before reading anything: say why.
+            return Err(match reply.get("error").and_then(Value::as_str) {
+                Some(e) => std::io::Error::other(e.to_string()),
+                None => refused(&self.addr, "did not answer as CADCraft's control server does"),
+            });
+        };
+        let holds = |token: Option<&str>| token.is_some_and(|t| crate::control_token::verify_server_proof(t, &nonce, proof));
+        if holds(self.token.as_deref()) {
+            return Ok(());
+        }
+        self.token = None;
+        if holds(self.token()) {
+            return Ok(());
+        }
+        Err(refused(&self.addr, "could not prove it holds this account's control token"))
+    }
     /// On failure the flag says whether the request may already have reached the server.
     fn roundtrip(&mut self, line: &str) -> Result<String, (std::io::Error, bool)> {
+        self.roundtrip_within(line, self.max_reply)
+    }
+    /// [`Remote::roundtrip`], reading a reply of at most `max` bytes.
+    fn roundtrip_within(&mut self, line: &str, max: usize) -> Result<String, (std::io::Error, bool)> {
         if self.conn.is_none() {
             self.reach().map_err(|e| (e, false))?;
         }
@@ -155,7 +214,7 @@ impl Remote {
             return Err((e, true));
         }
         let mut reply = String::new();
-        match read_reply_line(reader, &mut reply, self.max_reply) {
+        match read_reply_line(reader, &mut reply, max) {
             Ok(0) => {
                 self.conn = None;
                 Err((std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "connection closed"), true))
@@ -225,6 +284,11 @@ impl Remote {
     /// passed the check (#1925), so a long request on a new connection goes after a `ping` with the
     /// token; when the `ping` is refused its reply comes back instead and the request isn't sent.
     fn sign_and_send(&mut self, req: &mut Value) -> Result<String, (std::io::Error, bool)> {
+        // The app closes a connection that hasn't shown the token in time; a request written to it
+        // then would be lost with its fate unknown, so such a connection is replaced first.
+        if !self.authed && self.opened.is_some_and(|t| t.elapsed() + PREAUTH_MARGIN >= crate::control_token::MAX_UNAUTHENTICATED_TIME) {
+            self.conn = None;
+        }
         if self.conn.is_none() {
             self.reach().map_err(|e| (e, false))?;
         }
@@ -528,15 +592,40 @@ mod tests {
     use std::net::TcpListener;
     use std::sync::Arc;
 
+    /// The app's reply to `req` when it is a `hello`: a proof made with the token in this port's
+    /// file now (the app's own token).
+    fn hello_reply(req: &Value, port: u16) -> Option<Value> {
+        (req["method"] == "hello").then(|| {
+            let token = crate::control_token::read(port).unwrap_or_default();
+            let proof = crate::control_token::server_proof(&token, req["params"]["nonce"].as_str().unwrap_or_default());
+            json!({"ok": true, "result": {"proof": proof}})
+        })
+    }
+
+    /// Answer the `hello` a client opens a connection with, as the app does; `false` when the
+    /// client sent nothing.
+    fn answer_hello(reader: &mut impl BufRead, out: &mut impl Write, port: u16) -> bool {
+        let mut line = String::new();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+            return false;
+        }
+        let reply = hello_reply(&serde_json::from_str(&line).unwrap(), port).expect("a hello first");
+        writeln!(out, "{reply}").is_ok()
+    }
+
     /// A peer squatting on the control port can't make the client buffer an endless reply line (#1925).
     #[test]
     fn an_overlong_reply_is_refused_without_buffering_it() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
         let addr = listener.local_addr().unwrap().to_string();
+        crate::control_token::issue(port).unwrap();
         let server = std::thread::spawn(move || {
             let (mut conn, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(conn.try_clone().unwrap());
+            assert!(answer_hello(&mut reader, &mut conn, port));
             let mut line = String::new();
-            BufReader::new(conn.try_clone().unwrap()).read_line(&mut line).unwrap();
+            reader.read_line(&mut line).unwrap();
             // No newline: the reply never ends. A bounded client gives up after the limit.
             let _ = conn.write_all(&[b'x'; 4096]);
             let _ = conn.flush();
@@ -549,6 +638,7 @@ mod tests {
         assert!(err.to_string().contains("longer than 100 bytes"), "{err}");
         assert!(remote.conn.is_none());
         server.join().unwrap();
+        crate::control_token::revoke(port);
     }
 
     #[test]
@@ -563,13 +653,17 @@ mod tests {
     #[test]
     fn lost_reply_to_a_mutation_is_not_resent() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
         let addr = listener.local_addr().unwrap().to_string();
+        crate::control_token::issue(port).unwrap();
         let server = std::thread::spawn(move || {
             let mut requests = 0;
             listener.set_nonblocking(false).unwrap();
-            let (conn, _) = listener.accept().unwrap();
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(conn.try_clone().unwrap());
+            assert!(answer_hello(&mut reader, &mut conn, port));
             let mut line = String::new();
-            BufReader::new(conn).read_line(&mut line).unwrap();
+            reader.read_line(&mut line).unwrap();
             requests += 1;
             // Anything arriving on a second connection would be a resend.
             listener.set_nonblocking(true).unwrap();
@@ -582,6 +676,7 @@ mod tests {
         let err = remote.call("engine.execute", json!({"command": "circle", "params": {}})).unwrap_err();
         assert!(err.contains("may or may not have been applied"), "{err}");
         assert_eq!(server.join().unwrap(), 1);
+        crate::control_token::revoke(port);
         assert!(remote.token.is_none());
         assert!(remote.conn.is_none());
     }
@@ -591,18 +686,22 @@ mod tests {
     fn timeout_reply_says_whether_a_retry_is_safe() {
         for (state, want) in [("not-run", "safe to send again"), ("may-have-run", "Inspect the drawing first")] {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
             let addr = listener.local_addr().unwrap().to_string();
+            crate::control_token::issue(port).unwrap();
             let server = std::thread::spawn(move || {
-                let (conn, _) = listener.accept().unwrap();
+                let (mut out, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(out.try_clone().unwrap());
+                assert!(answer_hello(&mut reader, &mut out, port));
                 let mut line = String::new();
-                BufReader::new(conn.try_clone().unwrap()).read_line(&mut line).unwrap();
-                let mut out = conn;
+                reader.read_line(&mut line).unwrap();
                 writeln!(out, "{}", json!({"id": 1, "ok": false, "error": "timeout", "state": state})).unwrap();
             });
             let mut remote = Remote::connect(&addr).unwrap();
             let err = remote.call("engine.execute", json!({"command": "circle", "params": {}})).unwrap_err();
             assert!(err.starts_with("timeout") && err.contains(want), "{err}");
             server.join().unwrap();
+            crate::control_token::revoke(port);
         }
     }
     /// Retrying a read after a lost reply reloads the replacement server session token.
@@ -612,17 +711,21 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let old = crate::control_token::issue(addr.port()).unwrap();
         let server = std::thread::spawn(move || {
-            let (conn, _) = listener.accept().unwrap();
+            let (mut conn, _) = listener.accept().unwrap();
             let mut line = String::new();
-            let mut reader = BufReader::new(conn);
+            let mut reader = BufReader::new(conn.try_clone().unwrap());
+            assert!(answer_hello(&mut reader, &mut conn, addr.port()));
             reader.read_line(&mut line).unwrap();
             let first: Value = serde_json::from_str(&line).unwrap();
             assert!(first["token"].as_str() == Some(old.as_str()));
             let fresh = crate::control_token::issue(addr.port()).unwrap();
-            drop(reader);
+            drop((reader, conn));
             let (mut conn, _) = listener.accept().unwrap();
             line.clear();
-            BufReader::new(conn.try_clone().unwrap()).read_line(&mut line).unwrap();
+            let mut reader = BufReader::new(conn.try_clone().unwrap());
+            // The new session proves itself with its new token, which the client reads again.
+            assert!(answer_hello(&mut reader, &mut conn, addr.port()));
+            reader.read_line(&mut line).unwrap();
             let retry: Value = serde_json::from_str(&line).unwrap();
             assert!(retry["token"].as_str() == Some(fresh.as_str()));
             writeln!(conn, "{}", json!({"ok": true, "result": "pong"})).unwrap();
@@ -636,6 +739,7 @@ mod tests {
     /// and the connection number and says what to send back; the server closes after each reply.
     /// Returns how many requests arrived, waiting a short while for each next connection.
     fn fake_app(listener: TcpListener, reply: impl Fn(&Value, usize) -> Value + Send + 'static) -> std::thread::JoinHandle<usize> {
+        let port = listener.local_addr().unwrap().port();
         std::thread::spawn(move || {
             listener.set_nonblocking(true).unwrap();
             let mut seen = 0;
@@ -648,11 +752,13 @@ mod tests {
                         Err(_) => break None,
                     }
                 };
-                let Some(conn) = conn else { return seen };
-                conn.set_nonblocking(false).unwrap();
+                let Some(mut out) = conn else { return seen };
+                out.set_nonblocking(false).unwrap();
+                let mut reader = BufReader::new(out.try_clone().unwrap());
                 let mut line = String::new();
-                BufReader::new(conn.try_clone().unwrap()).read_line(&mut line).unwrap();
-                let mut out = conn;
+                if !answer_hello(&mut reader, &mut out, port) || reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    continue;
+                }
                 writeln!(out, "{}", reply(&serde_json::from_str(&line).unwrap(), seen)).unwrap();
                 seen += 1;
             }
@@ -660,21 +766,84 @@ mod tests {
     }
 
     /// A listener on another loopback address with the desktop's port (here `::1`) never receives
-    /// the desktop's token.
+    /// the desktop's token, nor any request: the client can't check it is the app.
     #[test]
-    fn token_is_not_sent_to_another_loopback_listener() {
+    fn nothing_is_sent_to_another_loopback_listener() {
         let Ok(listener) = TcpListener::bind("[::1]:0") else { return };
         let addr = listener.local_addr().unwrap();
         crate::control_token::issue(addr.port()).unwrap();
-        let server = fake_app(listener, move |req, _| {
-            assert!(req.get("token").is_none(), "token leaked to {addr}");
-            json!({"ok": true, "result": "x"})
+        let server = std::thread::spawn(move || {
+            let (conn, _) = listener.accept().unwrap();
+            let mut got = Vec::new();
+            BufReader::new(conn).read_to_end(&mut got).unwrap();
+            got
         });
         let mut remote = Remote::lazy(&addr.to_string(), false);
         let got = remote.call("ping", json!({}));
+        drop(remote);
         crate::control_token::revoke(addr.port());
-        assert_eq!(got, Ok(json!("x")));
-        assert_eq!(server.join().unwrap(), 1);
+        assert!(got.as_ref().is_err_and(|e| e.contains("nothing was sent")), "{got:?}");
+        assert!(server.join().unwrap().is_empty(), "the listener received bytes");
+    }
+
+    /// A program on the app's port that answers the `hello` without the token's proof (here it
+    /// echoes the nonce back, or another session's proof) gets no request, whatever it replies.
+    #[test]
+    fn a_peer_that_cannot_prove_the_token_gets_no_request() {
+        for forged in ["echo", "other session", "error"] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            crate::control_token::issue(addr.port()).unwrap();
+            let server = std::thread::spawn(move || {
+                let mut lines = Vec::new();
+                listener.set_nonblocking(true).unwrap();
+                let start = Instant::now();
+                while start.elapsed() < Duration::from_millis(500) {
+                    let Ok((mut out, _)) = listener.accept() else {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    };
+                    out.set_nonblocking(false).unwrap();
+                    for line in BufReader::new(out.try_clone().unwrap()).lines() {
+                        let req: Value = serde_json::from_str(&line.unwrap()).unwrap();
+                        let nonce = req["params"]["nonce"].as_str().unwrap_or_default().to_string();
+                        lines.push(req["method"].as_str().unwrap_or_default().to_string());
+                        let reply = match forged {
+                            "echo" => json!({"ok": true, "result": {"proof": nonce}}),
+                            "other session" => json!({"ok": true, "result": {"proof": crate::control_token::server_proof("another", &nonce)}}),
+                            _ => json!({"ok": false, "error": "pretend error"}),
+                        };
+                        let _ = writeln!(out, "{reply}");
+                    }
+                }
+                lines
+            });
+            let mut remote = Remote::lazy(&addr.to_string(), false);
+            let got = remote.call("engine.execute", json!({"command": "circle", "params": {}}));
+            drop(remote);
+            let lines = server.join().unwrap();
+            crate::control_token::revoke(addr.port());
+            assert!(got.is_err(), "{forged}: {got:?}");
+            assert!(lines.iter().all(|m| m == "hello"), "{forged}: {lines:?}");
+        }
+    }
+
+    /// An unauthenticated connection about to reach the app's `MAX_UNAUTHENTICATED_TIME` is
+    /// replaced before a request is written to it, so the request isn't lost when the app closes it.
+    #[test]
+    fn an_unauthenticated_connection_near_the_app_deadline_is_replaced() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        crate::control_token::issue(addr.port()).unwrap();
+        let server = fake_app(listener, |_, n| json!({"ok": true, "result": n}));
+        let mut remote = Remote::connect(&addr.to_string()).unwrap();
+        remote.opened = Some(Instant::now() - crate::control_token::MAX_UNAUTHENTICATED_TIME);
+        let got = remote.call("engine.execute", json!({"command": "circle", "params": {}}));
+        drop(remote);
+        let requests = server.join().unwrap();
+        crate::control_token::revoke(addr.port());
+        // The first connection only saw the `hello`; the request went on the second.
+        assert_eq!((got, requests), (Ok(json!(0)), 1));
     }
 
     /// `--launch` reads the token before it opens the app, so the first request carries the token
@@ -714,7 +883,9 @@ mod tests {
     fn unauthorized_is_resent_at_most_once_and_only_when_not_run() {
         for (state, connections) in [(Some("not-run"), 2), (Some("may-have-run"), 1), (None, 1)] {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
             let addr = listener.local_addr().unwrap().to_string();
+            crate::control_token::issue(port).unwrap();
             let server = fake_app(listener, move |_, _| {
                 let mut r = json!({"ok": false, "error": "unauthorized: missing or invalid control token"});
                 if let (Some(o), Some(state)) = (r.as_object_mut(), state) {
@@ -726,6 +897,7 @@ mod tests {
             let err = remote.call("engine.execute", json!({"command": "circle", "params": {}})).unwrap_err();
             assert!(err.starts_with("unauthorized"), "{err}");
             assert_eq!(server.join().unwrap(), connections, "{state:?}");
+            crate::control_token::revoke(port);
             assert!(remote.token.is_none() && remote.conn.is_none());
         }
     }
@@ -733,20 +905,25 @@ mod tests {
     #[test]
     fn failed_mutation_write_is_not_resent() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
         let addr = listener.local_addr().unwrap().to_string();
-        let mut remote = Remote::connect(&addr).unwrap();
-        remote.conn.as_ref().unwrap().1.shutdown(std::net::Shutdown::Write).unwrap();
+        crate::control_token::issue(port).unwrap();
         let server = std::thread::spawn(move || {
-            let (conn, _) = listener.accept().unwrap();
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(conn.try_clone().unwrap());
+            assert!(answer_hello(&mut reader, &mut conn, port));
             let mut line = String::new();
-            assert_eq!(BufReader::new(conn).read_line(&mut line).unwrap(), 0);
+            assert_eq!(reader.read_line(&mut line).unwrap(), 0);
             listener.set_nonblocking(true).unwrap();
             std::thread::sleep(Duration::from_millis(300));
             listener.accept().is_ok()
         });
+        let mut remote = Remote::connect(&addr).unwrap();
+        remote.conn.as_ref().unwrap().1.shutdown(std::net::Shutdown::Write).unwrap();
         let error = remote.call("engine.execute", json!({"command": "circle", "params": {}})).unwrap_err();
         assert!(error.contains("may or may not have been applied"));
         assert!(!server.join().unwrap(), "a failed mutation write was retried");
+        crate::control_token::revoke(port);
         assert!(remote.token.is_none());
     }
 
@@ -761,6 +938,7 @@ mod tests {
         listener: TcpListener,
         mut valid: impl FnMut(usize) -> Result<String, Value> + Send + 'static,
     ) -> std::thread::JoinHandle<Vec<(usize, String, usize)>> {
+        let port = listener.local_addr().unwrap().port();
         std::thread::spawn(move || {
             listener.set_nonblocking(true).unwrap();
             let mut seen = Vec::new();
@@ -783,6 +961,10 @@ mod tests {
                     let req: Value = serde_json::from_str(&line).unwrap();
                     let len = line.trim_end().len();
                     line.clear();
+                    if let Some(reply) = hello_reply(&req, port) {
+                        writeln!(out, "{reply}").unwrap();
+                        continue;
+                    }
                     seen.push((conn_no, req["method"].as_str().unwrap_or_default().to_string(), len));
                     let reply = if !authed && len > crate::control_token::MAX_UNAUTHENTICATED_LINE {
                         json!({"ok": false, "error": "request line too long before a request with the control token"})

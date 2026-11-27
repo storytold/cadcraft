@@ -19,6 +19,9 @@ serde_json = { workspace = true }
 log = { workspace = true }
 # Secure randomness for the per-session control token (MIT OR Apache-2.0).
 getrandom = "0.4"
+# The control server's proof that it holds the session token (MIT OR Apache-2.0).
+hmac = "0.12"
+sha2 = "0.10"
 
 [dev-dependencies]
 # Reads the pixels of rendered PNGs in the tests.

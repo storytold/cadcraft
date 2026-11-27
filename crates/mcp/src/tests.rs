@@ -261,19 +261,28 @@ fn a_lazy_bridge_starts_without_the_app_and_says_how_to_open_it() {
     let msg = r["result"]["content"][0]["text"].as_str().unwrap();
     assert!(msg.contains("not answering") && msg.contains("--control"), "{msg}");
 
-    // Once the app listens, the next call reaches it.
+    // Once the app listens (and has written its token), the next call reaches it.
     let listener = std::net::TcpListener::bind(&addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let token = crate::control_token::issue(port).unwrap();
     let app = std::thread::spawn(move || {
         use std::io::{BufRead, Write};
         let (sock, _) = listener.accept().unwrap();
+        let mut reader = std::io::BufReader::new(sock.try_clone().unwrap());
         let mut line = String::new();
-        std::io::BufReader::new(sock.try_clone().unwrap()).read_line(&mut line).unwrap();
+        reader.read_line(&mut line).unwrap();
+        let hello = serde_json::from_str::<Value>(&line).unwrap();
+        let proof = crate::control_token::server_proof(&token, hello["params"]["nonce"].as_str().unwrap());
+        writeln!(&sock, "{}", json!({"ok": true, "result": {"proof": proof}})).unwrap();
+        line.clear();
+        reader.read_line(&mut line).unwrap();
         let id = serde_json::from_str::<Value>(&line).unwrap()["id"].clone();
         writeln!(&sock, "{}", json!({"id": id, "ok": true, "result": {"prompt": "Command:"}})).unwrap();
     });
     let r = call(&mut s, 4, "tools/call", json!({"name": "command_line", "arguments": {"text": ""}}));
     assert_ne!(r["result"]["isError"], json!(true), "{r}");
     app.join().unwrap();
+    crate::control_token::revoke(port);
 }
 
 /// The pixels of a `render` tool result.
