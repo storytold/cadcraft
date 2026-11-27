@@ -421,6 +421,91 @@ fn many_distinct_dimension_style_names_read_quickly() {
     assert_eq!(styles.get(2), Some(&(name(1).as_str(), 1.0)));
 }
 
+/// Many distinct view and UCS names read in linear time, with the duplicate rule kept: a later
+/// record of a name in other case replaces the first, which keeps its place and takes the later
+/// record's name (#1924). The names share their first 200 bytes, so comparing two costs about that.
+#[test]
+fn many_distinct_view_and_ucs_names_read_quickly() {
+    const N: usize = 20_000;
+    let name = |kind: char, i: usize| format!("{kind}{}{i:06}", "x".repeat(199));
+    let view = |n: &str, height: u32| format!("0\nVIEW\n2\n{n}\n70\n0\n40\n{height}\n41\n1\n10\n0\n20\n0\n");
+    let ucs = |n: &str, x: usize| format!("0\nUCS\n2\n{n}\n70\n0\n10\n{x}\n20\n0\n30\n0\n11\n1\n21\n0\n31\n0\n12\n0\n22\n1\n32\n0\n");
+    let mut t = String::from("0\nSECTION\n2\nTABLES\n");
+    for i in 0..N {
+        t.push_str(&view(&name('V', i), 1));
+        t.push_str(&ucs(&name('U', i), i));
+    }
+    t.push_str(&view(&name('V', 0).to_ascii_uppercase(), 2));
+    t.push_str(&ucs(&name('U', 0).to_ascii_uppercase(), 7));
+    t.push_str("0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "many.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let views: Vec<(&str, f64)> = d.views.iter().map(|v| (v.name.as_str(), v.height)).collect();
+    assert_eq!(views.len(), N);
+    assert_eq!(views.first(), Some(&(name('V', 0).to_ascii_uppercase().as_str(), 2.0)));
+    assert_eq!(views.get(1), Some(&(name('V', 1).as_str(), 1.0)));
+    let ucss: Vec<(&str, f64)> = d.ucss.iter().map(|u| (u.name.as_str(), u.origin.x)).collect();
+    assert_eq!(ucss.len(), N);
+    assert_eq!(ucss.first(), Some(&(name('U', 0).to_ascii_uppercase().as_str(), 7.0)));
+    assert_eq!(ucss.get(1), Some(&(name('U', 1).as_str(), 1.0)));
+}
+
+/// Layouts that each name one of many UCSs read and save in linear time, and each keeps the name of
+/// its UCS (#1924). The names share their first 200 bytes, so comparing two costs about that.
+#[test]
+fn many_layouts_naming_many_ucss_read_and_save_quickly() {
+    const N: usize = 10_000;
+    let name = |kind: char, i: usize| format!("{kind}{}{i:06}", "x".repeat(199));
+    let mut t = String::from("0\nSECTION\n2\nTABLES\n");
+    for i in 0..N {
+        let u = name('U', i);
+        t.push_str(&format!("0\nUCS\n5\n{:X}\n2\n{u}\n70\n0\n10\n{i}\n20\n0\n30\n0\n11\n1\n21\n0\n31\n0\n12\n0\n22\n1\n32\n0\n", 0x10000 + i));
+    }
+    t.push_str("0\nENDSEC\n0\nSECTION\n2\nOBJECTS\n");
+    for i in 0..N {
+        let l = name('L', i);
+        t.push_str(&format!(
+            "0\nLAYOUT\n5\n{:X}\n100\nAcDbPlotSettings\n100\nAcDbLayout\n1\n{l}\n71\n{}\n13\n{i}\n23\n0\n33\n0\n16\n1\n26\n0\n36\n0\n17\n0\n27\n1\n37\n0\n330\n0\n345\n{:X}\n",
+            0x1000 + i,
+            i + 1,
+            0x10000 + i
+        ));
+    }
+    t.push_str("0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "ucss.dxf").unwrap();
+    let saved = write_dxf(&d);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let named = d.layouts.iter().filter(|l| l.ucs.as_ref().is_some_and(|u| u.name == name('U', l.tab_order as usize - 1))).count();
+    assert_eq!(named, N);
+    let again = read_dxf(saved.as_bytes()).unwrap();
+    assert_eq!(again.layouts.iter().filter(|l| l.ucs.as_ref().is_some_and(|u| !u.name.is_empty())).count(), N);
+}
+
+/// A layout's named UCS is the first UCS of that name, without case, whose frame is the layout's:
+/// what scanning the UCSs finds, also when a name's first UCS has another frame.
+#[test]
+fn a_layouts_named_ucs_is_the_first_of_its_name_with_its_frame() {
+    use cadcraft_geom::Vec3;
+    let ucs = |name: &str, x: f64| Ucs {
+        name: name.into(),
+        origin: Vec3::new(x, 0.0, 0.0),
+        x_axis: Vec3::new(1.0, 0.0, 0.0),
+        y_axis: Vec3::new(0.0, 1.0, 0.0),
+    };
+    let ucss = [ucs("Front", 0.0), ucs("FRONT", 1.0), ucs("front", 1.0), ucs("Side", 2.0), ucs("", 3.0), ucs(" Pad", 4.0)];
+    let names = crate::dxf_ext::UcsNames::new(&ucss);
+    let (x, y) = (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
+    for name in ["Front", "front", "FRONT", " front ", "Side", "side", "", "  ", "Pad", " Pad", "Back"] {
+        for origin in [0.0, 1.0, 2.0, 3.0, 4.0, 5.0].map(|o| Vec3::new(o, 0.0, 0.0)) {
+            let want = crate::dxf_ext::named_ucs(&ucss, name, origin, x, y).map(std::ptr::from_ref);
+            assert_eq!(names.named(name, origin, x, y).map(std::ptr::from_ref), want, "{name:?} {origin:?}");
+        }
+    }
+    assert_eq!(names.named("front", Vec3::new(1.0, 0.0, 0.0), x, y).map(|u| u.name.as_str()), Some("FRONT"));
+}
+
 /// Many layouts with every paper-space object in one of the last of them read in linear time.
 /// Each object goes to the first layout of its exact name, as before: not to an earlier one whose
 /// name differs only in case, nor to a later one of the same name (#1924).

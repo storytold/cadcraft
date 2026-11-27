@@ -114,11 +114,10 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     // The same for linetypes (first definition wins) and text styles (last definition wins).
     let mut linetype_names: std::collections::HashSet<String> = d.linetypes.iter().map(|l| l.name.to_ascii_lowercase()).collect();
     let mut style_index: HashMap<String, usize> = d.text_styles.iter().enumerate().map(|(i, s)| (s.name.to_ascii_lowercase(), i)).collect();
-    // And for dimension styles (a later record replaces the first of its name, which keeps its
-    // place); ordered by name rather than hashed, so its cost does not depend on hash keys. Built
-    // in reverse, so the first style of a name is the one kept.
-    let mut dim_style_index: std::collections::BTreeMap<String, usize> =
-        d.dim_styles.iter().enumerate().rev().map(|(i, s)| (s.name.to_ascii_lowercase(), i)).collect();
+    // And for dimension styles, views and UCSs (a later record replaces the first of its name).
+    let mut dim_style_names = ByName::new(&d.dim_styles, |s| &s.name);
+    let mut view_names = ByName::new(&d.views, |v| &v.name);
+    let mut ucs_names = ByName::new(&d.ucss, |u| &u.name);
     for (kind, tg) in recs {
         let t = T(tg);
         match kind.as_str() {
@@ -245,10 +244,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 // 70 bit 1: a paper space view; its layout is CADCraft xdata.
                 let layout = (t.i(70).unwrap_or(0) & 1 != 0).then(|| field("LAYOUT").unwrap_or_default());
                 let v = NamedView { name: name.clone(), center, height: h, width: w, layer_state: field("LAYERSTATE"), twist, layout };
-                match d.views.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)) {
-                    Some(x) => *x = v,
-                    None => d.views.push(v),
-                }
+                view_names.put(&mut d.views, &name, v);
             }
             "UCS" => {
                 let name = t.s(2).unwrap_or_default();
@@ -258,10 +254,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                     continue;
                 }
                 let u = Ucs { name: name.clone(), origin, x_axis, y_axis };
-                match d.ucss.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)) {
-                    Some(x) => *x = u,
-                    None => d.ucss.push(u),
-                }
+                ucs_names.put(&mut d.ucss, &name, u);
             }
             "DIMSTYLE" => {
                 let name = t.s(2).unwrap_or_default();
@@ -285,13 +278,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 fields.extend(crate::dxf_ext::read_newer_dimvars(tg, &rx.styles, &rx.brs, &rx.ltypes));
                 let mut st = DimStyle { name: name.clone(), annotative: annotative(tg), ..DimStyle::default() };
                 st.apply_fields(&fields);
-                match dim_style_index.get(&name.to_ascii_lowercase()).and_then(|&i| d.dim_styles.get_mut(i)) {
-                    Some(x) => *x = st,
-                    None => {
-                        dim_style_index.insert(name.to_ascii_lowercase(), d.dim_styles.len());
-                        d.dim_styles.push(st);
-                    }
-                }
+                dim_style_names.put(&mut d.dim_styles, &name, st);
             }
             "VPORT" => vport_record(d, &t, false),
             _ => {}
@@ -301,6 +288,32 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     // view was kept in the HEADER pair as it was read (see `vport_record`), and the record stays
     // only for its view twist (see `cadcraft_engine::DocState`).
     d.vports.retain(|c| c.tiles.len() > usize::from(c.is_active()) || c.tiles.first().is_some_and(|t| t.twist != 0.0));
+}
+
+/// The records of one table read so far, by name with its ASCII letters lower-cased. A later
+/// record of a name replaces the first, which keeps its place and takes the later record's name.
+/// Each record is then a map lookup, not a scan of the records before it: a file of N records cost
+/// N² name comparisons (#1924). Ordered by name rather than hashed, so its cost does not depend on
+/// hash keys.
+struct ByName(std::collections::BTreeMap<String, usize>);
+
+impl ByName {
+    /// The entries the table starts with; the first of a name is the one kept.
+    fn new<T>(list: &[T], name: impl Fn(&T) -> &str) -> Self {
+        ByName(list.iter().enumerate().rev().map(|(i, t)| (name(t).to_ascii_lowercase(), i)).collect())
+    }
+
+    /// Put `item`, named `name`, in place of the first entry of that name, else at the end.
+    fn put<T>(&mut self, list: &mut Vec<T>, name: &str, item: T) {
+        let key = name.to_ascii_lowercase();
+        match self.0.get(&key).and_then(|&i| list.get_mut(i)) {
+            Some(x) => *x = item,
+            None => {
+                self.0.insert(key, list.len());
+                list.push(item);
+            }
+        }
+    }
 }
 
 fn index_table_handles(recs: &[(String, &[Tag])], rx: &mut Rx) {
