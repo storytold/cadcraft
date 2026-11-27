@@ -692,6 +692,33 @@ fn setvar_at_command_line() {
     assert!(s.running.is_none());
 }
 
+/// #3273: GETVAR at the command line asks for a name and echoes its value, without changing it;
+/// it said only that `name` was required.
+#[test]
+fn getvar_at_command_line() {
+    let mut s = Session::new();
+    let dimscale = sysvars::get(&s, "DIMSCALE").unwrap();
+    // One line, as typed in the issue.
+    s.cmdline("GETVAR DIMSCALE").unwrap();
+    assert!(s.running.is_none());
+    assert!(s.log.last().is_some_and(|l| l.starts_with("DIMSCALE = ")), "{:?}", s.log.last());
+    assert_eq!(sysvars::get(&s, "DIMSCALE").unwrap(), dimscale, "reading changes nothing");
+    // Step by step, in any case.
+    s.cmdline("getvar").unwrap();
+    assert!(s.running.is_some());
+    s.cmdline("lunits").unwrap();
+    assert!(s.running.is_none());
+    assert!(s.log.last().is_some_and(|l| l.starts_with("LUNITS = ")), "{:?}", s.log.last());
+    // An unknown name says so, and Enter ends it.
+    s.cmdline("GETVAR NOSUCHVAR").unwrap();
+    assert_eq!(s.log.last().map(String::as_str), Some("Unknown variable NOSUCHVAR. Type SETVAR ? to list variables."));
+    s.cmdline("getvar").unwrap();
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none());
+    // The command an agent runs is unchanged.
+    assert_eq!(s.execute("getvar", &json!({"name": "dimscale"})).unwrap(), json!({"name": "DIMSCALE", "value": dimscale}));
+}
+
 #[test]
 fn setvar_keeps_header_types() {
     let mut s = Session::new();

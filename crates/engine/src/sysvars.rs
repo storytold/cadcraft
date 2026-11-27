@@ -165,7 +165,10 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "SAVETIME" => json!(crate::autosave::savetime()),
         "SAVEFILEPATH" => json!(crate::autosave::savefilepath()),
         "ISAVEBAK" => json!(i32::from(crate::autosave::isavebak())),
-        "CMDNAMES" => json!(s.running.as_ref().map(|r| r.id.to_ascii_uppercase()).unwrap_or_default()),
+        // The command a transparent one runs inside comes first, as AutoCAD gives it ("LINE'ZOOM").
+        // While a transparent command reads its input it isn't `running`, but the outer command
+        // is still suspended, and still active.
+        "CMDNAMES" => json!([&s.suspended, &s.running].into_iter().flatten().map(|r| r.id.to_ascii_uppercase()).collect::<Vec<_>>().join("'")),
         "DWGNAME" => json!(s.state().map(|d| d.title.clone()).unwrap_or_default()),
         "DBMOD" => json!(s.state().map(|d| i32::from(d.is_dirty())).unwrap_or(0)),
         // The next handle the drawing gives out, in hex as `$HANDSEED` (the header keeps the
@@ -175,7 +178,8 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         // The drawing's folder with a trailing separator ("" while it has no file); DWGTITLED is 1 once it has one.
         "DWGPREFIX" => json!(s.state().ok().and_then(|d| d.path.as_deref()).map(dwg_prefix).unwrap_or_default()),
         "DWGTITLED" => json!(s.state().map(|d| i32::from(d.path.is_some())).unwrap_or(0)),
-        "CMDACTIVE" => json!(i32::from(s.running.is_some())),
+        // 1: a command is active; 2: a transparent one, inside it.
+        "CMDACTIVE" => json!(i32::from(s.running.is_some() || s.suspended.is_some()) + 2 * i32::from(s.suspended.is_some())),
         "TILEMODE" => json!(i32::from(s.state().is_ok_and(|d| d.space.layout().is_none()))),
         "PLATFORM" => json!(std::env::consts::OS),
         "BLOCKEDITOR" => json!(i32::from(s.state().is_ok_and(|d| d.block_edit.is_some()))),
