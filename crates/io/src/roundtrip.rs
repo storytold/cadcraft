@@ -287,8 +287,19 @@ impl<'o> Out<'o> {
 
 /// Header variables that change on every save (time stamps, the handle seed, GUIDs): not
 /// compared.
-pub const VOLATILE_HEADER: &[&str] =
-    &["HANDSEED", "TDCREATE", "TDUCREATE", "TDUPDATE", "TDUUPDATE", "TDINDWG", "TDUSRTIMER", "VERSIONGUID", "FINGERPRINTGUID"];
+/// `CADCRAFT_DIMASO_MODE` is the engine's memory of the mode DIMASO turned off; no file keeps it.
+pub const VOLATILE_HEADER: &[&str] = &[
+    "HANDSEED",
+    "TDCREATE",
+    "TDUCREATE",
+    "TDUPDATE",
+    "TDUUPDATE",
+    "TDINDWG",
+    "TDUSRTIMER",
+    "VERSIONGUID",
+    "FINGERPRINTGUID",
+    "CADCRAFT_DIMASO_MODE",
+];
 
 /// Compare `before` (the drawing as first opened) with `after` (the same drawing saved and
 /// reopened). Differences are reported as what `after` lost, gained or changed.

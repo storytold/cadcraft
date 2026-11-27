@@ -76,10 +76,39 @@ const SESSION_VARS: &[&str] = &[
     "SAVETIME",
     "SAVEFILEPATH",
     "ISAVEBAK",
+    "DIMASO",
+    "TEXTEVAL",
+    "POPUPS",
 ];
 
-pub fn get(s: &Session, name: &str) -> Option<Value> {
+/// The names this session also answers with DXF's `$` in front: the header writes them that way
+/// (`$DIMASO`, `$TEXTEVAL`, `$REGENMODE`, `$POPUPS`), so a routine may type either form.
+/// The DIMASSOC mode DIMASO turned off, kept in the drawing's header so undo restores it.
+/// `CADCRAFT_` names are not listed by SYSVARS and no file writes this one.
+const DIMASO_MODE: &str = "CADCRAFT_DIMASO_MODE";
+
+/// The header key above, under any number of `$`: no variable of that name exists.
+fn is_internal(n: &str) -> bool {
+    n.trim_start_matches('$') == DIMASO_MODE
+}
+
+const DOLLAR_VARS: &[&str] = &["DIMASO", "TEXTEVAL", "REGENMODE", "POPUPS"];
+
+/// `name` trimmed and upper case, without the `$` those names take. Every other name keeps the
+/// `$` it was typed with: `$ANGBASE` stays a name of its own (LISP converts radians only for the
+/// plain name) and `$OSMODE` is not the session's OSMODE.
+fn bare_name(name: &str) -> String {
     let n = name.trim().to_ascii_uppercase();
+    // Every leading `$`, as the header drops them all when it stores a value.
+    let rest = n.trim_start_matches('$');
+    if rest.len() < n.len() && DOLLAR_VARS.contains(&rest) { rest.to_string() } else { n }
+}
+
+pub fn get(s: &Session, name: &str) -> Option<Value> {
+    let n = bare_name(name);
+    if is_internal(&n) {
+        return None;
+    }
     let st = &s.settings;
     let v = match n.as_str() {
         "OSMODE" => json!(st.osmode),
@@ -165,6 +194,12 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "SAVETIME" => json!(crate::autosave::savetime()),
         "SAVEFILEPATH" => json!(crate::autosave::savefilepath()),
         "ISAVEBAK" => json!(i32::from(crate::autosave::isavebak())),
+        // DIMASO is obsolete in AutoCAD and has no value of its own: it reports DIMASSOC.
+        "DIMASO" => json!(i32::from(dimassoc(s)? != 0)),
+        // Whether a prompt reads typed text as LISP (routines switch it around their prompts).
+        "TEXTEVAL" => json!(i32::from(st.texteval)),
+        // Dialogs are available (read-only; a batch session is still told 1, as AutoCAD does).
+        "POPUPS" => json!(1),
         "CMDNAMES" => json!(s.running.as_ref().map(|r| r.id.to_ascii_uppercase()).unwrap_or_default()),
         "DWGNAME" => json!(s.state().map(|d| d.title.clone()).unwrap_or_default()),
         "DBMOD" => json!(s.state().map(|d| i32::from(d.is_dirty())).unwrap_or(0)),
@@ -245,6 +280,11 @@ fn dwg_prefix(path: &str) -> String {
     }
 }
 
+/// DIMASSOC's value (0 off, 1 or 2 associative), read where DIMASO reports it from.
+fn dimassoc(s: &Session) -> Option<i64> {
+    table::get(s, "DIMASSOC")?.as_i64()
+}
+
 fn as_bool(v: &Value) -> Option<bool> {
     v.as_bool().or_else(|| v.as_i64().map(|i| i != 0)).or_else(|| v.as_str().and_then(|s| s.trim().parse::<i64>().ok()).map(|i| i != 0))
 }
@@ -292,10 +332,13 @@ const READ_ONLY: &[&str] = &[
     "UCSXDIR",
     "UCSYDIR",
     "WORLDUCS",
+    // Dialogs: a session always has them, so the variable is fixed (not saved).
+    "POPUPS",
 ];
 
 pub fn is_read_only(name: &str) -> bool {
-    READ_ONLY.iter().any(|r| r.eq_ignore_ascii_case(name.trim())) || table::is_read_only(&name.trim().to_ascii_uppercase())
+    let n = bare_name(name);
+    READ_ONLY.iter().any(|r| r.eq_ignore_ascii_case(&n)) || table::is_read_only(&n)
 }
 
 /// POLARADDANG as typed: up to ten angles in degrees separated by `;` (radians out); `None` when
@@ -313,7 +356,10 @@ pub fn format_angle_list(angles: &[f64]) -> String {
 
 /// Set a system variable, refusing values out of its range and folders the automation roots can't hold.
 pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
-    let n = name.trim().to_ascii_uppercase();
+    let n = bare_name(name);
+    if is_internal(&n) {
+        return Err(EngineError::BadParams { cmd: "setvar".into(), msg: format!("unknown variable `{n}`") });
+    }
     if is_read_only(&n) {
         return Err(EngineError::BadParams { cmd: "setvar".into(), msg: format!("{n} is read-only") });
     }
@@ -415,6 +461,35 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         }
         "SAVEFILEPATH" => crate::autosave::set_savefilepath(v.as_str().ok_or_else(bad)?),
         "ISAVEBAK" => crate::autosave::set_isavebak(as_bool(v).ok_or_else(bad)?),
+        // DIMASO has no value of its own: 0 turns DIMASSOC off (remembering the mode it had),
+        // 1 restores that mode (2 when none was seen), and 1 while it is on changes nothing. The
+        // mode it remembers is in the drawing's header ([`DIMASO_MODE`]), so each open drawing
+        // keeps its own and undo restores it with DIMASSOC; no file writes it.
+        "DIMASO" => {
+            let on = as_i(v).filter(|i| matches!(i, 0 | 1)).ok_or_else(bad)? == 1;
+            let mode = dimassoc(s).ok_or_else(bad)?;
+            // The drawing is touched only when DIMASSOC changes, so it is not marked modified
+            // and no undo step is left for a value it already has.
+            match (on, mode) {
+                // Turned back on after DIMASO turned it off: the mode it had.
+                (true, 0) => {
+                    let h = &mut s.doc_mut()?.header;
+                    // Only a mode DIMASSOC takes: a file's value of anything else restores 2.
+                    let restore = h.i64(DIMASO_MODE, 2);
+                    h.set_i64("DIMASSOC", if matches!(restore, 1 | 2) { restore } else { 2 });
+                }
+                (true, _) | (false, 0) => {}
+                (false, _) => {
+                    let h = &mut s.doc_mut()?.header;
+                    if matches!(mode, 1 | 2) {
+                        h.set_i64(DIMASO_MODE, mode);
+                    }
+                    h.set_i64("DIMASSOC", 0);
+                }
+            }
+        }
+        // Stored for routines that switch it around their prompts; no prompt reads it yet.
+        "TEXTEVAL" => st.texteval = small(v, 1).ok_or_else(bad)? == 1,
         // A number is in degrees; text is an angle typed in AUNITS (SETVAR at the command line).
         "ANGBASE" => {
             let a = match v {

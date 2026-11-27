@@ -143,6 +143,9 @@ pub struct Settings {
     /// ATTDIA: INSERT typed or from a menu asks for attribute values in the Edit Attributes
     /// dialog; on by default, as in AutoCAD (Initial value 1).
     pub attdia: bool,
+    /// TEXTEVAL: 1 lets a routine's input be read as LISP where it would be text (default: 0).
+    /// Kept for routines that switch it around their prompts; no prompt reads it yet.
+    pub texteval: bool,
 }
 
 impl Default for Settings {
@@ -212,6 +215,7 @@ impl Default for Settings {
             auditctl: false,
             attreq: true,
             attdia: true,
+            texteval: false,
         }
     }
 }

@@ -71,6 +71,8 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("PLINEWID", Kind::Real { min: 0.0, strict: false }, Def::Real(0.0)),
     ("POLYSIDES", Kind::Int(3, 1024), Def::Int(4)),
     ("PROJMODE", Kind::Choice(&[0, 1, 2]), Def::Int(1)),
+    // 1 regenerates the drawing after a command that changes it (stored, nothing reads it yet).
+    ("REGENMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
     ("REVCLOUDARCLEN", Kind::Real { min: 0.0, strict: true }, Def::Units(0.5, 15.0)),
     ("SPLINESEGS", Kind::Int(-32768, 32767), Def::Int(8)),
     ("SPLKNOTS", Kind::Choice(&[0, 1, 2]), Def::Int(0)),
