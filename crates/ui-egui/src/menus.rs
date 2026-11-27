@@ -1362,8 +1362,9 @@ mod clipboard_order_tests {
             &mut app,
             vec![
                 egui::Event::Copy,
-                egui::Event::Copy,
                 egui::Event::Paste("A\tB\n1\t2".into()),
+                // If Copy deduplication failed, this trailing Copy would cancel `pastetable`.
+                egui::Event::Copy,
                 egui::Event::Key { key: egui::Key::V, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND },
             ],
         );
