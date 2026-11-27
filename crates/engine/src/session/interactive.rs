@@ -1,13 +1,100 @@
+use crate::DisplayOnly;
+
 use super::{
-    Arc, Bounds2, Drag, Drawing, EngineError, Entity, Handle, Input, PendingWindow, Prompt, Result, Running, Session, Snapshot, Step, Value, Vec2,
-    Vec3, assoc, cmd, find_command, guard, pointmod, select, snap, sysvars,
+    Arc, Bounds2, Drag, Drawing, EngineError, Entity, Handle, Input, Origin, PendingWindow, Prompt, Result, Running, Session, Snapshot, Step, Value,
+    Vec2, Vec3, assoc, cmd, find_command, guard, pointmod, select, snap, sysvars,
 };
 
 impl Session {
     // ---------------- interactive commands ----------------
 
-    /// Start a command by name or alias as if typed at the command line.
+    /// Whether `name`, as typed, is a command, an alias or a LISP command: the lookups
+    /// [`Session::start`] dispatches by, so only ASCII is lower-cased and a Greek alias stays as stored.
+    fn names_a_command(&self, name: &str) -> bool {
+        let lower = name.trim_start_matches(['_', '.', '-']).to_ascii_lowercase();
+        let dashed = name.trim_start_matches(['_', '.']);
+        find_command(&cmd::resolve_alias(dashed)).is_some()
+            || find_command(&cmd::resolve_alias(&lower)).is_some()
+            || self.lisp_command(&lower).is_some()
+    }
+
+    /// The alias or LISP command that is the Greek word `name` in another case or accent (λινε for
+    /// c:ΛΙΝΕ): those lookups fold ASCII only.
+    fn greek_command_name(&self, name: &str) -> Option<String> {
+        let bare = name.trim_start_matches(['_', '.', '-']);
+        let same = crate::keyboard::same_greek_word_as(bare)?;
+        let lisp = || self.lisp_commands().into_iter().find(|c| same(c) && self.lisp_command(c).is_some());
+        cmd::file::greek_alias(bare).or_else(lisp)
+    }
+
+    /// Whether the Greek word `name` is a command of its own, which [`Session::start`] runs instead
+    /// of the Latin name its keys type.
+    pub fn greek_word_is_a_command(&self, name: &str) -> bool {
+        self.names_a_command(name) || self.greek_command_name(name).is_some()
+    }
+
+    /// The existing block that is the Greek word `word`: as spelled, else in another case or accent
+    /// (μ for Μ).
+    pub(super) fn greek_block_name(&self, word: &str) -> Option<String> {
+        let same = crate::keyboard::same_greek_word_as(word)?;
+        let blocks = &self.doc().ok()?.blocks;
+        blocks.keys().find(|k| *k == word).or_else(|| blocks.keys().find(|k| same(k))).cloned()
+    }
+
+    /// Launch a non-nested interactive state machine through the standard command-start checks
+    /// (`enabled`, `refused_in_editor`, `commands_started`, `last_command`, `Guarded`, `feed`).
+    pub(crate) fn launch_interactive(
+        &mut self,
+        id: &str,
+        enabled: fn(&Session) -> std::result::Result<(), String>,
+        machine: Box<dyn crate::Interactive>,
+    ) -> Result<()> {
+        self.last_polar = None;
+        self.pick_hint = None;
+        if self.running.is_some() {
+            self.cancel();
+        }
+        self.commands_started = self.commands_started.wrapping_add(1);
+        self.command_origin = if self.in_script || self.program_input { Origin::Program } else { Origin::Person };
+        enabled(self).map_err(|m| EngineError::Disabled(id.into(), m))?;
+        if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, id) {
+            return Err(EngineError::Disabled(id.into(), why));
+        }
+        self.last_command = Some(id.to_string());
+        self.echo(format!("Command: {}", id.to_ascii_uppercase()));
+        let guarded = guard::Guarded::wrap(machine);
+        let st = self.state()?;
+        let (before, selection_before) = (st.doc.clone(), st.selection.clone());
+        self.running = Some(Running { id: id.to_string(), machine: guarded, before, selection_before });
+        self.pending_window = None;
+        self.point_mods.clear();
+        self.feed(None)?;
+        Ok(())
+    }
+
+    /// Who started the command running now ([`Origin`]): fixed when it started, so a scripted or
+    /// LISP-started command keeps its origin while it prompts.
+    pub fn command_origin(&self) -> Origin {
+        self.command_origin
+    }
+
+    /// Start a command by name or alias as if typed at the command line. A script's commands are
+    /// the program's ([`Origin::Program`]), as those of [`Session::start_programmatic`] are, and so
+    /// is a command started by a token a LISP routine feeds through [`Session::typed`]: `(command
+    /// "LINE" "0,0" "'-INSERT" …)` replaces LINE with an INSERT the routine started.
     pub fn start(&mut self, name: &str) -> Result<()> {
+        let origin = if self.in_script || self.program_input { Origin::Program } else { Origin::Person };
+        self.start_from(name, origin)
+    }
+
+    /// Start a command as a program does: an AutoLISP `(command …)` cannot answer a dialog, so
+    /// none opens for what it starts, even after the routine ends.
+    pub fn start_programmatic(&mut self, name: &str) -> Result<()> {
+        self.start_from(name, Origin::Program)
+    }
+
+    /// [`Session::start`] with the command's origin recorded for its whole life.
+    fn start_from(&mut self, name: &str, origin: Origin) -> Result<()> {
         self.last_polar = None;
         self.pick_hint = None;
         let name = name.trim();
@@ -15,6 +102,12 @@ impl Session {
             Some(n) => (true, n),
             None => (false, name),
         };
+        // A name typed with the Greek keyboard layout active (ΛΙΝΕ for LINE) is the Latin name's keys,
+        // unless it is a command, alias or LISP function of its own, in any case or accent.
+        let typed = name;
+        let latin =
+            crate::keyboard::latin_keys(name).filter(|_| !self.names_a_command(name)).map(|latin| self.greek_command_name(name).unwrap_or(latin));
+        let name = latin.as_deref().unwrap_or(name);
         let lower = name.trim_start_matches(['_', '.', '-']).to_ascii_lowercase();
         // A command-line form with an id of its own (-ATTEDIT) is not the command it prefixes.
         let dashed = cmd::resolve_alias(&name.trim_start_matches(['_', '.']).to_ascii_lowercase());
@@ -22,6 +115,7 @@ impl Session {
         let Some(spec) = find_command(&id) else {
             // A command defined in LISP: (defun c:NAME …).
             if !transparent && let Some(f) = self.lisp_command(&lower) {
+                self.commands_started = self.commands_started.wrapping_add(1);
                 if self.running.is_some() {
                     self.cancel();
                 }
@@ -32,11 +126,14 @@ impl Session {
             // A bare system variable name (ORTHOMODE, GRIDMODE…) acts as SETVAR on that variable.
             let var = lower.to_ascii_uppercase();
             if !name.starts_with(['_', '.', '-']) && sysvars::get(self, &var).is_some() {
-                self.start(if transparent { "'setvar" } else { "setvar" })?;
+                self.start_from(if transparent { "'setvar" } else { "setvar" }, origin)?;
                 return self.input(Input::Text(var));
             }
-            return Err(EngineError::UnknownCommand(name.to_string()));
+            return Err(EngineError::UnknownCommand(typed.to_string()));
         };
+        if let Some(why) = crate::file_access::commands::refusal(spec.id) {
+            return Err(EngineError::Disabled(spec.id.into(), why));
+        }
         if transparent && spec.transparent && self.running.is_some() {
             // Transparent commands (zoom, pan…) run without cancelling the active one.
             if spec.interactive.is_none() {
@@ -55,8 +152,16 @@ impl Session {
             self.echo(format!("Command: {}", spec.id.to_ascii_uppercase()));
             return self.input(Input::Keyword("Undo".into()));
         }
-        if !nested && self.running.is_some() {
-            self.cancel();
+        if !nested {
+            // The command this one replaces is cancelled first: its cancellation can run a paused
+            // LISP routine's `*error*` handler, and a handler that starts a command records that
+            // command's Program origin. Origin and number go in after it, so they describe this
+            // start and the factory below still sees the origin this command was started with.
+            if self.running.is_some() {
+                self.cancel();
+            }
+            self.commands_started = self.commands_started.wrapping_add(1);
+            self.command_origin = origin;
         }
         (spec.enabled)(self).map_err(|m| EngineError::Disabled(spec.id.into(), m))?;
         if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, spec.id) {
@@ -154,6 +259,7 @@ impl Session {
     /// command (as in AutoCAD) and points do nothing. A LISP routine waiting in a `get…`
     /// function takes the input instead; one paused in `command` carries on after it.
     pub fn input(&mut self, input: Input) -> Result<()> {
+        self.inputs = self.inputs.wrapping_add(1);
         if self.lisp_input(input.clone()) {
             return Ok(());
         }
@@ -213,17 +319,33 @@ impl Session {
             Input::Text(t) => Input::Text(t.trim().strip_prefix('_').map(str::to_string).unwrap_or(t)),
             other => other,
         };
-        if let Input::Text(t) | Input::Keyword(t) = &input
-            && let Some(m) = select::SelectMode::from_keyword(t)
+        // A selection word typed with the Greek keyboard layout active (ΑΛΛ for ALL) is looked up as its
+        // Latin keys. Only the lookup is: text that is no selection word (a block name at BEDIT's prompt,
+        // which also takes a selection) reaches the command as typed. The name of an existing block at
+        // a prompt that takes a name reaches it as stored, in whatever case it was typed: a block
+        // called Μ is that block there, not Multiple.
+        let block = match &input {
+            Input::Text(t) if prompt.accept.text => self.greek_block_name(t.trim()),
+            _ => None,
+        };
+        let is_block = block.is_some();
+        let input = block.map_or(input, Input::Text);
+        let word = match &input {
+            Input::Text(t) => Some(crate::keyboard::latin_keys(t.trim()).filter(|_| !is_block).unwrap_or_else(|| t.clone())),
+            Input::Keyword(k) => Some(k.clone()),
+            _ => None,
+        };
+        if let Some(w) = &word
+            && let Some(m) = select::SelectMode::from_keyword(w)
         {
             self.pending_window = None;
             self.select_mode = Some(m);
             return Ok(None);
         }
-        if let Input::Text(t) | Input::Keyword(t) = &input
-            && !prompt.keywords.iter().any(|k| k.eq_ignore_ascii_case(t.trim()))
+        if let Some(w) = &word
+            && !prompt.keywords.iter().any(|k| k.eq_ignore_ascii_case(w.trim()))
         {
-            match t.trim().to_ascii_lowercase().as_str() {
+            match w.trim().to_ascii_lowercase().as_str() {
                 "si" | "single" => {
                     self.select_single = true;
                     return Ok(None);
@@ -239,11 +361,11 @@ impl Session {
             Input::Point(p) => {
                 let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
                 if let Some(pw) = self.pending_window.take() {
-                    let crossing = p.x < pw.corner.x;
-                    let hs = select::select_window(self.doc()?, &space, Bounds2::new(pw.corner, p), crossing);
+                    let crossing = self.window_is_crossing(pw.corner, p);
+                    let hs = select::select_window_in(self.doc()?, &space, self.viewport_frozen(), Bounds2::new(pw.corner, p), crossing);
                     return Ok(Some(Input::Pick(cmd::groups::expand(self, hs))));
                 }
-                match select::pick(self.doc()?, &space, p, ap) {
+                match select::pick_in(self.doc()?, &space, self.viewport_frozen(), p, ap) {
                     Some(h) => Ok(Some(Input::Pick(cmd::groups::expand(self, vec![h])))),
                     None => {
                         self.pending_window = Some(PendingWindow { corner: p, during_command: true });
@@ -251,14 +373,18 @@ impl Session {
                     }
                 }
             }
-            Input::Text(ref t) | Input::Keyword(ref t) => {
-                let tl = t.trim().to_ascii_lowercase();
+            Input::Text(_) | Input::Keyword(_) => {
+                let tl = word.as_deref().unwrap_or_default().trim().to_ascii_lowercase();
                 let d = self.doc()?;
                 let store = d.space(&space);
+                let frozen = self.viewport_frozen();
                 let picked = match tl.as_str() {
-                    "all" => store.map(|s| s.iter().filter(|e| d.is_visible(e)).map(|e| e.handle).collect()),
-                    "l" | "last" => store.and_then(|s| s.last()).map(|e| vec![e.handle]),
-                    "p" | "previous" => Some(self.state()?.previous_selection.clone()),
+                    "all" => store.map(|s| s.iter().filter(|e| select::selectable(d, e, frozen)).map(|e| e.handle).collect()),
+                    "l" | "last" => store.and_then(|s| select::last_in(s, frozen)).map(|h| vec![h]),
+                    "p" | "previous" => {
+                        let st = self.state()?;
+                        Some(st.drawn_in_viewport(&st.previous_selection))
+                    }
                     _ => None,
                 };
                 match picked {
@@ -279,8 +405,9 @@ impl Session {
     fn select_mode_input(&mut self, input: Input) -> Result<Option<Input>> {
         let Some(mut mode) = self.select_mode.take() else { return Ok(Some(input)) };
         if mode.kind == select::SelectKind::Group {
+            let space = self.space();
             return match input {
-                Input::Text(name) | Input::Keyword(name) => match select::select_group(self.doc()?, &self.space(), &name) {
+                Input::Text(name) | Input::Keyword(name) => match select::select_group_in(self.doc()?, &space, self.viewport_frozen(), &name) {
                     Some(hs) => Ok(Some(Input::Pick(hs))),
                     None => {
                         self.echo(format!("No group named \"{}\".", name.trim()));
@@ -300,14 +427,14 @@ impl Session {
         match input {
             Input::Point(p) => {
                 if mode.push(p) {
-                    return Ok(mode.select(self.doc()?, &self.space()).map(Input::Pick));
+                    return Ok(mode.select_in(self.doc()?, &self.space(), self.viewport_frozen()).map(Input::Pick));
                 }
             }
             Input::Keyword(k) if k == "Undo" => {
                 mode.pts.pop();
             }
             // Enter ends a fence or polygon; with too few points the mode is dropped.
-            Input::Enter => return Ok(mode.select(self.doc()?, &self.space()).map(Input::Pick)),
+            Input::Enter => return Ok(mode.select_in(self.doc()?, &self.space(), self.viewport_frozen()).map(Input::Pick)),
             Input::Cancel | Input::Pick(_) => return Ok(Some(input)),
             _ => self.echo("Invalid point."),
         }
@@ -319,7 +446,10 @@ impl Session {
         let base = if matches!(input, Some(Input::Point(_))) { self.current_prompt().and_then(|p| p.base) } else { None };
         let Some(mut run) = self.running.take() else { return Ok(()) };
         let step = match input {
-            Some(Input::Cancel) => Ok(Step::Cancel),
+            Some(Input::Cancel) => {
+                run.machine.cancelled(self);
+                Ok(Step::Cancel)
+            }
             Some(i) => {
                 if let Input::Point(p) = &i {
                     self.last_point = *p;
@@ -354,7 +484,14 @@ impl Session {
                 Ok(())
             }
             Ok(Step::Done) => {
+                let seed = run.before.handseed;
                 self.finish(run, false);
+                let added = self.doc().is_ok_and(|d| d.handseed != seed);
+                // A transparent command ending inside another (`'ZOOM` in an INSERT) is not that
+                // command ending: it shares its number.
+                if self.suspended.is_none() {
+                    self.last_finished = Some((self.commands_started, added));
+                }
                 self.resume_suspended();
                 Ok(())
             }
@@ -479,7 +616,8 @@ impl Session {
         }
         if self.running.is_some() {
             if self.suspended.is_some() {
-                if let Some(nested) = self.running.take() {
+                if let Some(mut nested) = self.running.take() {
+                    nested.machine.cancelled(self);
                     self.finish(nested, true);
                 }
                 self.running = self.suspended.take();
@@ -495,6 +633,22 @@ impl Session {
     /// ([`Interactive::editing_mtext`]).
     pub fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         self.running.as_ref().and_then(|r| r.machine.editing_mtext())
+    }
+
+    /// The text the running command edits in place ([`Interactive::text_editor`]).
+    pub fn text_editor(&self) -> Option<crate::TextEditor> {
+        self.running.as_ref().and_then(|r| r.machine.text_editor())
+    }
+
+    /// The attribute values the running command asks for in the Edit Attributes dialog
+    /// ([`Interactive::attribute_entry`]), stamped with the drawing it runs in and its number in
+    /// [`Session::commands_started`]: a dialog draft kept for a cancelled command never belongs
+    /// to the one started after it, even for the same block.
+    pub fn attribute_entry(&self) -> Option<crate::AttribEntry> {
+        let mut entry = self.running.as_ref().and_then(|r| r.machine.attribute_entry())?;
+        entry.drawing = self.docs.get(self.active).map_or(0, |d| d.uid);
+        entry.command = self.commands_started;
+        Some(entry)
     }
 
     pub fn current_prompt(&self) -> Option<Prompt> {
@@ -564,6 +718,36 @@ impl Session {
         out
     }
 
+    /// The value the cursor would give at the active command's prompt (see
+    /// [`Interactive::live_value`]).
+    pub fn live_value(&self, cursor: Vec2) -> Option<String> {
+        self.running.as_ref()?.machine.live_value(self, cursor)
+    }
+
+    /// What the rollover highlight shows of the object `h` under the cursor, with its properties,
+    /// when the running command highlights only a part of it ([`Interactive::highlight`]: TRIM
+    /// the piece a click there removes, EXTEND what it adds). `None`: the whole object.
+    pub fn highlight(&self, h: Handle, cursor: Vec2) -> Option<Vec<Entity>> {
+        let kinds = self.running.as_ref()?.machine.highlight(self, h, cursor)?;
+        let common = self.doc().ok()?.entity(h)?.common.clone();
+        Some(kinds.into_iter().map(|k| Entity { handle: h, common: common.clone(), kind: k }).collect())
+    }
+
+    /// What the running command will change wherever the cursor is, with each part's properties
+    /// ([`Interactive::highlight_all`]: TRIM's Fence and Crossing). `None`: nothing of the kind.
+    pub fn highlight_all(&self, cursor: Vec2) -> Option<Vec<Entity>> {
+        let parts = self.running.as_ref()?.machine.highlight_all(self, cursor)?;
+        let d = self.doc().ok()?;
+        Some(parts.into_iter().filter_map(|(h, k)| Some(Entity { handle: h, common: d.entity(h)?.common.clone(), kind: k })).collect())
+    }
+
+    /// What the drawing area shows in place of the drawing while a command runs (DVIEW's preview
+    /// set, see [`Interactive::display_only`]), also while a transparent command interrupts it.
+    /// `None`: the drawing.
+    pub fn display_only(&self) -> Option<DisplayOnly> {
+        [&self.running, &self.suspended].into_iter().flatten().find_map(|r| r.machine.display_only(self))
+    }
+
     /// The active command's preview as a transform of existing objects (see
     /// [`Interactive::drag`]), with its extra rubber-band geometry as entities.
     pub fn drag(&self, cursor: Vec2) -> Option<(Drag, Vec<Entity>)> {
@@ -572,5 +756,45 @@ impl Session {
         let common = self.current_common();
         let extra = d.extra.iter().map(|k| Entity { handle: Handle(0), common: common.clone(), kind: k.clone() }).collect();
         Some((d, extra))
+    }
+    /// The live parameters of the running array command ([`Interactive::array_live`]).
+    pub fn array_live(&self) -> Option<crate::ArrayLive> {
+        self.running.as_ref().and_then(|r| r.machine.array_live())
+    }
+
+    /// Change the running array's live parameters. With no array running this does nothing; an
+    /// invalid value is refused and leaves the command as it was.
+    pub fn set_array_live(&mut self, v: &crate::ArrayLive) -> Result<()> {
+        if self.array_live().is_none() {
+            return Ok(());
+        }
+        let Some(mut run) = self.running.take() else { return Ok(()) };
+        let r = run.machine.set_array_live(self, v);
+        self.running = Some(run);
+        r
+    }
+
+    /// Ask the running polar array for its centre as the next canvas point
+    /// ([`Interactive::array_pick_center`]).
+    pub fn array_pick_center(&mut self) -> bool {
+        self.running.as_mut().is_some_and(|r| r.machine.array_pick_center())
+    }
+
+    /// Finish the running array: `Ok(true)` when the command ended, `Ok(false)` when there is no
+    /// array command or it is still selecting objects.
+    pub fn commit_array(&mut self) -> Result<bool> {
+        if self.array_live().is_none() {
+            return Ok(false);
+        }
+        if self.current_prompt().is_some_and(|p| p.accept.select) {
+            return Ok(false);
+        }
+        if let Some(r) = self.running.as_mut()
+            && !r.machine.array_set_main()
+        {
+            return Ok(false);
+        }
+        self.feed(Some(Input::Keyword("eXit".into())))?;
+        Ok(self.running.is_none())
     }
 }

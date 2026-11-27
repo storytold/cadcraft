@@ -11,6 +11,7 @@ fn cli(args: &[&str]) -> Output {
 /// A DWG of 200 lines, and a copy damaged so that the reader skips some of its records (found the
 /// way the reader's own test finds one: flipping a few bytes at a time across the objects area).
 fn dwg_and_damaged_copy() -> (Vec<u8>, Vec<u8>) {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut dxf = String::from("0\nSECTION\n2\nENTITIES\n");
     for i in 0..200 {
         dxf += &format!("0\nLINE\n8\n0\n10\n{i}\n20\n0\n11\n{i}\n21\n10\n");

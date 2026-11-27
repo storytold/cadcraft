@@ -601,6 +601,25 @@ fn measure_spline_by_its_own_parameter() {
     assert!(pts.len() == 3 && [7.0, 4.0, 1.0].iter().all(|x| pts.iter().any(|p| near(*p, *x, 0.0))), "{pts:?}");
 }
 
+/// A pick a hair outside an arc's sweep beside its start is at its start, for an arc and for a
+/// polyline's arc span alike: MEASURE runs from there (round the circle it was the far end).
+#[test]
+fn measure_from_a_pick_a_hair_before_an_arcs_start() {
+    let curves = [
+        ("arc", json!({"center": [0, 0], "radius": 1, "start": 0, "end": 180})),
+        ("pline", json!({"vertices": [{"p": [1, 0], "bulge": 1}, [-1, 0]]})),
+    ];
+    for (cmd, args) in curves {
+        let mut s = Session::new();
+        let e = h(&s.execute(cmd, &args).unwrap());
+        s.execute("measure", &json!({"handle": e, "length": 1, "from": [1, -1e-13]})).unwrap();
+        let pts: Vec<Vec2> =
+            s.doc().unwrap().model.iter().filter_map(|e| if let EntityKind::Point(p) = &e.kind { Some(p.p.xy()) } else { None }).collect();
+        // From (1, 0), a point every radian.
+        assert!(pts.len() == 3 && [1.0f64, 2.0, 3.0].iter().all(|a| pts.iter().any(|p| near(*p, a.cos(), a.sin()))), "{cmd}: {pts:?}");
+    }
+}
+
 /// MEASURE counts every vertex in a polyline's parameter, coincident ones too (AutoCAD's polyline
 /// parameter is the vertex index; the chain drops zero-length spans), and picks an ellipse's end
 /// by the ellipse parameter like any other curve: AutoCAD 2024 runs both measured cases below from
@@ -710,6 +729,57 @@ fn divide_and_measure_command_line() {
     s.cancel();
 }
 
+#[test]
+fn divide_takes_a_whole_number_as_typed() {
+    // AutoCAD 2024 at "Enter the number of segments or [Block]:": +5, 05, the LISP real 5.0 and
+    // 32767 are taken; 5.0, 5., 1e1, 4.5, 1, 0, -3, 32768, x, Enter and a point from LISP are
+    // refused and asked again (measured).
+    let points = |s: &Session| kinds(s).iter().filter(|k| **k == "Point").count();
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    s.cmdline("divide 5,0").unwrap();
+    let asked = s.prompt_text();
+    assert_eq!(s.current_prompt().map(|p| p.display()).as_deref(), Some("Enter the number of segments or [Block]:"));
+    for bad in ["5.0", "5.", "1e1", "4.5", "1", "0", "-3", "32768", "x", "", "(list 1 2)"] {
+        let logged = s.log.len();
+        s.cmdline(bad).unwrap();
+        let said: Vec<&str> = s.log.iter().skip(logged).map(String::as_str).filter(|l| l.starts_with("Requires")).collect();
+        assert_eq!(said, ["Requires an integer between 2 and 32767, or option keyword."], "{bad:?}");
+        assert_eq!(s.prompt_text(), asked, "{bad:?}");
+    }
+    assert_eq!(points(&s), 0);
+    s.cmdline("+5").unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(points(&s), 4);
+    for (typed, n) in [("05", 4), ("(+ 2.5 2.5)", 4), ("2", 1), ("32767", 32766)] {
+        let mut s = Session::new();
+        s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+        s.cmdline("divide 5,0").unwrap();
+        s.cmdline(typed).unwrap();
+        assert!(s.running.is_none(), "{typed}: {}", s.prompt_text());
+        assert_eq!(points(&s), n, "{typed}");
+    }
+    // MEASURE shares the prompt machine and is unchanged: Enter at its length still ends it.
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    s.cmdline("measure 5,0").unwrap();
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(points(&s), 0);
+    // After Block the prompt offers no keyword, and the message names none (AutoCAD 2024, measured).
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let tick = s.execute("circle", &json!({"center": [50, 50], "radius": 0.1})).unwrap();
+    s.execute("block", &json!({"name": "DOT", "base": [50, 50], "handles": [h(&tick)], "keep": "delete"})).unwrap();
+    s.cmdline("divide 5,0 b DOT y").unwrap();
+    assert_eq!(s.current_prompt().map(|p| p.display()).as_deref(), Some("Enter the number of segments:"));
+    s.cmdline("5.0").unwrap();
+    assert_eq!(s.log.last().map(String::as_str), Some("Requires an integer between 2 and 32767."));
+    s.cmdline("5").unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(kinds(&s).iter().filter(|k| **k == "Block Reference").count(), 4);
+}
+
 // ---------------- REVCLOUD ----------------
 
 #[test]
@@ -737,9 +807,43 @@ fn revcloud_json() {
 }
 
 #[test]
+fn revcloud_saves_revcloudprops_xdata() {
+    let mut s = Session::new();
+    let props = |s: &Session| {
+        let xd = s.doc().unwrap().model.last().unwrap().common.xdata.clone();
+        xd.iter().map(|t| (t.code, t.value.clone())).collect::<Vec<_>>()
+    };
+    let want = vec![(1001, "RevcloudProps".to_string()), (1070, "0".to_string()), (1040, "2".to_string())];
+    s.execute("revcloud", &json!({"p1": [0, 0], "p2": [100, 50], "arcLength": 2})).unwrap();
+    assert_eq!(props(&s), want);
+    let dxf = cadcraft_io::write_dxf(s.doc().unwrap());
+    let lines: Vec<&str> = dxf.lines().map(str::trim).collect();
+    let groups: Vec<(&str, &str)> = lines.chunks(2).filter_map(|c| Some((*c.first()?, *c.get(1)?))).collect();
+    assert!(groups.contains(&("1001", "RevcloudProps")), "no RevcloudProps xdata in the DXF");
+    let appid = groups
+        .iter()
+        .enumerate()
+        .any(|(i, g)| *g == ("0", "APPID") && groups[i + 1..].iter().take_while(|g| g.0 != "0").any(|g| *g == ("2", "RevcloudProps")));
+    assert!(appid, "no RevcloudProps APPID record");
+    // Made from an object: the object's properties are kept, the cloud is still a revision cloud.
+    let c = h(&s.execute("circle", &json!({"center": [10, 10], "radius": 1})).unwrap());
+    s.execute("revcloud", &json!({"handle": c, "arcLength": 2})).unwrap();
+    assert_eq!(props(&s), want);
+    // Interactive (the arc length takes a minimum and a maximum, #1714).
+    s.cmdline("revcloud a 2 2").unwrap();
+    s.cmdline("0,0 4,2").unwrap();
+    assert_eq!(props(&s), want);
+    // Interactive Object, after the "Reverse direction" prompt.
+    s.execute("rectang", &json!({"p1": [20, 20], "p2": [24, 22]})).unwrap();
+    s.cmdline("revcloud o 20,21 n").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(props(&s), want);
+}
+
+#[test]
 fn revcloud_command_line() {
     let mut s = Session::new();
-    s.cmdline("revcloud a 1").unwrap();
+    s.cmdline("revcloud a 1 1").unwrap();
     s.cmdline("0,0 4,2").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert!(matches!(last(&s), EntityKind::LwPolyline(p) if p.vertices.len() == 12));
@@ -752,9 +856,48 @@ fn revcloud_command_line() {
     assert_eq!(kinds(&s).len(), 3);
     // Object option converts a closed polyline.
     s.execute("rectang", &json!({"p1": [10, 10], "p2": [12, 12]})).unwrap();
-    s.cmdline("revcloud o 10,11").unwrap();
+    s.cmdline("revcloud o 10,11 n").unwrap();
     assert!(s.running.is_none());
     assert_eq!(kinds(&s).len(), 4);
+}
+
+#[test]
+fn revcloud_object_accepts_entity_name() {
+    let mut s = Session::new();
+    s.execute("rectang", &json!({"p1": [0, 0], "p2": [4, 4]})).unwrap();
+    let h = s.doc().unwrap().model.last().unwrap().handle;
+    s.cmdline("revcloud o").unwrap();
+    s.input(Input::Pick(vec![h])).unwrap();
+    // Object asks "Reverse direction" next (#1714); Enter keeps it.
+    s.input(Input::Enter).unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(kinds(&s).len(), 1);
+    assert!(matches!(last(&s), EntityKind::LwPolyline(p) if p.vertices.len() > 4));
+}
+
+#[test]
+fn revcloud_arc_length_asks_max_and_object_asks_reverse() {
+    let mut s = Session::new();
+    s.execute("rectang", &json!({"p1": [10, 10], "p2": [12, 12]})).unwrap();
+    s.cmdline("revcloud a 200 800").unwrap();
+    assert!(s.prompt_text().contains("first corner"), "{}", s.prompt_text());
+    s.cmdline("0,0 2000,1000").unwrap();
+    assert!(s.running.is_none());
+    s.cmdline("revcloud").unwrap();
+    assert!(s.log.iter().any(|l| l.contains("Minimum arc length: 200.0000   Maximum arc length: 800.0000")), "{:?}", s.log);
+    s.cmdline("o").unwrap();
+    s.cmdline("10,11").unwrap();
+    assert!(s.running.is_some() && s.prompt_text().contains("Reverse direction"), "{}", s.prompt_text());
+    s.cmdline("n").unwrap();
+    assert!(s.running.is_none());
+    // Yes reverses the arcs (negative bulges).
+    s.execute("rectang", &json!({"p1": [30, 30], "p2": [32, 32]})).unwrap();
+    s.cmdline("revcloud o 30,31 y").unwrap();
+    assert!(s.running.is_none());
+    match last(&s) {
+        EntityKind::LwPolyline(p) => assert!(p.vertices.iter().all(|v| v.bulge < 0.0)),
+        k => panic!("{k:?}"),
+    }
 }
 
 // ---------------- BREAKLINE ----------------
@@ -1009,6 +1152,198 @@ fn rectang_options_command_line() {
     }
 }
 
+/// RECTANG against what AutoCAD 2024 stores for the same typed input (black-box: synthetic
+/// input in accoreconsole, read back with `entget`): Area with the corners taken off, and
+/// corners too large for the sides.
+#[test]
+fn rectang_area_and_oversized_corners_match_autocad() {
+    type Case = (&'static [&'static str], &'static [[f64; 3]], [f64; 3]);
+    // (typed input, vertices [x, y, bulge], [width, elevation, thickness])
+    let cases: [Case; 4] = [
+        // RECTANG-028: Area counts the chamfered corners off.
+        (
+            &["rectang _C 1.5 2.5 26.36462345136234,-19.7291241693893 _R 0 _A 1442.9297064464572 _W 35.53488991311575"],
+            &[
+                [26.36462345136234, -18.2291241693893, 0.0],
+                [28.86462345136234, -19.7291241693893, 0.0],
+                [65.68168268505678, -19.7291241693893, 0.0],
+                [67.18168268505678, -17.2291241693893, 0.0],
+                [67.18168268505678, 14.30576574372644, 0.0],
+                [64.68168268505678, 15.80576574372644, 0.0],
+                [27.86462345136234, 15.80576574372644, 0.0],
+                [26.36462345136234, 13.30576574372644, 0.0],
+            ],
+            [0.0, 0.0, 0.0],
+        ),
+        // RECTANG-035-VN: Area counts the fillets off, at survey coordinates.
+        (
+            &["rectang _F 2.0 612322.0691653182,2398792.948957577 _R 0 _A 592.8936847254046 _L 19.287858563349488"],
+            &[
+                [612322.0691653182, 2398794.948957577, 0.414213562373095],
+                [612324.0691653182, 2398792.948957577, 0.0],
+                [612339.3570238815, 2398792.948957577, 0.414213562373095],
+                [612341.3570238815, 2398794.948957577, 0.0],
+                [612341.3570238815, 2398821.866195597, 0.414213562373095],
+                [612339.3570238815, 2398823.866195598, 0.0],
+                [612324.0691653182, 2398823.866195598, 0.414213562373095],
+                [612322.0691653182, 2398821.866195597, 0.0],
+            ],
+            [0.0, 0.0, 0.0],
+        ),
+        // RECTANG-029: a fillet too large: each corner two coincident vertices.
+        (
+            &["rectang _F 11.37084114989061 -21.46774953784037,-0.023473793210982308 _R 0 -2.5163476213560187,49.88119923361903"],
+            &[
+                [-21.46774953784036, -0.0234737932109823, 0.0],
+                [-21.46774953784036, -0.0234737932109823, 0.0],
+                [-2.516347621356018, -0.0234737932109823, 0.0],
+                [-2.516347621356018, -0.0234737932109823, 0.0],
+                [-2.516347621356018, 49.88119923361903, 0.0],
+                [-2.516347621356018, 49.88119923361903, 0.0],
+                [-21.46774953784036, 49.88119923361903, 0.0],
+                [-21.46774953784036, 49.88119923361903, 0.0],
+            ],
+            [0.0, 0.0, 0.0],
+        ),
+        // RECTANG-039-VN: a chamfer too large, rotated, with Dimensions.
+        (
+            &[
+                "rectang _C 18.656567079201356 18.656567079201356 612317.9599920243,2398739.0200147885 _R 30 _D 26.652238684573366 32.64533161964191 612344.6122307089,2398771.6653464083",
+            ],
+            &[
+                [612317.9599920243, 2398739.020014788, 0.0],
+                [612317.9599920243, 2398739.020014788, 0.0],
+                [612341.041507793, 2398752.34613413, 0.0],
+                [612341.041507793, 2398752.34613413, 0.0],
+                [612324.7188419831, 2398780.617820628, 0.0],
+                [612324.7188419831, 2398780.617820628, 0.0],
+                [612301.6373262145, 2398767.291701286, 0.0],
+                [612301.6373262145, 2398767.291701286, 0.0],
+            ],
+            [0.0, 0.0, 0.0],
+        ),
+    ];
+    let same = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0);
+    for (input, want, [width, elevation, thickness]) in cases {
+        let mut s = Session::new();
+        for line in input {
+            s.cmdline(line).unwrap();
+            assert!(s.running.is_none(), "{line}: {}", s.prompt_text());
+        }
+        let e = s.doc().unwrap().model.last().unwrap().clone();
+        let EntityKind::LwPolyline(p) = &e.kind else { panic!("{input:?}: {:?}", e.kind) };
+        let got: Vec<[f64; 3]> = p.vertices.iter().map(|v| [v.p.x, v.p.y, v.bulge]).collect();
+        let ok = got.len() == want.len() && got.iter().zip(want).all(|(g, w)| g.iter().zip(w).all(|(a, b)| same(*a, *b)));
+        assert!(
+            ok,
+            "{input:?}
+ got {got:?}
+want {want:?}"
+        );
+        assert!(p.closed && same(p.const_width, width) && same(p.elevation, elevation) && same(e.common.thickness, thickness), "{input:?}");
+    }
+    // Rotation, elevation and thickness are remembered too: AutoCAD opens the next RECTANG with
+    // "Current rectangle modes:  Elevation=7.5000  Thickness=2.2500  Rotation=30.96".
+    let mut s = Session::new();
+    s.cmdline("rectang _E 7.5 _T 2.25 0,0 _R _P 0,0 10,6 10,20").unwrap();
+    s.cmdline("rectang 100,100 110,105").unwrap();
+    let e = s.doc().unwrap().model.last().unwrap().clone();
+    let EntityKind::LwPolyline(p) = &e.kind else { panic!("{:?}", e.kind) };
+    let edge = p.vertices[1].p - p.vertices[0].p;
+    assert!(p.vertices[0].p == Vec2::new(100.0, 100.0) && same(edge.angle(), 6f64.atan2(10.0)), "{p:?}");
+    assert!(p.elevation == 7.5 && e.common.thickness == 2.25);
+}
+
+/// RECTANG's Rotation follows the drawing's angle settings as AutoCAD 2024's does.
+#[test]
+fn rectang_rotation_follows_the_angle_settings() {
+    let modes = |s: &Session| s.log.iter().filter(|l| l.starts_with("Current rectangle modes:")).cloned().collect::<Vec<_>>();
+    // With ANGBASE 90 and ANGDIR 1, AutoCAD 2024 turns a rectangle given Rotation 30 clockwise
+    // by 30° from +X (ANGBASE aside), and shows that rotation from ANGBASE: "Rotation=120.00",
+    // and <120.00> as the next rotation default.
+    let mut s = Session::new();
+    s.cmdline("setvar angbase 90").unwrap();
+    s.cmdline("setvar angdir 1").unwrap();
+    s.cmdline("rectang 50,0 _R 30 60,5").unwrap();
+    let e = s.doc().unwrap().model.last().unwrap().clone();
+    let EntityKind::LwPolyline(p) = &e.kind else { panic!("{:?}", e.kind) };
+    let edge = p.vertices[1].p - p.vertices[0].p;
+    assert!((edge.y.atan2(edge.x) + 30f64.to_radians()).abs() < 1e-9, "{p:?}");
+    s.start("rectang").unwrap();
+    assert_eq!(modes(&s), ["Current rectangle modes:  Rotation=120.00"]);
+    s.cmdline("50,0").unwrap();
+    s.cmdline("_R").unwrap();
+    assert!(s.prompt_text().contains("<120.00>"), "{}", s.prompt_text());
+    s.cancel();
+    // In degrees/minutes/seconds: "Rotation=30d30'".
+    let mut s = Session::new();
+    s.cmdline("setvar aunits 1").unwrap();
+    s.cmdline("rectang 50,0 _R 30.5 60,5").unwrap();
+    s.start("rectang").unwrap();
+    assert_eq!(modes(&s), ["Current rectangle modes:  Rotation=30d30'"]);
+    s.cancel();
+}
+
+/// Area allows for cut corners only while they fit: a fillet too large for the resulting sides
+/// leaves square corners, so the rectangle is the full area asked for (4 × 1, not 4 × 1.858).
+/// Corners exactly as long as the shorter side allows still fit; a hair longer and the corners
+/// stay square, each still written twice (AutoCAD 2024, `entget` of a 4 x 2 rectangle).
+#[test]
+fn rectang_corners_at_the_limit_fit_and_just_over_stay_square() {
+    let b = (std::f64::consts::PI / 8.0).tan();
+    let fit: [(&str, &[(f64, f64, f64)]); 4] = [
+        (
+            "_F 0.9999",
+            &[
+                (0.0, 0.9999, b),
+                (0.9999, 0.0, 0.0),
+                (3.0001, 0.0, b),
+                (4.0, 0.9999, 0.0),
+                (4.0, 1.0001, b),
+                (3.0001, 2.0, 0.0),
+                (0.9999, 2.0, b),
+                (0.0, 1.0001, 0.0),
+            ],
+        ),
+        ("_F 1", &[(0.0, 1.0, b), (1.0, 0.0, 0.0), (3.0, 0.0, b), (4.0, 1.0, 0.0), (4.0, 1.0, b), (3.0, 2.0, 0.0), (1.0, 2.0, b), (0.0, 1.0, 0.0)]),
+        (
+            "_C 1 1",
+            &[(0.0, 1.0, 0.0), (1.0, 0.0, 0.0), (3.0, 0.0, 0.0), (4.0, 1.0, 0.0), (4.0, 1.0, 0.0), (3.0, 2.0, 0.0), (1.0, 2.0, 0.0), (0.0, 1.0, 0.0)],
+        ),
+        (
+            "_C 1.2 0.8",
+            &[(0.0, 1.2, 0.0), (0.8, 0.0, 0.0), (2.8, 0.0, 0.0), (4.0, 0.8, 0.0), (4.0, 0.8, 0.0), (3.2, 2.0, 0.0), (1.2, 2.0, 0.0), (0.0, 1.2, 0.0)],
+        ),
+    ];
+    let square =
+        [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (4.0, 0.0, 0.0), (4.0, 0.0, 0.0), (4.0, 2.0, 0.0), (4.0, 2.0, 0.0), (0.0, 2.0, 0.0), (0.0, 2.0, 0.0)];
+    let over: [(&str, &[(f64, f64, f64)]); 2] = [("_F 1.0001", &square), ("_C 1.2 0.81", &square)];
+    for (corners, want) in fit.into_iter().chain(over) {
+        let mut s = Session::new();
+        s.cmdline(&format!("rectang {corners} 0,0 4,2")).unwrap();
+        let EntityKind::LwPolyline(p) = last(&s) else { panic!("no polyline") };
+        let got: Vec<(f64, f64, f64)> = p.vertices.iter().map(|v| (v.p.x, v.p.y, v.bulge)).collect();
+        let ok = got.len() == want.len()
+            && got.iter().zip(want).all(|(g, w)| (g.0 - w.0).abs() < 1e-9 && (g.1 - w.1).abs() < 1e-9 && (g.2 - w.2).abs() < 1e-6);
+        assert!(ok, "{corners}: {got:?}");
+    }
+}
+
+#[test]
+fn rectang_area_with_corners_too_large_stays_exact() {
+    let check = |s: &Session| {
+        let pts = rect_pts(s);
+        let b = cadcraft_geom::Bounds2::from_points(pts.clone());
+        assert!(near(b.min, 0.0, 0.0) && near(b.max, 4.0, 1.0), "{pts:?}");
+        assert!(pts.len() == 8 && pts.chunks(2).all(|c| c[0] == c[1]), "{pts:?}");
+    };
+    let mut s = Session::new();
+    s.cmdline("rectang _F 2 0,0 _A 4 _L 4").unwrap();
+    check(&s);
+    s.execute("rectang", &json!({"p1": [0, 0], "area": 4, "length": 4, "fillet": 2})).unwrap();
+    check(&s);
+}
+
 /// Guards the JSON `center: true` form for every sizing route: a picked corner mirrored about
 /// the centre, full-size `dimensions`, full `area`, rotation about the centre, that the default
 /// corner mode is untouched, and that centre mode without a size is rejected.
@@ -1044,7 +1379,7 @@ fn rectang_center_mode_json() {
 }
 
 /// Guards that fillet, chamfer, width and thickness still apply in centre mode, and that an
-/// oversized fillet falls back to sharp corners without moving the rectangle off centre.
+/// oversized fillet leaves sharp corners without moving the rectangle off centre.
 #[test]
 fn rectang_center_mode_honours_options() {
     let mut s = Session::new();
@@ -1061,9 +1396,11 @@ fn rectang_center_mode_honours_options() {
     assert_eq!(rect_pts(&s).len(), 8);
     let b = cadcraft_geom::Bounds2::from_points(rect_pts(&s));
     assert!(near(b.min, 6.0, 4.0) && near(b.max, 14.0, 16.0), "{b:?}");
-    // A fillet too large for the rectangle falls back to sharp corners, still centred.
+    // A fillet too large for the rectangle leaves sharp corners, each one two coincident vertices
+    // as in AutoCAD, still centred.
     s.execute("rectang", &json!({"center": true, "p1": [10, 10], "p2": [14, 16], "fillet": 5})).unwrap();
-    assert_eq!(rect_pts(&s).len(), 4);
+    let pts = rect_pts(&s);
+    assert!(pts.len() == 8 && pts.chunks(2).all(|c| c[0] == c[1]), "{pts:?}");
     let b = cadcraft_geom::Bounds2::from_points(rect_pts(&s));
     assert!(near(b.min, 6.0, 4.0) && near(b.max, 14.0, 16.0), "{b:?}");
 }
@@ -1091,8 +1428,9 @@ fn rectang_center_mode_command_line() {
     assert!(s.running.is_none(), "{}", s.prompt_text());
     let b = cadcraft_geom::Bounds2::from_points(rect_pts(&s));
     assert!(near(b.min, 6.0, 4.0) && near(b.max, 14.0, 16.0), "{b:?}");
-    // Area too: the rectangle of that area is centred on the first point.
-    s.cmdline("rectang ce 10,10 a 96 l 8").unwrap();
+    // Area too: the rectangle of that area is centred on the first point (without the fillet
+    // remembered from above, which would take its corners off the area).
+    s.cmdline("rectang f 0 ce 10,10 a 96 l 8").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     let b = cadcraft_geom::Bounds2::from_points(rect_pts(&s));
     assert!(near(b.min, 6.0, 4.0) && near(b.max, 14.0, 16.0), "{b:?}");

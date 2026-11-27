@@ -12,7 +12,7 @@ fn drawing() -> Drawing {
     let mut layout = Layout::new("Sheet", 1);
     layout.limits = Some((Vec2::new(1.038, 0.694), Vec2::new(9.506, 6.681)));
     layout.page.image_origin = Some(Vec2::new(-1.054, -0.71));
-    d.layouts = vec![layout];
+    d.layouts = vec![layout].into();
     d
 }
 
@@ -43,6 +43,7 @@ fn a_layout_keeps_its_limits_and_image_origin_through_dxf() {
 
 #[test]
 fn a_layout_keeps_its_limits_and_image_origin_through_dwg() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let dwg = write_with(&drawing(), "t.dwg", &SaveOptions { version: Some(Version::R2018), binary: false }).expect("DWG");
     let back = read(&dwg, "t.dwg").expect("reopen");
     assert_kept(&back, "DWG");

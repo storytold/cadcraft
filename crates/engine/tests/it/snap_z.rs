@@ -176,6 +176,7 @@ fn reference(block: &str, at: Vec3, z_scale: f64) -> EntityKind {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     })
 }
 
