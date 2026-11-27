@@ -314,6 +314,28 @@ fn outlines_with_missing_edges_are_joined_in_file_order() {
 }
 
 #[test]
+fn a_later_outline_closes_at_its_exact_start() {
+    // A square, then a second one 100 to the right whose last edge ends 5e-5 above its first
+    // corner: within the tolerance (1.1e-4), so the outline is closed. The jump back to the first
+    // square must start from that corner, or the jumps out and back leave a sliver between them.
+    let s = [100.0, 0.0];
+    let edges = vec![
+        line(A, B),
+        line(B, C),
+        line(C, D),
+        line(D, A),
+        line(s, [110.0, 0.0]),
+        line([110.0, 0.0], [110.0, 10.0]),
+        line([110.0, 10.0], [100.0, 10.0]),
+        line([100.0, 10.0], [100.0, 5e-5]),
+    ];
+    let loops = read_loops(&[edges]);
+    assert!(filled(&loops, Vec2::new(5.0, 5.0)));
+    assert!(filled(&loops, Vec2::new(105.0, 5.0)));
+    assert!(!filled(&loops, Vec2::new(50.0, 1.2e-5)));
+}
+
+#[test]
 fn a_chained_loop_is_saved_as_it_was_read() {
     let in_order = vertices(&[line(A, B), line(B, C), line(C, D), line(D, A)]);
     let shuffled = cadcraft_io::read(dxf(&[vec![line(A, B), line(D, C), line(B, C), line(A, D)]]).as_bytes(), "edges.dxf").expect("read");

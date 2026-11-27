@@ -88,7 +88,9 @@ pub(super) fn chain(points: &[PolyVertex], edges: &[Range<usize>]) -> Vec<PolyVe
         for (edge, turned) in placed {
             append(&mut out, edges.get(edge).map_or(&[][..], |edge| edge_points(points, edge)), turned);
         }
-        if later && !end.near(start, frame.tol) {
+        // Back at the exact start, even when the end is within the tolerance of it: the jump
+        // back to the anchor then retraces the jump out.
+        if later && end != start {
             extend(&mut out, std::iter::once(PolyVertex::new(start)));
         }
     }
