@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use super::super::helpers::v3;
 use super::super::machines::{SelOutcome, SelectPhase};
 use super::super::{CommandSpec, bad, bool_or, point_param, point_req, size_param, str_param, targets};
-use super::{DimText, add_dim, circle_of, dim, dims_of, pick_at};
+use super::{DimText, add_dim, circle_at, circle_of, dim, dims_of};
 
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
@@ -332,7 +332,7 @@ impl Interactive for JoggedM {
             return Ok(Step::Continue);
         }
         match (self.circle, self.center, self.at, i) {
-            (None, _, _, Input::Point(p)) => match pick_at(s, p).and_then(|h| circle_of(s, h)) {
+            (None, _, _, Input::Point(p)) => match circle_at(s, p) {
                 Some(t) => self.circle = Some(t),
                 None => s.echo("Object selected is not a circle or arc."),
             },
