@@ -171,3 +171,142 @@ fn data_links_saved_in_a_drawing_are_read_beside_it_or_on_this_computer_only() {
     assert!(errors.iter().all(|e| e.contains("another computer")), "{errors:?}");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// Read and write drawings through `cadcraft-io`, as the app does.
+fn use_file_io() {
+    cadcraft_engine::cmd::file::set_io(cadcraft_engine::cmd::file::IoHooks {
+        read: |b, name| cadcraft_io::read(b, name).map_err(|e| e.to_string()),
+        write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
+        plot: None,
+    });
+}
+
+/// A new table, `i` rows of tables down, whose data link names `path` as a drawing file stores it.
+fn linked_table(s: &mut Session, i: usize, path: &str) {
+    let r = s.execute("table", &json!({ "at": [0, 10.0 * i as f64], "cols": 2, "rows": 1 })).unwrap();
+    let h = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            if let EntityKind::Table(t) = &mut e.kind {
+                t.data_link = Some(cadcraft_engine::doc::DataLink { path: path.to_string(), start_row: 0 });
+            }
+        })
+        .unwrap();
+}
+
+/// The text of every cell of every table in model space.
+fn table_texts(s: &Session) -> String {
+    let mut out = String::new();
+    for e in s.doc().unwrap().model.iter() {
+        if let EntityKind::Table(t) = &e.kind {
+            for cell in t.cells.iter().flatten() {
+                out.push_str(&cell.text);
+                out.push('\n');
+            }
+        }
+    }
+    out
+}
+
+/// A drawing's own data link can't copy a file from outside its folder into it: not by `..`, not
+/// by an absolute path, not through a folder whose name only starts the same, not through a link
+/// inside the folder that leads out. Links within the folder, also by `..` back into it, still
+/// update.
+#[test]
+fn a_saved_data_link_reads_no_file_outside_the_drawings_folder() {
+    use_file_io();
+    let base = std::env::temp_dir().join(format!("cadcraft-datalink-outside-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (dir, private, sibling) = (base.join("plans"), base.join("private"), base.join("plans-old"));
+    for d in [dir.join("sub"), private.clone(), sibling.clone()] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let secret = "not-for-the-drawing";
+    std::fs::write(private.join("secret.csv"), format!("{secret},1\n")).unwrap();
+    std::fs::write(sibling.join("secret.csv"), format!("{secret},2\n")).unwrap();
+    std::fs::write(dir.join("parts.csv"), "bolt,4\n").unwrap();
+    std::fs::write(dir.join("sub").join("more.csv"), "nut,8\n").unwrap();
+
+    let path = |p: std::path::PathBuf| p.to_str().unwrap().to_string();
+    let inside = ["parts.csv".to_string(), "sub/more.csv".to_string(), "../plans/parts.csv".to_string(), path(dir.join("parts.csv"))];
+    let mut outside = vec!["../private/secret.csv".to_string(), path(private.join("secret.csv")), path(sibling.join("secret.csv"))];
+    #[cfg(unix)]
+    let linked = std::os::unix::fs::symlink(private.join("secret.csv"), dir.join("link.csv")).is_ok();
+    // Windows lets only some accounts make symbolic links.
+    #[cfg(windows)]
+    let linked = std::os::windows::fs::symlink_file(private.join("secret.csv"), dir.join("link.csv")).is_ok();
+    if linked {
+        outside.push("link.csv".to_string());
+    } else {
+        eprintln!("symbolic links can't be made here: the link case is not checked");
+    }
+
+    let mut s = Session::new();
+    for (i, link) in inside.iter().chain(&outside).enumerate() {
+        linked_table(&mut s, i, link);
+    }
+    let host = dir.join("host.dxf");
+    s.execute("saveas", &json!({ "path": path(host.clone()) })).unwrap();
+    let mut s = Session::new();
+    s.execute("open", &json!({ "path": path(host) })).unwrap();
+
+    let r = s.execute("datalinkupdate", &json!({})).unwrap();
+    assert_eq!(r["updated"], inside.len(), "only the files in the drawing's folder: {r}");
+    let errors: Vec<&str> = r["errors"].as_array().unwrap().iter().filter_map(|e| e.as_str()).collect();
+    assert_eq!(errors.len(), outside.len(), "{errors:?}");
+    assert!(errors.iter().all(|e| e.contains("outside the drawing's folder")), "{errors:?}");
+    let texts = table_texts(&s);
+    assert!(texts.contains("bolt") && texts.contains("nut"), "the files inside are read: {texts}");
+    assert!(!texts.contains(secret), "{texts}");
+    // So the next save carries nothing of them either.
+    let after = dir.join("after.dxf");
+    s.execute("saveas", &json!({ "path": path(after.clone()) })).unwrap();
+    assert!(!std::fs::read_to_string(&after).unwrap().contains(secret));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A file outside the drawing's folder that the user links with DATALINK keeps updating while
+/// the drawing stays open; once it is opened again, the drawing alone can't read it until the
+/// user links it again.
+#[test]
+fn a_file_the_user_links_outside_the_folder_updates_until_the_drawing_is_opened_again() {
+    use_file_io();
+    let base = std::env::temp_dir().join(format!("cadcraft-datalink-chosen-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (dir, data) = (base.join("plans"), base.join("data"));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    let bom = data.join("bom.csv");
+    let bom_path = bom.to_str().unwrap();
+    let host = dir.join("host.dxf");
+    let host_path = host.to_str().unwrap();
+
+    let mut s = Session::new();
+    let r = s.execute("table", &json!({ "at": [0, 0], "cols": 2, "rows": 1 })).unwrap();
+    let h = r["handle"].as_str().unwrap().to_string();
+    s.execute("saveas", &json!({ "path": host_path })).unwrap();
+    std::fs::write(&bom, "bolt,rev-a\n").unwrap();
+    s.execute("datalink", &json!({ "handle": h, "path": bom_path })).unwrap();
+    std::fs::write(&bom, "bolt,rev-b\n").unwrap();
+    let r = s.execute("datalinkupdate", &json!({})).unwrap();
+    assert_eq!(r["updated"], 1, "{r}");
+    assert!(table_texts(&s).contains("rev-b"));
+    s.execute("saveas", &json!({ "path": host_path })).unwrap();
+
+    let mut s = Session::new();
+    s.execute("open", &json!({ "path": host_path })).unwrap();
+    std::fs::write(&bom, "bolt,rev-c\n").unwrap();
+    let r = s.execute("datalinkupdate", &json!({})).unwrap();
+    assert_eq!(r["updated"], 0, "{r}");
+    assert!(r["errors"][0].as_str().unwrap().contains("outside the drawing's folder"), "{r}");
+    assert!(!table_texts(&s).contains("rev-c"));
+    // Linked again by the user, it reads and keeps updating.
+    s.execute("datalink", &json!({ "handle": h, "path": bom_path })).unwrap();
+    assert!(table_texts(&s).contains("rev-c"));
+    std::fs::write(&bom, "bolt,rev-d\n").unwrap();
+    let r = s.execute("datalinkupdate", &json!({})).unwrap();
+    assert_eq!(r["updated"], 1, "{r}");
+    assert!(table_texts(&s).contains("rev-d"));
+    let _ = std::fs::remove_dir_all(&base);
+}
