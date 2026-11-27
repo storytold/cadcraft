@@ -66,6 +66,41 @@ pub(crate) fn named_ucs<'a>(
     ucss.iter().find(|u| u.name.eq_ignore_ascii_case(name) && is_named_frame(u, origin, x, y))
 }
 
+/// The drawing's UCSs by name with its ASCII letters lower-cased, each name with its positions in
+/// table order, so the named UCS of each of many layouts is found without scanning every UCS: a
+/// file of N layouts each naming one of N UCSs cost N² name comparisons (#1924).
+pub(crate) struct UcsNames<'a> {
+    ucss: &'a [cadcraft_doc::Ucs],
+    at: std::collections::BTreeMap<String, Vec<usize>>,
+}
+
+impl<'a> UcsNames<'a> {
+    pub(crate) fn new(ucss: &'a [cadcraft_doc::Ucs]) -> Self {
+        let mut at: std::collections::BTreeMap<String, Vec<usize>> = std::collections::BTreeMap::new();
+        for (i, u) in ucss.iter().enumerate() {
+            at.entry(u.name.to_ascii_lowercase()).or_default().push(i);
+        }
+        UcsNames { ucss, at }
+    }
+
+    /// What [`named_ucs`] finds: the first UCS named `name` (without case) whose frame is
+    /// `origin`, `x`, `y`.
+    pub(crate) fn named(
+        &self,
+        name: &str,
+        origin: cadcraft_geom::Vec3,
+        x: cadcraft_geom::Vec3,
+        y: cadcraft_geom::Vec3,
+    ) -> Option<&'a cadcraft_doc::Ucs> {
+        let name = name.trim();
+        if name.is_empty() {
+            return None;
+        }
+        let ucss = self.ucss;
+        self.at.get(&name.to_ascii_lowercase())?.iter().filter_map(|&i| ucss.get(i)).find(|u| is_named_frame(u, origin, x, y))
+    }
+}
+
 /// Whether `x` and `y` can be a UCS's axes: finite, not zero and not along each other (relative
 /// to their lengths, so short but square axes are fine). Read and written by the same rule.
 pub(crate) fn usable_axes(x: cadcraft_geom::Vec3, y: cadcraft_geom::Vec3) -> bool {

@@ -407,6 +407,8 @@ fn write_entities(w: &mut W, d: &Drawing, ms_br: &str, ps_brs: &[(String, String
 struct LayoutWriteContext<'a> {
     drawing: &'a Drawing,
     dictionary: &'a str,
+    /// The drawing's UCSs by name, for each layout's named UCS.
+    ucs_names: &'a dxf_ext::UcsNames<'a>,
 }
 
 struct LayoutWriteData<'a> {
@@ -457,7 +459,7 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.s(330, layout_dict.to_string());
     w.s(100, "AcDbPlotSettings");
     write_plot_settings(w, d, page, data.model);
-    write_layout_data(w, d, data, view);
+    write_layout_data(w, d, context.ucs_names, data, view);
 }
 
 fn write_plot_settings(w: &mut W, d: &Drawing, page: &PageSetup, model: bool) {
@@ -550,7 +552,7 @@ fn write_plot_settings(w: &mut W, d: &Drawing, page: &PageSetup, model: bool) {
     }
 }
 
-fn write_layout_data(w: &mut W, d: &Drawing, data: LayoutWriteData<'_>, view: Option<(Vec2, f64)>) {
+fn write_layout_data(w: &mut W, d: &Drawing, ucs_names: &dxf_ext::UcsNames<'_>, data: LayoutWriteData<'_>, view: Option<(Vec2, f64)>) {
     let name = data.name;
     let tab = data.tab;
     let flags = data.flags;
@@ -578,7 +580,7 @@ fn write_layout_data(w: &mut W, d: &Drawing, data: LayoutWriteData<'_>, view: Op
     w.i(76, 0);
     w.s(330, brh);
     // The named UCS it is, only while its frame is still that record's (as for model space).
-    let named = u.and_then(|u| dxf_ext::named_ucs(&d.ucss, &u.name, u.origin, u.x_axis, u.y_axis));
+    let named = u.and_then(|u| ucs_names.named(&u.name, u.origin, u.x_axis, u.y_axis));
     if let Some(h) = named.and_then(|u| w.ucss.get(&u.name.to_ascii_uppercase())).cloned() {
         w.s(345, h);
     }
@@ -643,6 +645,7 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
     let ms_br = plan.ms_br;
     let ps_brs = plan.ps_brs;
     let layout_handles = plan.layout_handles;
+    let ucs_names = dxf_ext::UcsNames::new(&d.ucss);
     w.s(0, "DICTIONARY");
     w.s(5, layout_dict.clone());
     w.s(330, root_dict.clone());
@@ -661,7 +664,7 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
     let model_page = PageSetup { plot_area: "extents".into(), scale_to_fit: true, ..PageSetup::default() };
     layout_obj(
         w,
-        LayoutWriteContext { drawing: d, dictionary: layout_dict },
+        LayoutWriteContext { drawing: d, dictionary: layout_dict, ucs_names: &ucs_names },
         LayoutWriteData {
             handle: model_layout,
             name: "Model",
@@ -679,7 +682,7 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
         let h = layout_handles.get(i).cloned().unwrap_or_default();
         layout_obj(
             w,
-            LayoutWriteContext { drawing: d, dictionary: layout_dict },
+            LayoutWriteContext { drawing: d, dictionary: layout_dict, ucs_names: &ucs_names },
             LayoutWriteData {
                 handle: &h,
                 name: &l.name,
