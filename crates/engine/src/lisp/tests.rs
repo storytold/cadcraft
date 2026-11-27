@@ -1631,6 +1631,24 @@ fn an_expression_at_a_prompt_has_a_short_allowance() {
     assert_eq!(circles(&s), 0);
 }
 
+/// #1933: a whole number past 32 bits is a real, as the reader and `fix` make one, not a wrapped
+/// or clamped integer: `atoi` gives the number its digits read as, `gcd` the true divisor.
+#[test]
+fn atoi_and_gcd_past_32_bits_give_reals() {
+    let mut s = session();
+    for digits in ["2147483648", "-2147483649", "99999999999", "99999999999999999999"] {
+        assert_eq!(ok(&mut s, &format!("(= (atoi \"{digits}\") (read \"{digits}\"))")), "T", "{digits}");
+    }
+    // Past every real too: the largest, as `atof` reads it.
+    let huge = "9".repeat(400);
+    assert_eq!(ok(&mut s, &format!("(= (atoi \"{huge}\") (atof \"{huge}\"))")), "T");
+    // Within the range, integers as before.
+    assert_eq!(ok(&mut s, "(list (atoi \" -2147483648x\") (atoi \"+2147483647\") (atoi \"-\"))"), "(-2147483648 2147483647 0)");
+    let past = "(abs (float -2147483648))";
+    assert_eq!(ok(&mut s, &format!("(= (gcd -2147483648 0) (gcd 0 -2147483648) (gcd -2147483648 -2147483648) {past})")), "T");
+    assert_eq!(ok(&mut s, "(list (gcd -2147483648 6) (gcd 2147483647 0))"), "(2 2147483647)");
+}
+
 #[test]
 fn atof_out_of_range_exponent_reads_whole_token() {
     let mut s = Session::new();

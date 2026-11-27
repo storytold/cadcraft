@@ -50,9 +50,10 @@ frame, so the window stays live and Esc stops it too.
 
 ## The language
 
-Integers are 32-bit and wrap as AutoLISP's do; any real makes arithmetic real. Variables are
-dynamically scoped: a function's arguments and its locals (after `/`) are bound while it runs.
-Symbols are case-insensitive. Reals print with six significant digits.
+Integers are 32-bit and wrap as AutoLISP's do; any real makes arithmetic real. A whole number
+past that range read from text (source, `read`, `atoi`) or JSON, or made by `fix` or `gcd`, is a
+real instead. Variables are dynamically scoped: a function's arguments and its locals (after `/`)
+are bound while it runs. Symbols are case-insensitive. Reals print with six significant digits.
 
 Nothing a routine does can crash the program: deep recursion is the error "internal stack limit
 reached", malformed source is a reader error, and every built-in checks its arguments.
