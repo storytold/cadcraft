@@ -125,10 +125,10 @@ fn edited(app: &CadApp) -> Option<Handle> {
     (Some(st.uid) == app.attedit.doc && st.doc.entity(h).is_some()).then_some(h)
 }
 
-/// ATTEDIT / EATTEDIT typed or from a menu without parameters opens the dialog when one block
-/// reference with attributes is selected; otherwise the command runs at the command line.
+/// ATTEDIT / EATTEDIT opens the dialog when one editable reference is selected and the command
+/// line is idle. Let the engine start an interactive command when another command is active.
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
-    if !matches!(id, "attedit" | "ate" | "eattedit") || !params.is_null() {
+    if !matches!(id, "attedit" | "ate" | "eattedit") || !params.is_null() || app.session.prompting() {
         return None;
     }
     let h = selected_reference(app)?;
@@ -213,14 +213,14 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     for (i, r) in st.rows.iter_mut().enumerate() {
                         let current = st.current == Some(i);
                         let tag = if r.invisible { format!("{} ({})", r.tag, crate::i18n::t("invisible")) } else { r.tag.clone() };
-                        ui.label(if current { RichText::new(tag).strong() } else { RichText::new(tag) });
+                        let tag_label = ui.label(if current { RichText::new(tag).strong() } else { RichText::new(tag) });
                         ui.label(&r.prompt);
-                        let edit = if r.multiline {
+                        let edit = if r.multiline || r.value.contains(['\n', '\r']) {
                             egui::TextEdit::multiline(&mut r.typed).desired_rows(2)
                         } else {
                             egui::TextEdit::singleline(&mut r.typed)
                         };
-                        let resp = ui.add_enabled(r.editable, edit.desired_width(220.0));
+                        let resp = ui.add_enabled(r.editable, edit.desired_width(220.0)).labelled_by(tag_label.id);
                         if resp.has_focus() {
                             st.current = Some(i);
                         }

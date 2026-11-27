@@ -133,6 +133,57 @@ fn edit_attributes_on_a_selected_reference_opens_the_dialog() {
     assert_eq!(value(&app, h, "NOTE"), "n");
 }
 
+#[test]
+fn the_attribute_menu_uses_the_command_line_when_another_command_is_active() {
+    for command in ["attedit", "eattedit"] {
+        let (mut app, handle) = app_with_reference();
+        app.start("line");
+        assert!(app.session.prompting());
+        app.session.set_selection(vec![handle]);
+
+        menus::activate(&mut app, command);
+
+        assert!(app.ui.dialog.is_none(), "the editor must not open over the active prompt");
+        assert_eq!(app.session.running.as_ref().map(|running| running.id.as_str()), Some("attedit"));
+        assert_eq!(value(&app, handle, "NOTE"), "n");
+    }
+}
+
+#[test]
+fn an_attribute_with_line_breaks_can_be_edited_with_the_keyboard() {
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::Queryable;
+
+    let (mut app, handle) = app_with_reference();
+    app.run("attedit", json!({ "handle": handle.hex(), "at": { "1": "old\nnote" } })).unwrap();
+    menus::activate(&mut app, "attedit");
+    assert!(!app.attedit.rows[1].multiline, "the stored attribute has no multiline record");
+
+    let mut harness = palette(app);
+    harness.run();
+    let note = harness
+        .query_all_by_role(Role::TextInput)
+        .chain(harness.query_all_by_role(Role::MultilineTextInput))
+        .find(|node| node.value().as_deref() == Some("old\nnote"))
+        .expect("the note editor");
+    note.focus();
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.event(egui::Event::Text("first".into()));
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.event(egui::Event::Text("second".into()));
+    harness.run();
+
+    assert_eq!(harness.state().attedit.rows[1].typed, "first\nsecond");
+    let editor = harness.get_by_role_and_label(Role::Window, "Enhanced Attribute Editor");
+    editor.get_by_role_and_label(Role::MultilineTextInput, "NOTE");
+    editor.get_by_role_and_label(Role::TextInput, "NO");
+    editor.get_by_label("Apply").click();
+    harness.run();
+    assert_eq!(value(harness.state(), handle, "NOTE"), "first\nsecond");
+}
+
 /// `attedit::open` (a double-click on an attribute) opens the dialog on a reference with a
 /// chosen attribute current; its value box takes the focus in the first frame.
 #[test]
