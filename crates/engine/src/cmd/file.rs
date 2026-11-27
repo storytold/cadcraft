@@ -328,12 +328,12 @@ pub fn specs() -> Vec<CommandSpec> {
             .noundo(),
         CommandSpec::new("close", "Close", run_close).menu(&["File", "Close"]).key("Cmd+W").params("{index?}").noundo(),
         CommandSpec::new("closeall", "Close All", run_closeall).menu(&["File", "Close All"]).enabled(always).noundo(),
-        CommandSpec::new("qsave", "Save", run_qsave_reporting).menu(&["File", "Save"]).key("Cmd+S").alias(&["save"]).params("{path?}").noundo(),
+        CommandSpec::new("qsave", "Save", run_qsave_reporting).menu(&["File", "Save"]).key("Cmd+S").alias(&["save"]).params("{path?, overwrite?: bool}").noundo(),
         CommandSpec::new("saveas", "Save As...", run_saveas_reporting)
             .menu(&["File", "Save As..."])
             .key("Cmd+Shift+S")
             .params(
-                "{path, version?: 2000|2004|2007|2010|2013|2018, binary?: bool, portableFonts?: bool (Windows fonts for Linux ones, in this file)}",
+                "{path, version?: 2000|2004|2007|2010|2013|2018, binary?: bool, portableFonts?: bool (Windows fonts for Linux ones, in this file), overwrite?: bool}",
             )
             .noundo(),
         CommandSpec::new("document.switch", "Switch Drawing", run_switch).params("{index}").enabled(always).noundo(),
@@ -426,6 +426,7 @@ pub struct ReadFile {
     binary_dxf: bool,
     name: String,
     path: Option<String>,
+    disk: Option<crate::disk_stamp::DiskStamp>,
 }
 
 /// Read and decode `path` (the slow half of `OPEN {path}`). Needs no session; runs anywhere.
@@ -456,8 +457,8 @@ pub fn read_file(path: &std::path::Path) -> std::result::Result<ReadFile, String
 
 /// Add a [`read_file`] result to the session as the active drawing: the fast half of OPEN.
 pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
-    let ReadFile { drawing, binary_dxf, name, path } = f;
-    let i = add_read(s, drawing, binary_dxf, &name, path);
+    let ReadFile { drawing, binary_dxf, name, path, disk } = f;
+    let i = add_read(s, drawing, binary_dxf, &name, path, disk);
     super::blocks::xref::after_open(s, i);
     super::image::after_open(s, i);
     Ok(opened(s, i, true))
@@ -491,15 +492,24 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
             }
         }
     }
-    Ok(ReadFile { drawing, binary_dxf: craft_dxf::is_binary(bytes), name: name.to_string(), path })
+    let disk = path.as_ref().map(|_| crate::disk_stamp::DiskStamp::of(bytes));
+    Ok(ReadFile { drawing, binary_dxf: craft_dxf::is_binary(bytes), name: name.to_string(), path, disk })
 }
 
-fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, path: Option<String>) -> usize {
+fn add_read(
+    s: &mut Session,
+    drawing: Drawing,
+    binary_dxf: bool,
+    name: &str,
+    path: Option<String>,
+    disk: Option<crate::disk_stamp::DiskStamp>,
+) -> usize {
     let notes = drawing.read_notes.clone();
     let i = s.open_drawing(drawing, &file_name(name), path);
     if let Some(st) = s.docs.get_mut(i) {
         // QSAVE keeps a binary DXF binary.
         st.binary_dxf = binary_dxf;
+        st.disk = disk;
     }
     for note in notes {
         s.echo(note);
@@ -508,8 +518,8 @@ fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, pat
 }
 
 pub(crate) fn open_bytes(s: &mut Session, bytes: &[u8], name: &str, path: Option<String>) -> Result<usize> {
-    let ReadFile { drawing, binary_dxf, name, path } = read_bytes(bytes, name, path)?;
-    Ok(add_read(s, drawing, binary_dxf, &name, path))
+    let ReadFile { drawing, binary_dxf, name, path, disk } = read_bytes(bytes, name, path)?;
+    Ok(add_read(s, drawing, binary_dxf, &name, path, disk))
 }
 
 /// OPEN's reply: the drawing's index and what reading it left out.
@@ -582,18 +592,53 @@ fn run_closeall(s: &mut Session, _p: &Value) -> Result<Value> {
     ok()
 }
 
-pub(crate) fn save_to(s: &mut Session, path: &str) -> Result<(usize, Vec<String>)> {
+pub(crate) fn save_to(s: &mut Session, path: &str, overwrite: bool) -> Result<(usize, Vec<String>)> {
     let opts = SaveAs { binary: s.state()?.binary_dxf && is_dxf(path), ..SaveAs::default() };
-    save_as(s, "save", path, &opts)
+    save_as(s, "save", path, &opts, overwrite)
+}
+
+/// `overwrite`: save over the drawing's own file although another program changed it.
+fn overwrite_param(cmd: &str, p: &Value) -> Result<bool> {
+    match p.get("overwrite") {
+        None | Some(Value::Null) => Ok(false),
+        Some(Value::Bool(b)) => Ok(*b),
+        Some(_) => Err(bad(cmd, "`overwrite` must be true or false")),
+    }
+}
+
+/// Refuse to save over the drawing's own file when it no longer holds what was opened or last
+/// saved here: another program or person wrote it, and a save would silently replace their work.
+fn check_disk(s: &Session, cmd: &str, path: &str, overwrite: bool) -> Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let st = s.state()?;
+        let Some(stamp) = st.disk else { return Ok(()) };
+        if overwrite || st.path.as_deref() != Some(path) || !is_drawing_file(path) {
+            return Ok(());
+        }
+        if crate::disk_stamp::changed(std::path::Path::new(path), stamp, MAX_DRAWING_BYTES) {
+            return Err(bad(
+                cmd,
+                format!(
+                    "{path} changed on disk after it was opened: another program or person saved it. Nothing was saved. \
+                     Save under another name (saveas), or reopen the file to see their changes; `overwrite: true` replaces it anyway."
+                ),
+            ));
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = (s, cmd, path, overwrite);
+    Ok(())
 }
 
 /// Save to `path` with `opts`. A drawing file then keeps the version and binary choice: the
 /// version goes into the drawing's `$ACADVER`, so later saves (QSAVE) write it again. Also an
 /// image's notes ([`write_noted`]).
-fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<(usize, Vec<String>)> {
+fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs, overwrite: bool) -> Result<(usize, Vec<String>)> {
     if s.doc()?.refedit.is_some() {
         return Err(bad(cmd, "A block reference is being edited in place: finish with REFCLOSE (Save or Discard) before saving."));
     }
+    check_disk(s, cmd, path, overwrite)?;
     let (bytes, notes) = write_bytes(s, cmd, path, opts)?;
     let n = commit_save(s, path, &bytes, store)?;
     if is_drawing_file(path) {
@@ -877,6 +922,7 @@ fn commit_save(s: &mut Session, path: &str, bytes: &[u8], store: impl FnOnce(&st
     st.saved = st.drawing().clone();
     st.path = Some(path.to_string());
     st.title = file_name(path);
+    st.disk = Some(crate::disk_stamp::DiskStamp::of(bytes));
     // A BEgin group still open when the drawing is saved ends there.
     st.end_undo_group();
     Ok(bytes.len())
@@ -896,7 +942,7 @@ fn run_save(s: &mut Session, p: &Value) -> Result<Value> {
         Some(p) => p.to_string(),
         None => s.state()?.path.clone().ok_or_else(|| bad("qsave", "drawing has no file name yet; use saveas {path}"))?,
     };
-    let (n, notes) = save_to(s, &path)?;
+    let (n, notes) = save_to(s, &path, overwrite_param("qsave", p)?)?;
     let mut r = saved(&path, n);
     report_notes(s, &mut r, notes);
     Ok(r)
@@ -905,7 +951,7 @@ fn run_save(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_saveas(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("saveas", "`path` is required"))?.to_string();
     let opts = save_options("saveas", p)?;
-    let (n, notes) = save_as(s, "saveas", &path, &opts)?;
+    let (n, notes) = save_as(s, "saveas", &path, &opts, overwrite_param("saveas", p)?)?;
     let mut r = saved(&path, n);
     report_notes(s, &mut r, notes);
     if is_drawing_file(&path) {
