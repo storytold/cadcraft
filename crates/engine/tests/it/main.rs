@@ -78,6 +78,7 @@ mod hatch_numeric_validation;
 mod hatch_options;
 mod helix;
 mod hidden_grip_targets;
+mod image_path_reload_detach;
 mod inquiry_keywords;
 mod inquiry_variables;
 mod inquiry_z;
