@@ -320,6 +320,7 @@ fn run_layout_set(s: &mut Session, p: &Value) -> Result<Value> {
         Space::Paper(l.name.clone())
     };
     s.pending_window = None;
+    let (vw, vh) = s.viewport_px;
     let st = s.state_mut()?;
     st.space = space.clone();
     st.mspace = None;
@@ -327,11 +328,19 @@ fn run_layout_set(s: &mut Session, p: &Value) -> Result<Value> {
     if let Space::Paper(n) = &space
         && !st.views.iter().any(|(sp, _)| sp == &space)
     {
-        // Default paper view: the sheet.
-        let page = st.doc.layout(n).map(|l| l.page.clone()).unwrap_or_default();
-        let (w, h) = if page.landscape { (page.height_mm, page.width_mm) } else { (page.width_mm, page.height_mm) };
-        let unit = if st.doc.header.i64("MEASUREMENT", 0) == 1 { 1.0 } else { 1.0 / 25.4 };
-        st.set_view_quiet(View { center: Vec2::new(w * unit / 2.0, h * unit / 2.0), height: h * unit * 1.15, twist: 0.0 });
+        let ext = st.doc.extents(&space);
+        if !ext.is_empty() && ext.width().is_finite() && ext.height().is_finite() {
+            let aspect = st.zoom_aspect(vw / vh.max(1.0));
+            let (center, bw, bh) = View::twisted_box(ext, 0.0);
+            let height = bh.max(bw / aspect.max(1e-6)).max(1e-6) * 1.15;
+            st.set_view_quiet(View { center, height, twist: 0.0 });
+        } else {
+            // Default paper view: the sheet.
+            let page = st.doc.layout(n).map(|l| l.page.clone()).unwrap_or_default();
+            let (w, h) = if page.landscape { (page.height_mm, page.width_mm) } else { (page.width_mm, page.height_mm) };
+            let unit = if st.doc.header.i64("MEASUREMENT", 0) == 1 { 1.0 } else { 1.0 / 25.4 };
+            st.set_view_quiet(View { center: Vec2::new(w * unit / 2.0, h * unit / 2.0), height: h * unit * 1.15, twist: 0.0 });
+        }
     }
     s.touch();
     ok()
