@@ -49,8 +49,8 @@ pub struct ForeignExtra {
     pub vertex_ids: Vec<VertexId>,
 }
 
-/// A vertex of a lightweight polyline as it was read: its identifier and its point in the
-/// record's own coordinates.
+/// A vertex of a lightweight polyline as it was read: its identifier and its point as the
+/// polyline has it once read (a polyline whose normal points down is read mirrored in x).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct VertexId {
     /// The identifier (group 91); 0 for a vertex without one.
@@ -60,15 +60,13 @@ pub struct VertexId {
 }
 
 /// The identifiers `kept` gives the vertices at `points`, in their order, while every vertex is
-/// where it was read: on the same point, or on its mirror image in x (a polyline whose normal
-/// points down is read mirrored). `None` once a vertex was added, removed, moved or the order
-/// changed: the identifiers no longer say which vertex is which.
+/// where it was read. `None` once a vertex was added, removed, moved or the order changed: the
+/// identifiers no longer say which vertex is which.
 pub fn vertex_ids_for(kept: &[VertexId], points: impl ExactSizeIterator<Item = (f64, f64)> + Clone) -> Option<Vec<i32>> {
     if kept.is_empty() || kept.len() != points.len() {
         return None;
     }
-    let same = |sign: f64| kept.iter().zip(points.clone()).all(|(k, (x, y))| k.x == sign * x && k.y == y);
-    (same(1.0) || same(-1.0)).then(|| kept.iter().map(|k| k.id).collect())
+    kept.iter().zip(points).all(|(k, (x, y))| k.x == x && k.y == y).then(|| kept.iter().map(|k| k.id).collect())
 }
 
 impl ForeignExtra {

@@ -1,5 +1,5 @@
-//! A lightweight polyline keeps its vertex identifiers (LWPOLYLINE group 91, DXF 2010 and later:
-//! "vertex identifier (if not 0)") through a save while its vertices are where they were read.
+//! A lightweight polyline keeps its vertex identifiers (LWPOLYLINE group 91 after a vertex, DXF
+//! 2010 and later) through a save while its vertices are where they were read.
 //! Geometric constraints name a polyline's segments by these identifiers. CADCraft's polyline has
 //! none, so every save wrote the polyline without them, and what the constraints name was gone.
 //!
@@ -16,10 +16,16 @@ use cadcraft_io::{SaveOptions, Version, read, write_with};
 const VERTEX_IDS: [i32; 4] = [2, 5, 7, 1];
 
 fn polyline_dwg() -> Vec<u8> {
+    polyline_dwg_with([(0.0, 0.0), (40.0, 0.0), (40.0, 25.0), (0.0, 25.0)], 1.0)
+}
+
+/// A DWG with one closed polyline at `points`, its normal along `normal_z` Z.
+fn polyline_dwg_with(points: [(f64, f64); 4], normal_z: f64) -> Vec<u8> {
     let mut doc = CadDocument::with_version(DxfVersion::AC1032);
     let mut polyline = LwPolyline::new();
     polyline.is_closed = true;
-    for (id, (x, y)) in VERTEX_IDS.iter().zip([(0.0, 0.0), (40.0, 0.0), (40.0, 25.0), (0.0, 25.0)]) {
+    polyline.normal = acadrust::Vector3::new(0.0, 0.0, normal_z);
+    for (id, (x, y)) in VERTEX_IDS.iter().zip(points) {
         polyline.vertices.push(LwVertex { vertex_id: *id, ..LwVertex::new(Vector2::new(x, y)) });
     }
     doc.add_entity(EntityType::LwPolyline(polyline)).expect("add the polyline");
@@ -81,7 +87,45 @@ fn an_edited_polyline_drops_its_vertex_identifiers() {
         }));
         vertex_ids_of(&save(&d, "edited.dwg", Version::R2018))
     };
-    assert_ne!(after(|p| p.vertices.reverse()), VERTEX_IDS, "reversed");
+    assert_eq!(after(|p| p.vertices.reverse()), [0; 4], "reversed");
     assert_eq!(after(|p| p.vertices.reverse()), VERTEX_IDS, "reversed back: every vertex is where it was read");
-    assert_ne!(after(|p| p.vertices[1].p.x += 1.0), VERTEX_IDS, "a vertex moved");
+    assert_eq!(after(|p| p.vertices[1].p.x += 1.0), [0; 4], "a vertex moved");
+}
+
+/// A polyline whose normal points down is read mirrored in x; untouched, it keeps its identifiers.
+#[test]
+fn a_polyline_facing_down_keeps_its_vertex_identifiers() {
+    cadcraft_io::dwg_worker::allow_in_process();
+    let d = read(&polyline_dwg_with([(0.0, 0.0), (40.0, 0.0), (40.0, 25.0), (0.0, 25.0)], -1.0), "down.dwg").unwrap();
+    assert_eq!(vertex_ids_of(&save(&d, "saved.dwg", Version::R2018)), VERTEX_IDS);
+}
+
+/// Reversed, a polyline symmetric about x = 0 has its mirror image's points: the identifiers still
+/// no longer say which vertex is which.
+#[test]
+fn a_reversed_symmetric_polyline_drops_its_vertex_identifiers() {
+    cadcraft_io::dwg_worker::allow_in_process();
+    let mut d = read(&polyline_dwg_with([(-20.0, 0.0), (-20.0, 25.0), (20.0, 25.0), (20.0, 0.0)], 1.0), "sym.dwg").unwrap();
+    let handle = d.model.iter().find(|e| matches!(e.kind, cadcraft_doc::EntityKind::LwPolyline(_))).map(|e| e.handle).unwrap();
+    assert!(d.model.modify(handle, |e: &mut cadcraft_doc::Entity| {
+        if let cadcraft_doc::EntityKind::LwPolyline(p) = &mut e.kind {
+            p.vertices.reverse();
+        }
+    }));
+    assert_eq!(vertex_ids_of(&save(&d, "saved.dwg", Version::R2018)), [0; 4]);
+}
+
+/// A group 91 inside an application's `102 {` group of the record is not a vertex identifier.
+#[test]
+fn a_91_inside_an_application_group_is_not_an_identifier() {
+    cadcraft_io::dwg_worker::allow_in_process();
+    let d = read(&polyline_dwg(), "polyline.dwg").unwrap();
+    let dxf = String::from_utf8(save(&d, "saved.dxf", Version::R2018)).unwrap();
+    let mut lines: Vec<&str> = dxf.lines().collect();
+    let start = lines.windows(2).position(|pair| pair[0].trim() == "0" && pair[1].trim() == "LWPOLYLINE").unwrap();
+    // After the first vertex's identifier.
+    let at = (start..lines.len()).step_by(2).find(|i| lines[*i].trim() == "91").unwrap() + 2;
+    lines.splice(at..at, ["102", "{SOMEAPP", " 91", "9", "102", "}"]);
+    let back = read(lines.join("\n").as_bytes(), "app.dxf").unwrap();
+    assert_eq!(dxf_vertex_ids(&save(&back, "again.dxf", Version::R2018)), ["2", "5", "7", "1"]);
 }

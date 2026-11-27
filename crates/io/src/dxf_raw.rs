@@ -301,9 +301,24 @@ fn extra(kind: &str, tags: &[Tag], entity: bool, unknown: bool, kept: &HashSet<S
 
 /// A LWPOLYLINE record's vertices with their identifiers (group 91 after a vertex's point): one
 /// per vertex, identifier 0 for a vertex without one; empty when no vertex has one
-/// ([`ForeignExtra::vertex_ids`]).
+/// ([`ForeignExtra::vertex_ids`]). The points are as the reader gives them: mirrored in x when
+/// the normal points down. Groups inside an application's `102 {` … `102 }` are not the
+/// polyline's.
 fn vertex_ids(tags: &[Tag]) -> Vec<VertexId> {
-    let own = || tags.iter().take_while(|t| t.code < 1000);
+    let mut in_app = false;
+    let own_tags: Vec<&Tag> = tags
+        .iter()
+        .take_while(|t| t.code < 1000)
+        .filter(|t| {
+            if t.code == 102 {
+                in_app = t.str().trim_start().starts_with('{');
+                return false;
+            }
+            !in_app
+        })
+        .collect();
+    let own = || own_tags.iter().copied();
+    let down = own().any(|t| t.code == 230 && t.f64() < 0.0);
     if !own().any(|t| t.code == 91 && t.i64() != 0) {
         return Vec::new();
     }
@@ -312,7 +327,7 @@ fn vertex_ids(tags: &[Tag]) -> Vec<VertexId> {
         match t.code {
             // A polyline past the cap keeps none: identifiers for some of its vertices would be wrong.
             10 if ids.len() >= MAX_VERTEX_IDS => return Vec::new(),
-            10 => ids.push(VertexId { id: 0, x: t.f64(), y: 0.0 }),
+            10 => ids.push(VertexId { id: 0, x: if down { -t.f64() } else { t.f64() }, y: 0.0 }),
             20 => {
                 if let Some(last) = ids.last_mut() {
                     last.y = t.f64();
