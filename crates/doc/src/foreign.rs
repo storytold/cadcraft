@@ -89,9 +89,34 @@ pub struct Foreign {
     /// The drawing's own `$ACADVER` is the version it is saved as, which SAVEAS changes, so a
     /// later save must not take it for this one (#2471).
     pub version: Option<String>,
+    /// Block references with kept annotation scale contexts, as they were read: what a context
+    /// is brought up to date from (see [`KeptPlacement`]), by handle.
+    pub placements: BTreeMap<Handle, KeptPlacement>,
     /// The file's registered applications (APPID names as read, in file order). Saving writes
     /// them all back, whether or not any xdata still names them.
     pub appids: Vec<String>,
+}
+
+/// A block reference as read: its insertion point, rotation (radians) and scale, and each of its
+/// attributes as read, in order. Its kept contexts were written for it then; what it did since
+/// moves them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KeptPlacement {
+    pub insert: crate::geom::Vec3,
+    pub rotation: f64,
+    pub scale: crate::geom::Vec3,
+    pub attribs: Vec<KeptAttrib>,
+}
+
+/// An attribute of a block reference as read: its tag, insertion and alignment points and
+/// rotation (radians). Found again by tag and place among the reference's attributes with that
+/// tag, since the attributes can be reordered or replaced (ATTSYNC) after the file is read.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KeptAttrib {
+    pub tag: String,
+    pub insert: crate::geom::Vec3,
+    pub align: crate::geom::Vec3,
+    pub rotation: f64,
 }
 
 impl Foreign {
@@ -110,6 +135,7 @@ impl Foreign {
             && self.targets.is_empty()
             && self.class_order.is_empty()
             && self.data_store.is_empty()
+            && self.placements.is_empty()
             && self.appids.is_empty()
     }
 

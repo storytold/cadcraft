@@ -4,7 +4,7 @@ use super::{
     dxf_ext,
 };
 
-/// `AcadAnnotative` xdata marking an annotative style.
+/// `AcadAnnotative` xdata marking an annotative style or block.
 pub(super) fn annotative_xdata(w: &mut W) {
     w.s(1001, "AcadAnnotative");
     w.s(1000, "AnnotativeData");
@@ -25,6 +25,7 @@ pub(super) fn dim_xdata(w: &mut W, dm: &Dimension, cx: &Ctx) {
         ucss: HashMap::new(),
         vport_ucs: Vec::new(),
         reactors: HashMap::new(),
+        xdicts: HashMap::new(),
     };
     let mut sah = false;
     for (k, v) in &dm.overrides {
@@ -92,8 +93,8 @@ pub(super) fn common_x(w: &mut W, e: &Entity, owner: &str, paper: bool, subclass
         let rs: Vec<&str> = reactors.iter().map(String::as_str).collect();
         w.group("ACAD_REACTORS", 330, &rs);
     }
-    if let Some(a) = assoc {
-        w.group("ACAD_XDICTIONARY", 360, &[&a.xdict]);
+    if let Some(xd) = assoc.map(|a| a.xdict.clone()).or_else(|| w.xdicts.get(&e.handle).cloned()) {
+        w.group("ACAD_XDICTIONARY", 360, &[&xd]);
     }
     w.s(330, owner);
     w.s(100, "AcDbEntity");
