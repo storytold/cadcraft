@@ -25,6 +25,125 @@ pub fn leaves(catalog: &str) -> Vec<String> {
     out
 }
 
+/// RFC-0052 hand marks for menu leaves no engine command covers: `(path, headless, reach, why)`.
+/// A path ending in ` > ` marks every leaf under it; the longest matching path wins.
+///
+/// `headless` is `no` or `partial`; `reach` is `window` (needs a desktop window, dialog or pointer),
+/// `os` (needs an OS or online service the engine doesn't wrap) or `engine-gap` (could be an engine
+/// command, isn't one yet). `yes` is never written here: a leaf is `yes` only when a command from
+/// `cadcraft-cli commands`, the engine registry the CLI and the MCP server load, covers it. An
+/// unmarked uncovered leaf is `unknown`. [`mark_errors`] rejects marks that match nothing or only
+/// hide a `yes`.
+pub const HEADLESS: &[(&str, &str, &str, &str)] = &[
+    ("Draw > 3D Modeling > ", "no", "engine-gap", "3D solid and surface creation could be commands"),
+    ("Modify > 3D Operations > ", "no", "engine-gap", "3D operations could be commands"),
+    ("Modify > Solid Editing > ", "no", "engine-gap", "solid editing could be commands"),
+    ("Modify > Mesh Editing > ", "no", "engine-gap", "mesh editing could be commands"),
+    ("Modify > Surface Editing > ", "no", "engine-gap", "surface editing could be commands"),
+    ("View > 3D Views > ", "no", "engine-gap", "a saved view direction could be set by a command"),
+    ("View > Visual Styles > ", "no", "engine-gap", "a visual style could be set by a command"),
+    ("View > Render > ", "no", "engine-gap", "rendering could be a command"),
+    ("View > Camera > ", "no", "engine-gap", "cameras could be created by a command"),
+    ("View > Lights", "no", "engine-gap", "lights could be created by a command"),
+    ("View > Hide", "no", "engine-gap", "hidden-line output could be a command"),
+    ("View > Orbit > ", "no", "window", "drags the desktop view"),
+    ("View > Pan > ", "no", "window", "drags the desktop view"),
+    ("View > ViewCube > ", "no", "window", "a desktop view control"),
+    ("View > UCS Icon > ", "no", "window", "a desktop view overlay"),
+    ("View > Enter Full Screen", "no", "window", "the desktop window"),
+    ("Tools > New UCS > ", "no", "engine-gap", "a coordinate system could be set by a command"),
+    ("Tools > Named UCS...", "no", "engine-gap", "named coordinate systems could be commands"),
+    ("Tools > Customize > ", "no", "window", "a desktop dialog"),
+    ("Window > ", "no", "window", "opens or arranges a desktop window or palette"),
+    ("Help > ", "no", "window", "a desktop help window or dialog"),
+    ("Help > AutoCAD Help", "no", "os", "opens online help in the browser"),
+    ("Help > What's New", "no", "os", "opens online help in the browser"),
+    ("Help > Send Feedback", "no", "os", "an online feedback service"),
+    ("Help > Download Offline Help", "no", "os", "an online download"),
+    ("Help > Autodesk Assistant", "no", "os", "an online assistant service"),
+    ("File > Share...", "no", "os", "an online sharing service"),
+    ("File > Open Recent > ", "no", "window", "the desktop recent-files list"),
+    ("File > New Sheet Set...", "no", "engine-gap", "sheet sets could be commands"),
+    ("File > Open Sheet Set...", "no", "engine-gap", "sheet sets could be commands"),
+    ("File > Package Drawing...", "no", "engine-gap", "packaging a drawing could be a command"),
+    ("File > Export Layout to Model...", "no", "engine-gap", "the export could be a command"),
+    ("File > DWG Compare...", "no", "engine-gap", "comparing drawings could be a command"),
+    ("File > Markup Import...", "no", "engine-gap", "the import could be a command"),
+    ("File > Attach...", "no", "engine-gap", "attaching a reference could be a command"),
+    ("Edit > Undo Group of commands", "no", "engine-gap", "undo groups could be a command"),
+    ("Insert > Raster Image Reference...", "no", "engine-gap", "the reference could be inserted by a command"),
+    ("Insert > PDF Underlay...", "no", "engine-gap", "the underlay could be inserted by a command"),
+    ("Insert > Layout > ", "no", "engine-gap", "layouts could be created by a command"),
+    ("Insert > Field...", "no", "engine-gap", "fields could be inserted by a command"),
+    ("Insert > Drawing Exchange Binary...", "no", "engine-gap", "the import could be a command"),
+    ("Insert > ACIS File...", "no", "engine-gap", "the import could be a command"),
+    ("Format > Transparency", "no", "engine-gap", "transparency could be set by a command"),
+    ("Tools > Spelling", "no", "engine-gap", "a spell check could be a command"),
+    ("Tools > Update Fields", "no", "engine-gap", "updating fields could be a command"),
+    ("Tools > Edit Xref in Place", "no", "window", "edits a reference in the desktop view"),
+    ("Tools > Import Settings", "no", "engine-gap", "importing settings could be a command"),
+    ("Tools > Export Settings", "no", "engine-gap", "exporting settings could be a command"),
+    ("Tools > Express Tools > Super Hatch > ", "no", "engine-gap", "image and reference hatches could be commands"),
+    ("Tools > Express Tools > Super Hatch > Select Existing Object", "no", "window", "picks an object in the desktop view"),
+    ("Modify > Object > External Reference > Frame", "no", "engine-gap", "the frame setting could be a command"),
+    ("Modify > Object > Image > ", "no", "engine-gap", "image settings could be commands"),
+    ("Modify > Clip > Image", "no", "engine-gap", "clipping an image could be a command"),
+];
+
+/// Whether a `HEADLESS` path covers a leaf.
+fn mark_covers(mark: &str, leaf: &str) -> bool {
+    mark == leaf || (mark.ends_with(" > ") && leaf.starts_with(mark))
+}
+
+/// A leaf's RFC-0052 `(headless, reach, why)`: `yes` when an engine command covers it, else the
+/// longest mark that covers it, else `unknown`.
+pub fn headless_of<'a>(leaf: &str, covered: bool, marks: &[(&'a str, &'a str, &'a str, &'a str)]) -> (&'a str, Option<&'a str>, &'a str) {
+    if covered {
+        return ("yes", None, "");
+    }
+    marks.iter().filter(|m| mark_covers(m.0, leaf)).max_by_key(|m| m.0.len()).map_or(("unknown", None, ""), |m| (m.1, Some(m.2), m.3))
+}
+
+/// Problems with `marks` against `leaves` (`(path, covered)`): bad values, repeats, a mark that
+/// matches no leaf, and a mark whose leaves are all covered (it would only hide a `yes`).
+pub fn mark_errors(marks: &[(&str, &str, &str, &str)], leaves: &[(String, bool)]) -> Vec<String> {
+    let mut errs = Vec::new();
+    for (i, (path, value, reach, _)) in marks.iter().enumerate() {
+        if !matches!(*value, "no" | "partial") {
+            errs.push(format!("headless mark `{path}`: `{value}` is not `no` or `partial` (`yes` comes from the registry)"));
+        }
+        if !matches!(*reach, "window" | "os" | "engine-gap") {
+            errs.push(format!("headless mark `{path}`: reach `{reach}` is not window, os or engine-gap"));
+        }
+        if marks[..i].iter().any(|m| m.0 == *path) {
+            errs.push(format!("headless mark `{path}` is written twice"));
+        }
+        let hits: Vec<bool> = leaves.iter().filter(|l| mark_covers(path, &l.0)).map(|l| l.1).collect();
+        if hits.is_empty() {
+            errs.push(format!("headless mark `{path}` matches no catalog leaf"));
+        } else if hits.iter().all(|c| *c) {
+            errs.push(format!("headless mark `{path}` is stale: a command covers every leaf it marks"));
+        }
+    }
+    errs
+}
+
+/// The RFC-0052 summary line for `values` (`(headless, reach)` per leaf).
+pub fn headless_summary(values: &[(&str, Option<&str>)]) -> String {
+    let count = |v: &str| values.iter().filter(|h| h.0 == v).count();
+    let no = |r: &str| values.iter().filter(|h| h.0 == "no" && h.1 == Some(r)).count();
+    format!(
+        "**Headless ([RFC-0052](https://github.com/storytold/craft-contrib/blob/main/rfcs/0052-headless-reach.md)): {} yes, {} no (window {}, os {}, engine-gap {}), {} partial, {} unknown.**",
+        count("yes"),
+        count("no"),
+        no("window"),
+        no("os"),
+        no("engine-gap"),
+        count("partial"),
+        count("unknown")
+    )
+}
+
 /// Where the generated checklist goes.
 pub const OUT: &str = "docs/parity-checklist.md";
 
@@ -85,12 +204,14 @@ pub fn run(root: &Path) -> Result<(), String> {
     let ls = leaves(&catalog);
     let mut by_menu: Vec<(String, usize, usize)> = Vec::new();
     let mut missing = Vec::new();
+    let mut checked: Vec<(String, bool)> = Vec::new();
     let mut hit = 0;
     for l in &ls {
         let top = l.split(" > ").next().unwrap_or("").to_string();
         let lower = l.to_ascii_lowercase();
         let leaf = lower.rsplit(" > ").next().unwrap_or("").to_string();
         let ok = paths.contains(&lower) || labels.contains(&leaf);
+        checked.push((l.clone(), ok));
         if ok {
             hit += 1;
         } else {
@@ -104,6 +225,11 @@ pub fn run(root: &Path) -> Result<(), String> {
             None => by_menu.push((top, 1, usize::from(ok))),
         }
     }
+    let errs = mark_errors(HEADLESS, &checked);
+    if !errs.is_empty() {
+        return Err(format!("RFC-0052 headless marks in xtask/src/parity.rs:\n  {}", errs.join("\n  ")));
+    }
+    let values: Vec<(&str, Option<&str>)> = checked.iter().map(|(l, ok)| headless_of(l, *ok, HEADLESS)).map(|h| (h.0, h.1)).collect();
     let pct = |a: usize, b: usize| if b == 0 { 0.0 } else { 100.0 * a as f64 / b as f64 };
     let mut md = format!(
         "# Parity checklist\n\n> **Generated:** {} by `cargo xtask parity`. Do not edit by hand.\n\nMenu-breadth parity: a reference menu item counts as covered when a CADCraft command is registered under the same menu label. It measures breadth, not depth; see [target-app-parity.md](target-app-parity.md) for the weighted assessment.\n\n**Menu breadth: {hit} / {} items ({:.0}%)** · {} registered commands.\n\n| Menu | Items | Covered | % |\n|---|---|---|---|\n",
@@ -115,9 +241,15 @@ pub fn run(root: &Path) -> Result<(), String> {
     for (m, n, k) in &by_menu {
         md += &format!("| {m} | {n} | {k} | {:.0}% |\n", pct(*k, *n));
     }
+    md += &format!(
+        "\n{}\n\nA covered item is `headless: yes`: the command that covers it is in the engine registry that `cadcraft-cli` and the MCP server load. An item not covered carries its hand mark from `HEADLESS` in `xtask/src/parity.rs`, or `unknown`.\n",
+        headless_summary(&values)
+    );
     md += "\n## Not yet covered\n\n";
     for m in &missing {
-        md += &format!("- {m}\n");
+        let (value, reach, why) = headless_of(m, false, HEADLESS);
+        let reach = reach.map(|r| format!(", reach: {r} ({why})")).unwrap_or_default();
+        md += &format!("- {m}: headless: {value}{reach}\n");
     }
     std::fs::write(root.join(OUT), md).map_err(|e| format!("{OUT}: {e}"))?;
     println!("parity: {hit}/{} menu items ({:.0}%) → {OUT}", ls.len(), pct(hit, ls.len()));
@@ -143,6 +275,36 @@ mod tests {
         if let Some(far) = std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(u64::MAX / 2)) {
             assert_eq!(date(far), "292277026596-12-04");
         }
+    }
+
+    #[test]
+    fn headless_marks_pick_the_longest_path() {
+        let marks = [("W > ", "no", "window", "a"), ("W > C > ", "no", "os", "b"), ("X", "partial", "engine-gap", "c")];
+        assert_eq!(headless_of("W > C > M", false, &marks), ("no", Some("os"), "b"));
+        assert_eq!(headless_of("W > Mix", false, &marks), ("no", Some("window"), "a"));
+        assert_eq!(headless_of("W > Mix", true, &marks).0, "yes", "a covered leaf is yes whatever the mark says");
+        assert_eq!(headless_of("WX", false, &marks).0, "unknown", "a prefix mark needs the separator");
+        let s = headless_summary(&[("yes", None), ("no", Some("window")), ("no", Some("os")), ("unknown", None)]);
+        assert!(s.contains("1 yes, 2 no (window 1, os 1, engine-gap 0), 0 partial, 1 unknown"), "{s}");
+    }
+
+    #[test]
+    fn bad_headless_marks_are_refused() {
+        let leaves = [("W > Mix".to_string(), false), ("X".to_string(), true)];
+        let bad = [("W > ", "yes", "window", ""), ("W > ", "no", "desk", ""), ("X", "no", "os", ""), ("Z", "no", "os", "")];
+        let errs = mark_errors(&bad, &leaves);
+        for want in ["is not `no` or `partial`", "reach `desk`", "written twice", "`X` is stale", "`Z` matches no catalog leaf"] {
+            assert!(errs.iter().any(|e| e.contains(want)), "{want}: {errs:?}");
+        }
+    }
+
+    #[test]
+    fn checked_in_marks_name_catalog_leaves() {
+        let catalog = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/data/menu-catalog.txt")).unwrap_or_default();
+        let leaves: Vec<(String, bool)> = leaves(&catalog).into_iter().map(|l| (l, false)).collect();
+        assert!(!leaves.is_empty());
+        let errs = mark_errors(HEADLESS, &leaves);
+        assert!(errs.is_empty(), "{errs:?}");
     }
 
     #[test]
