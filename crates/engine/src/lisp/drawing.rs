@@ -1349,7 +1349,7 @@ pub fn load_source(s: &Session, name: &str) -> Option<String> {
     // startup files) a relative name is read as given.
     let dir = match s.lisp_support_dir() {
         Some(d) if !std::path::Path::new(name).is_absolute() => d,
-        _ => return candidates.iter().find_map(super::builtins::read_text_file),
+        _ => return read_module(candidates.iter().map(std::path::PathBuf::from)),
     };
     // A relative name stays inside the support folder: plain folder and file names only. `..` would
     // climb out of it, and on Windows a rooted name (`\tools`) or a drive-relative one (`C:tools`,
@@ -1358,7 +1358,51 @@ pub fn load_source(s: &Session, name: &str) -> Option<String> {
     if !std::path::Path::new(name).components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir)) {
         return None;
     }
-    candidates.iter().find_map(|c| super::builtins::read_text_file(dir.join(c)))
+    read_module(candidates.iter().map(|c| dir.join(c)))
+}
+
+/// Read the first candidate that exists, trying each exact name first. A module written on Windows
+/// names its include in one case and ships the file in another: Windows resolved that for free and
+/// a case-sensitive file system does not, so when no candidate matched, retry with the case of the
+/// name ignored. The folders in a candidate are used exactly as given.
+fn read_module(paths: impl Iterator<Item = std::path::PathBuf>) -> Option<String> {
+    let paths: Vec<std::path::PathBuf> = paths.collect();
+    if let Some(text) = paths.iter().find_map(super::builtins::read_text_file) {
+        return Some(text);
+    }
+    paths.iter().find_map(|path| resolve_name_ignoring_case(path).and_then(|found| super::builtins::read_text_file(&found)))
+}
+
+/// Find `path` when only the case of its last component differs from what is on disk.
+///
+/// Where a folder holds more than one spelling that matches, the smallest name wins, so the answer
+/// does not depend on directory order.
+#[cfg(not(target_arch = "wasm32"))]
+fn resolve_name_ignoring_case(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let wanted = path.file_name()?.to_str()?.to_lowercase();
+    let dir = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => std::path::Path::new("."),
+    };
+    let mut best: Option<std::path::PathBuf> = None;
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let name = entry.file_name();
+        let Some(candidate) = name.to_str() else { continue };
+        if candidate.to_lowercase() != wanted || !entry.metadata().is_ok_and(|meta| meta.is_file()) {
+            continue;
+        }
+        let full = dir.join(candidate);
+        if best.as_ref().is_none_or(|prev| full < *prev) {
+            best = Some(full);
+        }
+    }
+    best
+}
+
+/// The web has no file system for path lookup.
+#[cfg(target_arch = "wasm32")]
+fn resolve_name_ignoring_case(_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    None
 }
 
 #[cfg(test)]
