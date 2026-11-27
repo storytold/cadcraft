@@ -269,6 +269,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
     // removing or adding layers doesn't move them (#3094).
     d.proxy_layers.clone_from(&rx.proxy_tables.layers);
     keep_file_order(&mut d.linetypes, |l| &l.name, &rx.proxy_tables.linetypes, &["ByBlock", "ByLayer"]);
+    d.proxy_linetypes.clone_from(&rx.proxy_tables.linetypes);
     // A proxy text takes the first style on its font, so the styles keep the file's order too.
     let styles: Vec<String> = rx.proxy_tables.styles.iter().map(|(n, _)| n.clone()).collect();
     keep_file_order(&mut d.text_styles, |s| &s.name, &styles, &[]);

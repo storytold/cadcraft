@@ -220,14 +220,19 @@ fn linetypes_inside(e: &cadcraft_doc::Entity) -> Vec<String> {
     out
 }
 
-/// The linetypes named by objects, layers, dimension styles and multiline styles.
+/// The linetypes named by objects, layers, dimension styles and multiline styles, and the ones
+/// proxy graphics draw with (as for layers: saving names them by their index in the table).
 fn linetypes_in_use(d: &Drawing) -> impl Iterator<Item = String> + '_ {
     let objects = entities(d).map(|e| e.common.linetype.clone());
+    let graphics = entities(d).flat_map(|e| match &e.kind {
+        EntityKind::Unknown(u) => u.graphics.iter().map(|g| g.common.linetype.clone()).collect(),
+        _ => Vec::new(),
+    });
     let inside = entities(d).flat_map(|e| linetypes_inside(e));
     let layers = d.layers.iter().map(|l| l.linetype.clone());
     let dims = d.dim_styles.iter().flat_map(|t| [t.dim_linetype.clone(), t.ext_linetype1.clone(), t.ext_linetype2.clone()]);
     let mlines = d.mline_styles.iter().flat_map(|t| t.elements.iter().map(|e| e.linetype.clone()));
-    objects.chain(inside).chain(layers).chain(dims).chain(mlines)
+    objects.chain(graphics).chain(inside).chain(layers).chain(dims).chain(mlines)
 }
 
 /// Names of the unused objects of a named kind, in table order. This is PURGE's scan; `USAGE`

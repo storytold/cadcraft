@@ -582,7 +582,10 @@ fn gather_in(
             }
         }
         let mut sink = Sink { osmode, aperture, probe, cands: &mut cands, near: &mut near_prims };
-        sink.object(&e.kind, None);
+        // A record kept as read snaps to its graphics one by one, below.
+        if !matches!(e.kind, EntityKind::Unknown(_)) {
+            sink.object(&e.kind, None);
+        }
         // A block reference snaps to the objects inside it, placed by its transform.
         if let EntityKind::Insert(ins) = &e.kind {
             block_leaves(d, ins, &Mat3::IDENTITY, 0, &mut budget, frozen, &mut |k, m| sink.object(k, Some(m)));
@@ -590,14 +593,10 @@ fn gather_in(
         if let EntityKind::Dimension(dm) = &e.kind {
             sink.dimension(d, dm, &mut budget, frozen);
         }
-        // A dimension kept as read draws its block through a reference in its graphics (#3438),
-        // and snaps to the objects inside it the same way.
+        // A proxy snaps to what its graphics draw, and a dimension kept as read to the objects of
+        // the block it draws through a reference in them (#3438).
         if let EntityKind::Unknown(u) = &e.kind {
-            for g in &u.graphics {
-                if let EntityKind::Insert(ins) = &g.kind {
-                    block_leaves(d, ins, &Mat3::IDENTITY, 0, &mut budget, frozen, &mut |k, m| sink.object(k, Some(m)));
-                }
-            }
+            graphics_leaves(d, u, &Mat3::IDENTITY, 0, &mut budget, frozen, &mut |k, m| sink.object(k, Some(m)));
         }
     }
     Some((cands, near_prims))
@@ -908,10 +907,7 @@ fn block_leaves(d: &Drawing, ins: &Insert, m: &Mat3, depth: usize, budget: &mut 
                     return;
                 }
                 *budget -= 1;
-                // Objects on layer 0 take the reference's layer, which is visible.
-                if !be.common.visible
-                    || (be.common.layer != "0" && (!d.is_visible(be) || frozen.iter().any(|l| l.eq_ignore_ascii_case(&be.common.layer))))
-                {
+                if !drawn_inside(d, be, frozen) {
                     continue;
                 }
                 match &be.kind {
@@ -921,17 +917,41 @@ fn block_leaves(d: &Drawing, ins: &Insert, m: &Mat3, depth: usize, budget: &mut 
                     EntityKind::Dimension(dm) if let Some(blk) = dm.block.as_ref().and_then(|n| d.block(n)) => {
                         block_leaves(d, &dimension_reference(blk, dm), &mm, depth + 1, budget, frozen, f);
                     }
-                    k @ EntityKind::Unknown(u) => {
-                        f(k, &mm);
-                        for g in &u.graphics {
-                            if let EntityKind::Insert(inner) = &g.kind {
-                                block_leaves(d, inner, &mm, depth + 1, budget, frozen, f);
-                            }
-                        }
-                    }
+                    EntityKind::Unknown(u) => graphics_leaves(d, u, &mm, depth + 1, budget, frozen, f),
                     k => f(k, &mm),
                 }
             }
+        }
+    }
+}
+
+/// Whether `e`, inside a block reference or a record's graphics, is drawn: not hidden, and on
+/// layer 0 (which takes the visible layer of what holds it) or a layer that is on and not frozen.
+fn drawn_inside(d: &Drawing, e: &cadcraft_doc::Entity, frozen: &[String]) -> bool {
+    e.common.visible && (e.common.layer == "0" || (d.is_visible(e) && !frozen.iter().any(|l| l.eq_ignore_ascii_case(&e.common.layer))))
+}
+
+/// Calls `f` with each object the graphics of a record kept as read draw (a proxy's, #2697, or a
+/// kept dimension's reference to its block, #3438) and the transform `m` placing it, as the
+/// renderer draws them: like a block's contents, so graphics on a layer that is off or frozen
+/// are left out. The fill hatches are too: each filled shape's outline is drawn as well, and the
+/// hatch's sides would offer snaps inside it.
+fn graphics_leaves(
+    d: &Drawing,
+    u: &cadcraft_doc::Unknown,
+    m: &Mat3,
+    depth: usize,
+    budget: &mut usize,
+    frozen: &[String],
+    f: &mut dyn FnMut(&EntityKind, &Mat3),
+) {
+    for g in &u.graphics {
+        if matches!(g.kind, EntityKind::Hatch(_)) || !drawn_inside(d, g, frozen) {
+            continue;
+        }
+        match &g.kind {
+            EntityKind::Insert(inner) => block_leaves(d, inner, m, depth, budget, frozen, f),
+            k => f(k, m),
         }
     }
 }
@@ -1275,6 +1295,52 @@ mod tests {
         d.add(&Space::Model, c, l).unwrap();
         assert!(nearest_with_direction(&d, &Space::Model, Vec2::new(5.0, 30.1), 0.5, &[], Handle(0)).is_some());
         assert_eq!(nearest_with_direction(&d, &Space::Model, Vec2::new(5.0, 30.1), 0.5, &["HIDDEN".to_string()], Handle(0)), None);
+    }
+
+    /// A proxy snaps to its graphics as the renderer draws them: not to those on a layer that is
+    /// off or frozen (in the drawing or the viewport), though the proxy's own layer is visible;
+    /// those on layer 0 take the proxy's. Inside a block the same, beside a visible line that keeps
+    /// the block in reach.
+    #[test]
+    fn proxy_graphics_on_hidden_layers_offer_no_snaps() {
+        let mut d = drawing();
+        for (name, on, frozen) in [("OFF", false, false), ("ICE", true, true), ("VP", true, false)] {
+            d.ensure_layer(name);
+            let l = d.layer_mut(name).unwrap();
+            (l.on, l.frozen) = (on, frozen);
+        }
+        let line = |layer: &str, y: f64| cadcraft_doc::Entity {
+            common: Common { layer: layer.into(), ..Common::default() },
+            ..cadcraft_doc::Entity::new(Handle(0), EntityKind::Line(Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(10.0, y, 0.0) }))
+        };
+        let graphics = vec![line("OFF", 20.0), line("0", 25.0), line("ICE", 30.0), line("VP", 35.0)];
+        let proxy = EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics });
+        d.add(&Space::Model, Common::default(), proxy.clone()).unwrap();
+        let mut blk = cadcraft_doc::Block::new("PROXIES");
+        blk.entities.push(cadcraft_doc::Entity::new(Handle(1), proxy));
+        blk.entities.push(line("0", 21.0));
+        d.blocks.insert("PROXIES".into(), std::sync::Arc::new(blk));
+        let ins = cadcraft_doc::Insert {
+            block: "PROXIES".into(),
+            insert: Vec3::new(100.0, 0.0, 0.0),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            ..Default::default()
+        };
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+        let frozen = ["vp".to_string()];
+        let end = |x: f64, y: f64| {
+            let at = Vec2::new(x, y);
+            osnap_in(&d, &Space::Model, &None, at + Vec2::new(0.02, -0.01), 0.5, mode::END, None, false, &frozen, None)
+                .into_iter()
+                .any(|h| h.point.dist(at) < 1e-9)
+        };
+        for x in [10.0, 110.0] {
+            assert!(end(x, 25.0), "layer 0 at {x}");
+            for y in [20.0, 30.0, 35.0] {
+                assert!(!end(x, y), "hidden at ({x}, {y})");
+            }
+        }
+        assert!(end(110.0, 21.0), "the block's own line");
     }
 
     #[test]

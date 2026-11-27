@@ -35,6 +35,36 @@ pub struct ProxyTables {
     pub styles: Vec<(String, String)>,
 }
 
+/// The LAYER and LTYPE names the indices of proxy graphics count in, in table order (the
+/// linetypes without ByBlock and ByLayer, as in [`ProxyTables`]).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TableOrder<'a> {
+    pub layers: &'a [String],
+    pub linetypes: &'a [String],
+}
+
+/// The chunk that sets the layer by its index (ATTRIBUTE_LAYER).
+const LAYER_CHUNK: u32 = 16;
+/// The chunk that sets the linetype by its index (ATTRIBUTE_LINETYPE).
+const LINETYPE_CHUNK: u32 = 18;
+/// The linetype indices that stand for ByBlock and ByLayer.
+const LINETYPE_BYBLOCK: u32 = 32766;
+const LINETYPE_BYLAYER: u32 = 32767;
+
+/// The names a record's own graphics show for its table indices (`Unknown::names_by_index`).
+#[derive(Default)]
+struct Learned {
+    layers: std::collections::HashMap<u32, Option<String>>,
+    linetypes: std::collections::HashMap<u32, String>,
+}
+
+/// The names that stand for the table indices a record uses while it is decoded again to learn
+/// them; an index without one leaves the layer, or gives ByLayer, as one past a table does.
+struct Marks {
+    layers: std::collections::HashMap<u32, String>,
+    linetypes: std::collections::HashMap<u32, String>,
+}
+
 impl Unknown {
     /// The proxy graphics bytes of an entity: the 310 groups after its size group (92, or 160 in
     /// newer files), cut to that size. An ACAD_PROXY_ENTITY holds them in its proxy data: the size
@@ -92,21 +122,22 @@ impl Unknown {
         Some((at, size))
     }
 
-    /// The record's groups with the layer indices of its proxy graphics (ATTRIBUTE_LAYER) turned
-    /// into the written LAYER table `written`, by name; everything else as read. The name of an
-    /// index is the one the record's own decoded graphics draw on after it (so a proxy copied from
-    /// another drawing, or one whose layer was renamed, keeps the layer it shows); an index no
-    /// drawn entity follows takes the name from the file's table `read` (see
-    /// [`crate::Drawing::proxy_layers`]). A layer that is gone becomes layer 0 (the proxy's own
-    /// layer, as in a block); an index past the table, or one of a record without a name, stays
-    /// past the written one, which keeps the layer before it as AutoCAD does. Only the 310 groups
-    /// that hold the declared size are read and rewritten. `None` when no index changes, or the
-    /// graphics aren't readable.
-    pub fn with_proxy_layers(&self, read: &[String], written: &[String]) -> Option<Vec<RawTag>> {
-        // Only a proxy entity's own graphics: a kept dimension draws from its block instead.
-        if !self.dxf_type.eq_ignore_ascii_case("ACAD_PROXY_ENTITY") {
-            return None;
-        }
+    /// The record's groups with the table indices of its proxy graphics (ATTRIBUTE_LAYER and
+    /// ATTRIBUTE_LINETYPE) turned into the written tables `written`, by name; everything else as
+    /// read. The name of an index is the one the record's own decoded graphics use after it (so a
+    /// proxy copied from another drawing, or one whose layer was renamed, keeps what it shows);
+    /// an index no drawn entity follows takes the name from the file's tables `read` (see
+    /// [`crate::Drawing::proxy_layers`] and [`crate::Drawing::proxy_linetypes`]).
+    ///
+    /// A layer that is gone becomes layer 0 (the proxy's own layer, as in a block); a layer index
+    /// past the table, or one of a record without a name, stays past the written one, which keeps
+    /// the layer before it as AutoCAD does. A linetype that is gone, or an index that names none,
+    /// becomes ByLayer (32767, what an index past the table means too); ByBlock (32766) and
+    /// ByLayer stay. The picture of a kept dimension (#3438) is rewritten too: by the tables alone
+    /// when the dimension draws its block instead. Only the 310 groups that hold the declared size
+    /// are read and rewritten. `None` when no index changes, or the graphics aren't readable.
+    pub fn with_proxy_tables(&self, read: TableOrder<'_>, written: TableOrder<'_>) -> Option<Vec<RawTag>> {
+        use std::collections::HashMap;
         let (at, size) = self.graphics_size_group()?;
         let (mut bytes, mut groups) = (Vec::new(), Vec::new());
         for i in (at + 1..self.tags.len()).take_while(|&i| self.tags[i].code == 310) {
@@ -120,49 +151,72 @@ impl Unknown {
             groups.push((i, bytes.len() - before));
         }
         let end = size.min(bytes.len());
-        // The ATTRIBUTE_LAYER chunks: where each index sits.
-        let mut refs: Vec<(usize, u32)> = Vec::new();
+        // The ATTRIBUTE_LAYER (16) and ATTRIBUTE_LINETYPE (18) chunks: where each index sits.
+        let mut refs: Vec<(usize, u32, u32)> = Vec::new();
         let mut chunk = 8usize;
         while let (Some(len), Some(kind)) = (u32_at(&bytes[..end], chunk), u32_at(&bytes[..end], chunk + 4)) {
             let len = len as usize;
             if len < 8 || chunk.saturating_add(len) > end {
                 break;
             }
-            if kind == 16
+            if (kind == LAYER_CHUNK || kind == LINETYPE_CHUNK)
                 && let Some(i) = u32_at(&bytes[..chunk + len], chunk + 8)
             {
-                refs.push((chunk + 8, i));
+                refs.push((chunk + 8, kind, i));
             }
             chunk += len;
         }
         if refs.is_empty() {
             return None;
         }
-        let indices: Vec<u32> = refs.iter().map(|r| r.1).collect();
-        let learned = self.layers_by_index(&bytes[..end], &indices);
-        if read.is_empty() && learned.is_empty() {
-            return None;
-        }
+        let of = |k: u32| -> Vec<u32> { refs.iter().filter(|r| r.1 == k).map(|r| r.2).collect() };
+        let learned = self.names_by_index(&bytes[..end], &of(LAYER_CHUNK), &of(LINETYPE_CHUNK), read.layers);
         // Each written name's first place, found once.
-        let mut place: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-        for (p, n) in written.iter().enumerate() {
-            place.entry(n.to_ascii_lowercase()).or_insert(u32::try_from(p).unwrap_or(u32::MAX));
-        }
-        let zero = place.get("0").copied();
-        let past = u32::try_from(written.len()).unwrap_or(u32::MAX).max(u32::try_from(read.len()).unwrap_or(u32::MAX));
-        let mut resolved: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        let places = |names: &[String]| {
+            let mut place: HashMap<String, u32> = HashMap::new();
+            for (p, n) in names.iter().enumerate() {
+                place.entry(n.to_ascii_lowercase()).or_insert(u32::try_from(p).unwrap_or(u32::MAX));
+            }
+            place
+        };
+        let (layer_at, linetype_at) = (places(written.layers), places(written.linetypes));
+        let zero = layer_at.get("0").copied();
+        let len = |names: &[String]| u32::try_from(names.len()).unwrap_or(u32::MAX);
+        let layers_past = len(written.layers).max(len(read.layers));
+        let linetypes_past = len(written.linetypes).max(len(read.linetypes));
+        // Without the file's table or names from the graphics, an index can't be placed.
+        let known_layers = !read.layers.is_empty() || !learned.layers.is_empty();
+        let known_linetypes = !read.linetypes.is_empty() || !learned.linetypes.is_empty();
+        let layer = |i: u32| {
+            let name = match learned.layers.get(&i) {
+                Some(name) => name.as_deref(),
+                None => read.layers.get(i as usize).map(String::as_str),
+            };
+            match name.filter(|n| !n.is_empty()) {
+                Some(name) => layer_at.get(&name.to_ascii_lowercase()).copied().or(zero).unwrap_or(i),
+                None if i >= layers_past => i,
+                None => layers_past,
+            }
+        };
+        let linetype = |i: u32| {
+            if i == LINETYPE_BYBLOCK || i == LINETYPE_BYLAYER {
+                return i;
+            }
+            let name = learned.linetypes.get(&i).or_else(|| read.linetypes.get(i as usize)).map(String::as_str);
+            let by = |n: &str| n.eq_ignore_ascii_case("ByLayer") || n.eq_ignore_ascii_case("ByBlock");
+            match name.filter(|n| !n.is_empty() && !by(n)) {
+                Some(name) => linetype_at.get(&name.to_ascii_lowercase()).copied().unwrap_or(LINETYPE_BYLAYER),
+                None if i >= linetypes_past => i,
+                None => LINETYPE_BYLAYER,
+            }
+        };
+        let mut resolved: HashMap<(u32, u32), u32> = HashMap::new();
         let mut changed = false;
-        for (offset, i) in refs {
-            let j = *resolved.entry(i).or_insert_with(|| {
-                let name = match learned.get(&i) {
-                    Some(name) => name.as_deref(),
-                    None => read.get(i as usize).map(String::as_str),
-                };
-                match name.filter(|n| !n.is_empty()) {
-                    Some(name) => place.get(&name.to_ascii_lowercase()).copied().or(zero).unwrap_or(i),
-                    None if i >= past => i,
-                    None => past,
-                }
+        for (offset, kind, i) in refs {
+            let j = *resolved.entry((kind, i)).or_insert_with(|| match kind {
+                LAYER_CHUNK if known_layers => layer(i),
+                LINETYPE_CHUNK if known_linetypes => linetype(i),
+                _ => i,
             });
             if j != i {
                 bytes[offset..offset + 4].copy_from_slice(&j.to_le_bytes());
@@ -181,15 +235,20 @@ impl Unknown {
         Some(tags)
     }
 
-    /// The layer each ATTRIBUTE_LAYER index of `bytes` (the record's `indices`) stands for in
-    /// this record's decoded graphics: the bytes decoded again with index `i` named `#i` give the
-    /// same entities in the same order, so each one's marker meets its real layer. `None` for an
-    /// index after which the graphics stay on the layer before (one past the table it was read
-    /// with). An index above 65,535 isn't named here (it resolves through the file's table, like
-    /// one no entity follows). Empty when the graphics don't match
-    /// (not decoded from these bytes); an index whose entities disagree is left out.
-    fn layers_by_index(&self, bytes: &[u8], indices: &[u32]) -> std::collections::HashMap<u32, Option<String>> {
-        /// What the entities after an index say about it.
+    /// The layer and linetype each index of `bytes` (the record's ATTRIBUTE_LAYER indices
+    /// `layers` and ATTRIBUTE_LINETYPE indices `linetypes`) stands for in this record's decoded
+    /// graphics: the bytes decoded again with each index `i` named `#i` give the same entities in
+    /// the same order, so each one's marker meets its real name. Only the indices the record uses
+    /// get a marker, so the work follows the chunks, not the largest index.
+    ///
+    /// A layer is `None` for an index after which the graphics stay on the layer before (one past
+    /// the table it was read with). When the entities after an index stay on the layer before but
+    /// the file's LAYER table `read` names that layer at the index, it names it. An index whose
+    /// entities disagree is left out. Empty when the graphics don't match (not decoded from these
+    /// bytes, such as a kept dimension's reference to its block).
+    fn names_by_index(&self, bytes: &[u8], layers: &[u32], linetypes: &[u32], read: &[String]) -> Learned {
+        use std::collections::{HashMap, HashSet};
+        /// What the entities after a layer index say about it.
         enum Seen {
             /// They are on this layer, and the ones before them weren't.
             Named(String),
@@ -199,27 +258,42 @@ impl Unknown {
             /// It keeps the layer before (two kept observations on different layers).
             Keeps,
         }
-        const MAX: u32 = 65_535;
-        let mut out: std::collections::HashMap<u32, Option<String>> = std::collections::HashMap::new();
-        if self.graphics.is_empty() {
+        let mut out = Learned::default();
+        if self.graphics.is_empty() || self.graphics.iter().any(|g| matches!(g.kind, EntityKind::Insert(_))) {
             return out;
         }
-        let max = indices.iter().copied().filter(|&i| i <= MAX).max().unwrap_or(0);
-        let markers = ProxyTables { layers: (0..=max).map(|i| format!("\u{1}{i}")).collect(), ..ProxyTables::default() };
-        let marked = proxy_entities(bytes, &markers, Handle(0));
+        let mark = |i: &u32| (*i, format!("\u{1}{i}"));
+        let marks = Marks {
+            layers: layers.iter().map(mark).collect(),
+            linetypes: linetypes.iter().filter(|&&i| i != LINETYPE_BYBLOCK && i != LINETYPE_BYLAYER).map(mark).collect(),
+        };
+        let marked = decode(bytes, &ProxyTables::default(), Handle(0), Some(&marks));
         if marked.len() != self.graphics.len() {
             return out;
         }
         let same = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
-        let mut seen: std::collections::HashMap<u32, Seen> = std::collections::HashMap::new();
-        let mut conflict = std::collections::HashSet::new();
+        let index = |name: &str| name.strip_prefix('\u{1}').and_then(|i| i.parse::<u32>().ok());
+        let mut seen: HashMap<u32, Seen> = HashMap::new();
+        let mut conflict = HashSet::new();
+        let mut linetype_conflict = HashSet::new();
         let mut before: Option<(&str, &str)> = None;
         for (m, g) in marked.iter().zip(&self.graphics) {
+            if let Some(i) = index(&m.common.linetype) {
+                match out.linetypes.get(&i) {
+                    Some(a) if !same(a, &g.common.linetype) => {
+                        linetype_conflict.insert(i);
+                    }
+                    Some(_) => {}
+                    None => {
+                        out.linetypes.insert(i, g.common.linetype.clone());
+                    }
+                }
+            }
             let (mark, real) = (m.common.layer.as_str(), g.common.layer.as_str());
             let changed_here = before.is_none_or(|(prev_mark, _)| prev_mark != mark);
             let kept = before.is_some_and(|(_, prev_real)| same(prev_real, real));
             before = Some((mark, real));
-            let Some(i) = mark.strip_prefix('\u{1}').and_then(|i| i.parse::<u32>().ok()) else { continue };
+            let Some(i) = index(mark) else { continue };
             if !changed_here {
                 // The same marker on another real layer: an index in between (one past the table
                 // the marker decoding doesn't see as such) changed it, so this one can't be named.
@@ -247,10 +321,19 @@ impl Unknown {
             }
         }
         for (i, s) in seen {
-            if !conflict.contains(&i) {
-                out.insert(i, if let Seen::Named(n) = s { Some(n) } else { None });
+            if conflict.contains(&i) {
+                continue;
             }
+            let name = match s {
+                Seen::Named(n) => Some(n),
+                // Staying on the layer before says nothing when the table names that layer here:
+                // the index sets it again.
+                Seen::Kept(n) => read.get(i as usize).filter(|r| !r.is_empty() && same(r, &n)).map(|_| n),
+                Seen::Keeps => None,
+            };
+            out.layers.insert(i, name);
         }
+        out.linetypes.retain(|i, _| !linetype_conflict.contains(i));
         out
     }
 }
@@ -261,16 +344,27 @@ impl crate::Drawing {
     /// it at once. RENAME calls it, LAYMRG for each merged layer (its graphics move to the
     /// target, as its objects do) and LAYDEL with layer 0.
     pub fn rename_proxy_layer(&mut self, old: &str, new: &str) {
-        for n in &mut self.proxy_layers {
-            if n.eq_ignore_ascii_case(old) {
-                *n = new.to_string();
-            }
-        }
-        let uses = |e: &Entity| matches!(&e.kind, EntityKind::Unknown(u) if u.graphics.iter().any(|g| g.common.layer.eq_ignore_ascii_case(old)));
+        rename_in(&mut self.proxy_layers, old, new);
+        self.rename_in_graphics(old, new, TableName::Layer);
+    }
+
+    /// Rename linetype `old` to `new` where proxy graphics use it, as
+    /// [`crate::Drawing::rename_proxy_layer`] does for a layer: RENAME calls it.
+    pub fn rename_proxy_linetype(&mut self, old: &str, new: &str) {
+        rename_in(&mut self.proxy_linetypes, old, new);
+        self.rename_in_graphics(old, new, TableName::Linetype);
+    }
+
+    /// Rename the graphics' `field` from `old` to `new`.
+    fn rename_in_graphics(&mut self, old: &str, new: &str, field: TableName) {
+        let uses = |e: &Entity| matches!(&e.kind, EntityKind::Unknown(u) if u.graphics.iter().any(|g| field.of(&g.common).eq_ignore_ascii_case(old)));
         let fix = |e: &mut Entity| {
             if let EntityKind::Unknown(u) = &mut e.kind {
-                for g in u.graphics.iter_mut().filter(|g| g.common.layer.eq_ignore_ascii_case(old)) {
-                    g.common.layer = new.to_string();
+                for g in &mut u.graphics {
+                    let n = field.of_mut(&mut g.common);
+                    if n.eq_ignore_ascii_case(old) {
+                        *n = new.to_string();
+                    }
                 }
             }
         };
@@ -290,6 +384,36 @@ impl crate::Drawing {
     }
 }
 
+/// The table name of an entity's properties that proxy graphics set by index.
+#[derive(Clone, Copy)]
+enum TableName {
+    Layer,
+    Linetype,
+}
+
+impl TableName {
+    fn of(self, c: &Common) -> &str {
+        match self {
+            TableName::Layer => &c.layer,
+            TableName::Linetype => &c.linetype,
+        }
+    }
+
+    fn of_mut(self, c: &mut Common) -> &mut String {
+        match self {
+            TableName::Layer => &mut c.layer,
+            TableName::Linetype => &mut c.linetype,
+        }
+    }
+}
+
+/// Rename `old` to `new` in the table order `names`.
+fn rename_in(names: &mut [String], old: &str, new: &str) {
+    for n in names.iter_mut().filter(|n| n.eq_ignore_ascii_case(old)) {
+        *n = new.to_string();
+    }
+}
+
 /// Append the bytes of hex string `s`. False on a character that isn't a hex digit.
 fn push_hex(out: &mut Vec<u8>, s: &str) -> bool {
     let digits: Vec<u8> = s.trim().bytes().collect();
@@ -304,8 +428,14 @@ fn push_hex(out: &mut Vec<u8>, s: &str) -> bool {
 /// The entities the proxy graphics `bytes` draw, all with `handle` (the proxy's): selecting one
 /// selects the proxy.
 pub fn proxy_entities(bytes: &[u8], tables: &ProxyTables, handle: Handle) -> Vec<Entity> {
+    decode(bytes, tables, handle, None)
+}
+
+/// [`proxy_entities`], with the indices in `marks` named by them instead of `tables`.
+fn decode(bytes: &[u8], tables: &ProxyTables, handle: Handle, marks: Option<&Marks>) -> Vec<Entity> {
     let mut r = Decoder {
         tables,
+        marks,
         handle,
         pen: Common { layer: "0".into(), color: Color::ByBlock, linetype: "ByBlock".into(), lineweight: Lineweight::ByBlock, ..Common::default() },
         fill: false,
@@ -327,6 +457,8 @@ pub fn proxy_entities(bytes: &[u8], tables: &ProxyTables, handle: Handle) -> Vec
 
 struct Decoder<'a> {
     tables: &'a ProxyTables,
+    /// Names standing for the indices while a record is decoded again (`Unknown::names_by_index`).
+    marks: Option<&'a Marks>,
     handle: Handle,
     /// Layer, colour, linetype and lineweight for the entities that follow.
     pen: Common,
@@ -427,18 +559,26 @@ impl Decoder<'_> {
             }
             // ATTRIBUTE_LAYER: index into the layer table; an index past it, or one of a record
             // without a name, leaves the layer.
-            16 => {
-                if let Some(name) = b.u32().and_then(|i| self.tables.layers.get(i as usize)).filter(|n| !n.is_empty()) {
+            LAYER_CHUNK => {
+                let name = b.u32().and_then(|i| match self.marks {
+                    Some(m) => m.layers.get(&i),
+                    None => self.tables.layers.get(i as usize),
+                });
+                if let Some(name) = name.filter(|n| !n.is_empty()) {
                     self.pen.layer = name.clone();
                 }
             }
             // ATTRIBUTE_LINETYPE: index into the linetypes other than ByBlock and ByLayer;
             // 32766 is ByBlock, 32767 and anything past the table ByLayer.
-            18 => {
+            LINETYPE_CHUNK => {
                 if let Some(i) = b.u32() {
+                    let name = match self.marks {
+                        Some(m) => m.linetypes.get(&i),
+                        None => self.tables.linetypes.get(i as usize),
+                    };
                     self.pen.linetype = match i {
-                        32766 => "ByBlock".into(),
-                        _ => self.tables.linetypes.get(i as usize).filter(|n| !n.is_empty()).cloned().unwrap_or_else(|| "ByLayer".into()),
+                        LINETYPE_BYBLOCK => "ByBlock".into(),
+                        _ => name.filter(|n| !n.is_empty()).cloned().unwrap_or_else(|| "ByLayer".into()),
                     };
                 }
             }
@@ -596,6 +736,15 @@ impl Decoder<'_> {
     fn arc_between(&mut self, c: Vec3, r: f64, e1: Vec3, e2: Vec3, a0: f64, a1: f64) {
         let (at, u, v) = self.axes(c, e1, e2);
         let on = |a: f64| at + u * (r * a.cos()) + v * (r * a.sin());
+        // A sweep too short for an arc or an elliptical arc to hold (it would read as a full
+        // turn): the chord between its ends.
+        if (a1 - a0).abs() <= cadcraft_geom::EPS {
+            let (p, q) = (on(a0), on(a1));
+            if p != q && p.is_finite() && q.is_finite() {
+                self.push(EntityKind::Line(Line { a: p.to3(0.0), b: q.to3(0.0) }));
+            }
+            return;
+        }
         if round(u * r, v * r).is_some() {
             return self.arc_3p(on(a0), on((a0 + a1) / 2.0), on(a1));
         }
@@ -767,6 +916,13 @@ fn round(u: Vec2, v: Vec2) -> Option<f64> {
 /// ellipse's own parameter (counter-clockwise from its major axis).
 fn ellipse(c: Vec2, u: Vec2, v: Vec2, a0: f64, a1: f64) -> Option<Ellipse> {
     use std::f64::consts::{FRAC_PI_2, TAU};
+    // Conjugate radii on one line (a plane seen edge-on, also through an exact quarter turn,
+    // whose cosine leaves a tiny minor axis), relative to the longer: no ellipse, the caller
+    // draws the line it covers.
+    let longer = u.len().max(v.len());
+    if u.cross(v).abs() <= 1e-9 * longer * longer {
+        return None;
+    }
     // c + u·cos a + v·sin a = c + p·cos(a − t) + q·sin(a − t): p and q at right angles.
     let t = 0.5 * (2.0 * u.dot(v)).atan2(u.len2() - v.len2());
     let p = u * t.cos() + v * t.sin();
@@ -1299,6 +1455,155 @@ mod tests {
         assert!(own.proxy_graphics_bytes().is_empty());
     }
 
+    /// The layer order `names` with no linetypes.
+    fn layers(names: &[String]) -> TableOrder<'_> {
+        TableOrder { layers: names, linetypes: &[] }
+    }
+
+    /// A record with the graphics `g`: in its proxy data for an ACAD_PROXY_ENTITY, else in its
+    /// `AcDbEntity` part (a kept dimension naming block `*D1`).
+    fn record(dxf_type: &str, g: &[u8], graphics: Vec<Entity>) -> Unknown {
+        let tag = |code: i32, value: &str| RawTag { code, value: value.into() };
+        let hex: String = g.iter().map(|b| format!("{b:02X}")).collect();
+        let tags = if dxf_type == "ACAD_PROXY_ENTITY" {
+            vec![tag(100, "AcDbProxyEntity"), tag(92, &g.len().to_string()), tag(310, &hex)]
+        } else {
+            vec![tag(100, "AcDbEntity"), tag(8, "0"), tag(92, &g.len().to_string()), tag(310, &hex), tag(100, "AcDbDimension"), tag(2, "*D1")]
+        };
+        Unknown { dxf_type: dxf_type.into(), tags, graphics }
+    }
+
+    fn unit_circle() -> Vec<u8> {
+        let mut circle = pt(0.0, 0.0);
+        circle.extend(1.0f64.to_le_bytes());
+        circle.extend(pt(0.0, 0.0));
+        circle
+    }
+
+    /// Graphics that stay on the layer before after an index don't hide that the table names the
+    /// index: with layers 1, then 2 and 99, then 2, then 1 and 99 before four circles (A, B, B,
+    /// A), the second 2 sets B again, and saving keeps all four where they are.
+    #[test]
+    fn an_index_staying_on_the_layer_its_table_names_keeps_it() {
+        let circle = unit_circle();
+        let layer = |i: u32| chunk(16, &i.to_le_bytes());
+        let g = graphics(&[
+            layer(1),
+            chunk(2, &circle),
+            layer(2),
+            layer(99),
+            chunk(2, &circle),
+            layer(2),
+            chunk(2, &circle),
+            layer(1),
+            layer(99),
+            chunk(2, &circle),
+        ]);
+        let read: Vec<String> = ["0", "A", "B"].map(String::from).to_vec();
+        let tables = ProxyTables { layers: read.clone(), ..ProxyTables::default() };
+        let u = record("ACAD_PROXY_ENTITY", &g, proxy_entities(&g, &tables, Handle(1)));
+        let on = |es: &[Entity]| es.iter().map(|e| e.common.layer.clone()).collect::<Vec<_>>();
+        assert_eq!(on(&u.graphics), ["A", "B", "B", "A"]);
+        assert!(u.with_proxy_tables(layers(&read), layers(&read)).is_none(), "nothing changes for the same table");
+        let written: Vec<String> = ["0", "X", "A", "B"].map(String::from).to_vec();
+        let again = Unknown { tags: u.with_proxy_tables(layers(&read), layers(&written)).expect("remapped"), ..u.clone() };
+        let w = ProxyTables { layers: written, ..ProxyTables::default() };
+        assert_eq!(on(&proxy_entities(&again.proxy_graphics_bytes(), &w, Handle(1))), ["A", "B", "B", "A"]);
+    }
+
+    /// Linetype indices follow the written LTYPE table by name, as layer indices do: a linetype
+    /// that is gone becomes ByLayer, and ByBlock, ByLayer and an index past the table stay.
+    #[test]
+    fn linetype_indices_follow_the_written_table() {
+        let circle = unit_circle();
+        let linetype = |i: u32| chunk(18, &i.to_le_bytes());
+        let g = graphics(&[
+            linetype(2),
+            chunk(2, &circle),
+            linetype(32766),
+            chunk(2, &circle),
+            linetype(1),
+            chunk(2, &circle),
+            linetype(9),
+            chunk(2, &circle),
+        ]);
+        let read: Vec<String> = ["Continuous", "DASHED", "HIDDEN"].map(String::from).to_vec();
+        let tables = ProxyTables { linetypes: read.clone(), ..ProxyTables::default() };
+        let u = record("ACAD_PROXY_ENTITY", &g, proxy_entities(&g, &tables, Handle(1)));
+        let drawn = |es: &[Entity]| es.iter().map(|e| e.common.linetype.clone()).collect::<Vec<_>>();
+        assert_eq!(drawn(&u.graphics), ["HIDDEN", "ByBlock", "DASHED", "ByLayer"]);
+        let saved = |written: &[String]| {
+            let tags = u.with_proxy_tables(TableOrder { layers: &[], linetypes: &read }, TableOrder { layers: &[], linetypes: written });
+            let again = Unknown { tags: tags.unwrap_or_else(|| u.tags.clone()), ..u.clone() };
+            drawn(&proxy_entities(&again.proxy_graphics_bytes(), &ProxyTables { linetypes: written.to_vec(), ..ProxyTables::default() }, Handle(1)))
+        };
+        let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(saved(&read), ["HIDDEN", "ByBlock", "DASHED", "ByLayer"]);
+        assert_eq!(saved(&names(&["Continuous", "CENTER", "DASHED", "HIDDEN"])), ["HIDDEN", "ByBlock", "DASHED", "ByLayer"]);
+        assert_eq!(saved(&names(&["Continuous", "HIDDEN"])), ["HIDDEN", "ByBlock", "ByLayer", "ByLayer"]);
+    }
+
+    /// A kept dimension's picture (#3438) follows the written LAYER table too: by its decoded
+    /// graphics when it draws them, by the file's table when it draws its block instead.
+    #[test]
+    fn a_kept_dimensions_picture_follows_the_written_table() {
+        let circle = unit_circle();
+        let g = graphics(&[chunk(16, &2u32.to_le_bytes()), chunk(2, &circle)]);
+        let read: Vec<String> = ["0", "UNUSED", "A"].map(String::from).to_vec();
+        let written: Vec<String> = ["0", "A", "Defpoints"].map(String::from).to_vec();
+        let tables = ProxyTables { layers: read.clone(), ..ProxyTables::default() };
+        let w = ProxyTables { layers: written.clone(), ..ProxyTables::default() };
+        for graphics in [proxy_entities(&g, &tables, Handle(1)), vec![block_ref()]] {
+            let u = record("LARGE_RADIAL_DIMENSION", &g, graphics);
+            let again = Unknown { tags: u.with_proxy_tables(layers(&read), layers(&written)).expect("remapped"), ..u.clone() };
+            assert_eq!(proxy_entities(&again.proxy_graphics_bytes(), &w, Handle(1))[0].common.layer, "A");
+        }
+        // A reference to the block on another layer isn't taken for the picture (one entity as
+        // well): the file's table names index 2.
+        let elsewhere = Entity { common: Common { layer: "Defpoints".into(), ..Common::default() }, ..block_ref() };
+        let u = record("LARGE_RADIAL_DIMENSION", &g, vec![elsewhere]);
+        assert!(u.names_by_index(&g, &[2], &[], &read).layers.is_empty());
+    }
+
+    fn block_ref() -> Entity {
+        Entity {
+            handle: Handle(1),
+            common: Common::default(),
+            kind: EntityKind::Insert(super::super::Insert { block: "*D1".into(), ..super::super::Insert::default() }),
+        }
+    }
+
+    /// An exact quarter turn about Y shows a circle edge-on: it draws as the line it covers, not
+    /// as an ellipse with the minor axis the turn's cosine leaves. An arc too short for its sweep
+    /// to be held draws as its chord, not as a full turn, round or under an uneven matrix.
+    #[test]
+    fn quarter_turns_and_tiny_sweeps_draw_lines() {
+        let matrix = |m: [f64; 16]| chunk(29, &m.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>());
+        let (s, c) = std::f64::consts::FRAC_PI_2.sin_cos();
+        let turn = matrix([c, 0.0, s, 0.0, 0.0, 1.0, 0.0, 0.0, -s, 0.0, c, 0.0, 0.0, 0.0, 0.0, 1.0]);
+        let line = |es: &[Entity]| match es {
+            [e] => match &e.kind {
+                EntityKind::Line(l) => (l.a.xy(), l.b.xy()),
+                other => panic!("{other:?}"),
+            },
+            _ => panic!("{es:?}"),
+        };
+        let near = |p: Vec2, x: f64, y: f64| (p - Vec2::new(x, y)).len() < 1e-12;
+        let (a, b) = line(&proxy_entities(&graphics(&[turn, chunk(2, &unit_circle())]), &tables(), Handle(1)));
+        assert!(near(a, 0.0, -1.0) && near(b, 0.0, 1.0), "{a:?} {b:?}");
+        let sweep = 5e-10f64;
+        let mut tiny = pt(0.0, 0.0);
+        tiny.extend(1.0f64.to_le_bytes());
+        tiny.extend([0.0f64, 0.0, 1.0].iter().flat_map(|v| v.to_le_bytes()));
+        tiny.extend(pt(1.0, 0.0));
+        tiny.extend(sweep.to_le_bytes());
+        let stretch = matrix([2.0, 0.0, 0.0, 10.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]);
+        for (chunks, x) in [(vec![chunk(4, &tiny)], 1.0), (vec![stretch, chunk(4, &tiny)], 12.0)] {
+            let (a, b) = line(&proxy_entities(&graphics(&chunks), &tables(), Handle(1)));
+            assert!(near(a, x, 0.0) && (b - Vec2::new(x, sweep)).len() < 1e-15, "{a:?} {b:?}");
+        }
+    }
+
     /// Saving renames the layer indices by name into the written table, reading only the 310
     /// groups the declared size needs: a damaged group after them doesn't stop it.
     #[test]
@@ -1318,7 +1623,7 @@ mod tests {
         };
         assert_eq!(u.graphics[0].common.layer, "B");
         let written: Vec<String> = ["0", "B", "C"].map(String::from).to_vec();
-        let tags = u.with_proxy_layers(&read, &written).expect("remapped");
+        let tags = u.with_proxy_tables(layers(&read), layers(&written)).expect("remapped");
         let again = Unknown { tags, ..u.clone() };
         assert_eq!(
             proxy_entities(&again.proxy_graphics_bytes(), &ProxyTables { layers: written, ..ProxyTables::default() }, Handle(1))[0].common.layer,
@@ -1328,8 +1633,8 @@ mod tests {
     }
 
     /// An index whose graphics stay on the layer before (99 here, past the table) doesn't make
-    /// the index before it (3) look contradictory when that one comes again; an index above
-    /// 65,535 isn't named (it resolves through the file's table), and the others still are.
+    /// the index before it (3) look contradictory when that one comes again, and a large index
+    /// is found like any other.
     #[test]
     fn indices_are_named_around_kept_layers_and_huge_indices() {
         let mut circle = pt(0.0, 0.0);
@@ -1345,12 +1650,13 @@ mod tests {
             }
             let g = graphics(&chunks);
             let u = Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics: proxy_entities(&g, &tables, Handle(1)) };
-            let mut learned: Vec<(u32, Option<String>)> = u.layers_by_index(&g, indices).into_iter().collect();
+            let mut learned: Vec<(u32, Option<String>)> = u.names_by_index(&g, indices, &[], &tables.layers).layers.into_iter().collect();
             learned.sort();
             learned
         };
         assert_eq!(named(&[0, 3, 99, 3]), [(0, Some("0".into())), (3, Some("B".into())), (99, None)]);
-        assert_eq!(named(&[2, 70_000]), [(2, Some("C".into()))]);
+        // Only the indices used get a marker: 70,000 keeps the layer before, as past the table.
+        assert_eq!(named(&[2, 70_000]), [(2, Some("C".into())), (70_000, None)]);
         // Layer 4 (past the table, so it keeps layer 0), a circle, then layers 1 and 4 at once (4
         // keeps A): both circles follow index 4 in the marker decoding, on different layers.
         let g = graphics(&[
@@ -1368,9 +1674,9 @@ mod tests {
             graphics: proxy_entities(&g, &tables, Handle(1)),
         };
         assert_eq!(u.graphics.iter().map(|e| e.common.layer.as_str()).collect::<Vec<_>>(), ["0", "A"]);
-        assert!(!u.layers_by_index(&g, &[4, 1, 4]).contains_key(&4), "index 4 isn't named");
+        assert!(!u.names_by_index(&g, &[4, 1, 4], &[], &tables.layers).layers.contains_key(&4), "index 4 isn't named");
         // Saved with the same table, nothing changes, so both circles stay where they are.
-        assert!(u.with_proxy_layers(&tables.layers, &tables.layers).is_none());
+        assert!(u.with_proxy_tables(layers(&tables.layers), layers(&tables.layers)).is_none());
     }
 
     /// Truncated chunks, sizes past the end, huge counts and garbage draw what they can and
