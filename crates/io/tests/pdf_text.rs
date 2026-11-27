@@ -3,7 +3,8 @@
 //! rotation, width factor and obliquing; fonts whose licence bits forbid embedding, the stroke
 //! font and the `text: "geometry"` option keep filled outlines.
 //!
-//! The fonts are tiny synthetic TrueType files built here (no font files in the repository).
+//! The fonts are tiny synthetic TrueType files built by the shared test helper in
+//! `crates/fonts/tests/support/sfnt.rs` (no font files in the repository).
 
 use cadcraft_doc::{Common, Drawing, EntityKind, Space, Text, TextStyle, Viewport};
 use cadcraft_geom::{Vec2, Vec3};
@@ -15,147 +16,41 @@ mod pdf_read;
 
 use pdf_read::Doc;
 
+// The synthetic TrueType file: the fonts layer's test-only helper, inlined rather than published
+// or depended on.
+#[path = "../../fonts/tests/support/sfnt.rs"]
+mod sfnt;
+
 // ---------- a minimal TrueType font: .notdef, "A" (triangle), "B" (square) ----------
 
-fn be16(v: &mut Vec<u8>, x: u16) {
-    v.extend_from_slice(&x.to_be_bytes());
-}
-fn be32(v: &mut Vec<u8>, x: u32) {
-    v.extend_from_slice(&x.to_be_bytes());
-}
-
-/// A simple glyph: one closed contour of on-curve points.
-fn simple_glyph(pts: &[(i16, i16)]) -> Vec<u8> {
-    let mut g = Vec::new();
-    let xs: Vec<i16> = pts.iter().map(|p| p.0).collect();
-    let ys: Vec<i16> = pts.iter().map(|p| p.1).collect();
-    be16(&mut g, 1);
-    for v in [*xs.iter().min().unwrap(), *ys.iter().min().unwrap(), *xs.iter().max().unwrap(), *ys.iter().max().unwrap()] {
-        be16(&mut g, v as u16);
-    }
-    be16(&mut g, pts.len() as u16 - 1);
-    be16(&mut g, 0);
-    g.extend(std::iter::repeat_n(1u8, pts.len()));
-    let (mut px, mut py) = (0i16, 0i16);
-    for (x, _) in pts {
-        be16(&mut g, (x - px) as u16);
-        px = *x;
-    }
-    for (_, y) in pts {
-        be16(&mut g, (y - py) as u16);
-        py = *y;
-    }
-    while g.len() % 4 != 0 {
-        g.push(0);
-    }
-    g
-}
-
 /// A TrueType font with glyphs .notdef (empty), A and B, and OS/2 `fsType`. `hmtx` holds
-/// `metrics` of the three metrics `hhea` declares.
+/// `metrics` of the three metrics `hhea` declares: fewer is a font the writer cannot subset.
 fn test_font(fs_type: u16, metrics: usize) -> Vec<u8> {
-    let glyphs = [Vec::new(), simple_glyph(&[(50, 0), (550, 0), (300, 700)]), simple_glyph(&[(50, 0), (550, 0), (550, 700), (50, 700)])];
-    let mut glyf = Vec::new();
-    let mut loca = Vec::new();
-    for g in &glyphs {
-        be32(&mut loca, glyf.len() as u32);
-        glyf.extend_from_slice(g);
-    }
-    be32(&mut loca, glyf.len() as u32);
-    let mut head = Vec::new();
-    be32(&mut head, 0x0001_0000);
-    be32(&mut head, 0x0001_0000);
-    be32(&mut head, 0);
-    be32(&mut head, 0x5F0F_3CF5);
-    be16(&mut head, 0);
-    be16(&mut head, 1000);
-    head.extend_from_slice(&[0; 16]);
-    for v in [0i16, 0, 600, 700] {
-        be16(&mut head, v as u16);
-    }
-    for v in [0u16, 8, 2, 1, 0] {
-        be16(&mut head, v);
-    }
-    let mut hhea = Vec::new();
-    be32(&mut hhea, 0x0001_0000);
-    for v in [800i16, -200, 0, 600, 0, 0, 600, 1, 0, 0, 0, 0, 0, 0, 0] {
-        be16(&mut hhea, v as u16);
-    }
-    be16(&mut hhea, 3);
-    let mut maxp = Vec::new();
-    be32(&mut maxp, 0x0001_0000);
-    for v in [3u16, 4, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0] {
-        be16(&mut maxp, v);
-    }
-    let mut hmtx = Vec::new();
-    for _ in 0..metrics {
-        be16(&mut hmtx, 600);
-        be16(&mut hmtx, 50);
-    }
-    // cmap: format 4, 'A'..'B' → 1..2.
-    let mut sub = Vec::new();
-    let segs: [(u16, u16, u16); 2] = [(0x41, 0x42, 1u16.wrapping_sub(0x41)), (0xFFFF, 0xFFFF, 1)];
-    be16(&mut sub, 4);
-    be16(&mut sub, (16 + segs.len() * 8) as u16);
-    be16(&mut sub, 0);
-    be16(&mut sub, (segs.len() * 2) as u16);
-    for v in [4u16, 1, 0] {
-        be16(&mut sub, v);
-    }
-    for s in segs {
-        be16(&mut sub, s.1);
-    }
-    be16(&mut sub, 0);
-    for s in segs {
-        be16(&mut sub, s.0);
-    }
-    for s in segs {
-        be16(&mut sub, s.2);
-    }
-    for _ in segs {
-        be16(&mut sub, 0);
-    }
-    let mut cmap = Vec::new();
-    for v in [0u16, 1, 3, 1] {
-        be16(&mut cmap, v);
-    }
-    be32(&mut cmap, 12);
-    cmap.extend_from_slice(&sub);
-    let mut os2 = vec![0u8; 78];
-    os2[8..10].copy_from_slice(&fs_type.to_be_bytes());
-    let mut tables: Vec<(&[u8; 4], Vec<u8>)> =
-        vec![(b"OS/2", os2), (b"cmap", cmap), (b"glyf", glyf), (b"head", head), (b"hhea", hhea), (b"hmtx", hmtx), (b"loca", loca), (b"maxp", maxp)];
-    tables.sort_by_key(|t| *t.0);
-    let mut out = Vec::new();
-    be32(&mut out, 0x0001_0000);
-    for v in [tables.len() as u16, 128, 3, tables.len() as u16 * 16 - 128] {
-        be16(&mut out, v);
-    }
-    let mut off = 12 + 16 * tables.len();
-    for (t, d) in &tables {
-        out.extend_from_slice(*t);
-        be32(&mut out, 0);
-        be32(&mut out, off as u32);
-        be32(&mut out, d.len() as u32);
-        off += d.len().div_ceil(4) * 4;
-    }
-    for (_, d) in &tables {
-        out.extend_from_slice(d);
-        while out.len() % 4 != 0 {
-            out.push(0);
-        }
-    }
-    out
+    font_of(fs_type, metrics, &['A', 'B'])
 }
 
-/// Register the test fonts once: an embeddable one, one with a restricted licence, and one
-/// the PDF writer accepts but can't subset (its `hmtx` is short).
+/// [`test_font`] with a glyph for each of `chars` (BMP characters, ascending), alternately a
+/// triangle and a square: one contour each.
+fn font_of(fs_type: u16, metrics: usize, chars: &[char]) -> Vec<u8> {
+    let shapes = [vec![(50, 0), (550, 0), (300, 700)], vec![(50, 0), (550, 0), (550, 700), (50, 700)]];
+    let glyphs: Vec<sfnt::Glyph> = std::iter::once(sfnt::notdef()).chain((0..chars.len()).map(|i| sfnt::glyph(&[shapes[i % 2].clone()]))).collect();
+    // One segment per character: chars[i] → glyph i + 1.
+    let cmap: Vec<(u16, u16, i16)> = chars.iter().zip(1u16..).map(|(c, g)| (*c as u16, *c as u16, g.wrapping_sub(*c as u16) as i16)).collect();
+    sfnt::bytes(&sfnt::Sfnt { glyphs: &glyphs, cmap: &cmap, advance: 600, lsb: 50, metrics, fs_type, ink_box: [0, 0, 600, 700] })
+}
+
+/// The characters of the Thai test font: no, sara aa, sara am, mai tho and nikhahit.
+const THAI: [char; 5] = ['\u{0E19}', '\u{0E32}', '\u{0E33}', '\u{0E49}', '\u{0E4D}'];
+
+/// Register the test fonts once: an embeddable one, one with a restricted licence, one
+/// the PDF writer accepts but can't subset (its `hmtx` is short), and one with Thai letters.
 fn fonts() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         cadcraft_fonts::ttf::register("cadcraft-pdf-test.ttf", test_font(0, 3));
         cadcraft_fonts::ttf::register("cadcraft-pdf-restricted.ttf", test_font(0x0002, 3));
         cadcraft_fonts::ttf::register("cadcraft-pdf-short-hmtx.ttf", test_font(0, 1));
+        cadcraft_fonts::ttf::register("cadcraft-pdf-thai.ttf", font_of(0, THAI.len() + 1, &THAI));
     });
 }
 
@@ -187,6 +82,7 @@ fn drawing() -> Drawing {
     style(&mut d, "Real", "cadcraft-pdf-test.ttf");
     style(&mut d, "Locked", "cadcraft-pdf-restricted.ttf");
     style(&mut d, "Short", "cadcraft-pdf-short-hmtx.ttf");
+    style(&mut d, "Thai", "cadcraft-pdf-thai.ttf");
     d
 }
 
@@ -335,6 +231,7 @@ fn text_seen_through_a_viewport_and_on_layers() {
         layer_colors: Vec::new(),
         clip: None,
         on: true,
+        twist: 0.0,
     };
     d.add(&paper, Common::default(), EntityKind::Viewport(vp)).unwrap();
     text(&mut d, &paper, "Real", (20.0, 20.0), "B", (0.0, 1.0, 0.0));
@@ -383,4 +280,53 @@ fn hostile_text_never_panics() {
     }
     pdf(&d, &Space::Model, json!({}));
     pdf(&d, &Space::Model, json!({"compress": true}));
+}
+
+/// The text layer reads as typed (issue #2899): the shaper splits sara am into nikhahit and
+/// sara aa and draws the nikhahit before the tone mark, so in น้ำ the sara aa carries ำ, after
+/// the tone mark, and the nikhahit is drawn as an outline. Every glyph is still drawn.
+#[test]
+fn thai_text_reads_in_typed_order() {
+    let mut d = drawing();
+    text(&mut d, &Space::Model, "Thai", (0.0, 0.0), "น้ำ", (0.0, 1.0, 0.0));
+    let doc = pdf(&d, &Space::Model, json!({}));
+    let f = &doc.pages[0].fonts[0];
+    let map = pdf_read::to_unicode_map(f.to_unicode.as_deref().unwrap());
+    let read: String = codes(&doc).iter().map(|c| map.iter().find(|(k, _)| k == c).map_or("?", |(_, s)| s.as_str())).collect();
+    assert_eq!(read, "น้ำ", "{map:?}");
+    assert_eq!(pdf_read::count(doc.content(), "Tj") + fills(&doc), 4, "no, nikhahit, mai tho and sara aa: {}", doc.content());
+}
+
+/// The text the page reads as, glyph by glyph in content order: a glyph's `/ActualText` when it
+/// has one, else its code through the font's `ToUnicode` map.
+fn read_text(doc: &Doc) -> String {
+    let map = pdf_read::to_unicode_map(doc.pages[0].fonts[0].to_unicode.as_deref().unwrap());
+    let mut out = String::new();
+    for text in doc.content().split("BT").skip(1) {
+        if let Some((_, rest)) = text.split_once("/ActualText<") {
+            let hex = rest.split('>').next().unwrap();
+            let units: Vec<u16> = hex.as_bytes().chunks(4).map(|u| u16::from_str_radix(std::str::from_utf8(u).unwrap(), 16).unwrap()).collect();
+            out.extend(char::decode_utf16(units.into_iter().skip_while(|u| *u == 0xFEFF)).map(Result::unwrap));
+            continue;
+        }
+        for s in pdf_read::shown(text.as_bytes()) {
+            for c in s.chunks(2).map(|c| u32::from(c[0]) << 8 | u32::from(c[1])) {
+                out.push_str(map.iter().find(|(k, _)| *k == c).map_or("?", |(_, s)| s.as_str()));
+            }
+        }
+    }
+    out
+}
+
+/// One glyph shows sara am in น้ำ and sara aa in นา: whichever comes second gets its own
+/// `/ActualText`, so both read right whichever comes first.
+#[test]
+fn a_glyph_shared_by_two_characters_reads_right_in_both() {
+    for words in [["นา", "น้ำ"], ["น้ำ", "นา"]] {
+        let mut d = drawing();
+        text(&mut d, &Space::Model, "Thai", (0.0, 50.0), words[0], (0.0, 1.0, 0.0));
+        text(&mut d, &Space::Model, "Thai", (0.0, 0.0), words[1], (0.0, 1.0, 0.0));
+        let doc = pdf(&d, &Space::Model, json!({}));
+        assert_eq!(read_text(&doc), words.concat(), "{}", doc.content());
+    }
 }

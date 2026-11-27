@@ -234,7 +234,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
                 later = true;
             }
         });
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if crate::framework::escape_pressed(ui.ctx()) {
             later = true;
         }
     });

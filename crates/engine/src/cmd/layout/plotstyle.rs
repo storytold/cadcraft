@@ -187,6 +187,7 @@ fn edit_style(cmd: &str, st: &mut PlotStyle, v: &Value) -> Result<()> {
     Ok(())
 }
 
+/// List, read, change, load and export plot style tables; any file is held to the automation roots.
 fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "stylesmanager";
     let action = str_param(p, "action").unwrap_or("list").to_ascii_lowercase();
@@ -264,16 +265,23 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                     return Err(bad(cmd, format!("`{name}` has no style `{rm}`")));
                 }
             }
+            let mut changed: Option<String> = None;
             if let Some(v) = p.get("style") {
                 let sname = v.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty());
                 let sname = sname.ok_or_else(|| bad(cmd, "`style.name` is required"))?;
+                // The name as it is stored (at most 255 characters, as `sanitized` cuts it, and
+                // without a space the cut leaves at the end, which `sanitized` trims), so a long
+                // name finds the style it was stored as and the reply finds the edited style.
+                let cut: String = sname.chars().take(255).collect();
+                let sname = cut.trim_end();
+                changed = Some(sname.to_string());
                 let idx = match t.styles.iter().position(|x| x.name.eq_ignore_ascii_case(sname)) {
                     Some(i) => i,
                     None if t.kind == PlotStyleKind::Named => {
                         if t.styles.len() >= cadcraft_doc::MAX_NAMED_STYLES {
                             return Err(bad(cmd, "the table has too many styles"));
                         }
-                        t.styles.push(PlotStyle::object(&sname.chars().take(255).collect::<String>()));
+                        t.styles.push(PlotStyle::object(sname));
                         t.styles.len() - 1
                     }
                     None => return Err(bad(cmd, format!("`{name}` has no style `{sname}` (colour-dependent styles are Color_1 to Color_255)"))),
@@ -283,7 +291,21 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                 }
             }
             let t = t.sanitized();
-            let out = serde_json::to_value(&t).unwrap_or(Value::Null);
+            // Only what changed, not the table (a colour-dependent one has 255 styles): the table's
+            // name, the description if given, the edited style and the removed style's name.
+            let mut out = json!({ "name": t.name });
+            if let Some(o) = out.as_object_mut() {
+                if str_param(p, "description").is_some() {
+                    o.insert("description".into(), json!(t.description));
+                }
+                let edited = changed.and_then(|n| t.styles.iter().find(|x| x.name.eq_ignore_ascii_case(&n)));
+                if let Some(e) = edited.and_then(|x| serde_json::to_value(x).ok()) {
+                    o.insert("style".into(), e);
+                }
+                if let Some(r) = str_param(p, "removeStyle") {
+                    o.insert("removedStyle".into(), json!(r.trim()));
+                }
+            }
             store(s.doc_mut()?, t);
             Ok(out)
         }
@@ -303,11 +325,10 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                 (None, Some(_path)) => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let meta = std::fs::metadata(_path).map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
-                        if meta.len() > cadcraft_doc::MAX_TABLE_FILE as u64 {
-                            return Err(bad(cmd, format!("{_path}: the plot style table file is too large")));
-                        }
-                        std::fs::read_to_string(_path).map_err(|e| bad(cmd, format!("{_path}: {e}")))?
+                        crate::file_access::check_read(_path).map_err(|e| bad(cmd, e))?;
+                        let bytes = crate::capped_read::read_capped(std::path::Path::new(_path), cadcraft_doc::MAX_TABLE_FILE)
+                            .map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
+                        String::from_utf8(bytes).map_err(|e| bad(cmd, format!("{_path}: {e}")))?
                     }
                     #[cfg(target_arch = "wasm32")]
                     return Err(bad(cmd, "files can't be read here: pass `text`"));
@@ -333,6 +354,7 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                 Some(_path) => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
+                        crate::file_access::check_write(_path).map_err(|e| bad(cmd, e))?;
                         crate::atomic_write::write_atomic(std::path::Path::new(_path), text.as_bytes())
                             .map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
                         Ok(json!({ "name": name, "path": _path, "bytes": text.len() }))

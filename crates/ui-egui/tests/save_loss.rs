@@ -15,7 +15,7 @@ use cadcraft_ui_egui::{CadApp, Services, menus};
 const ORIGINAL: &[u8] = b"original";
 
 fn unknown(kind: &str) -> EntityKind {
-    EntityKind::Unknown(Unknown { dxf_type: kind.into(), tags: vec![RawTag { code: 8, value: "0".into() }] })
+    EntityKind::Unknown(Unknown { dxf_type: kind.into(), tags: vec![RawTag { code: 8, value: "0".into() }], graphics: Vec::new() })
 }
 
 /// A drawing with objects of `types`, which DWG can't keep, opened from a DWG file on disk.
@@ -90,6 +90,27 @@ fn programmatic_saves_never_ask() {
     let r = app.run("qsave", json!({})).unwrap();
     assert!(app.save_loss.is_none());
     assert_eq!(r["notSaved"], json!({ "MLINE": 1 }));
+    cleanup(&path);
+}
+
+/// Save As from a DWG warning suggests DXF, which the warning says keeps the objects. The user's
+/// default format stays what File ▸ Save As suggests.
+#[test]
+fn save_as_from_the_dwg_warning_suggests_dxf_and_leaves_the_default() {
+    let (mut app, path) = opened("suggest", &["MLINE"]);
+    let suggested = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let seen = suggested.clone();
+    app.services.pick_save = Some(Box::new(move |name: &str| {
+        seen.lock().unwrap().push(name.to_string());
+        None
+    }));
+    app.run("ui.saveformat", json!({ "format": "dwg" })).unwrap();
+    menus::activate(&mut app, "qsave");
+    app.answer_save_loss(Choice::SaveAs);
+    app.run("ui.saveas", json!(null)).unwrap();
+    assert_eq!(suggested.lock().unwrap().as_slice(), ["Plan.dxf", "Plan.dwg"]);
+    assert_eq!(app.ui.save_format, cadcraft_ui_egui::SaveFormat::Dwg);
+    assert_eq!(std::fs::read(&path).unwrap(), ORIGINAL, "cancelling the dialog writes nothing");
     cleanup(&path);
 }
 

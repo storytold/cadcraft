@@ -19,6 +19,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 
 pub mod aliasdlg;
 pub mod animation;
+pub mod attentry;
 pub mod autosave;
 pub mod bedit;
 pub mod canvas;
@@ -32,14 +33,24 @@ pub mod control;
 pub mod credits;
 pub mod dialogs;
 pub mod docking;
+mod drawing_fonts;
 pub mod fault;
+pub mod framework;
+// The Find and Replace window behind the FIND command.
+pub mod arraydlg;
+pub mod finddlg;
 pub mod hatchdlg;
+mod line_editor;
 mod mtext_editor;
 mod panel_state;
 pub mod spacemouse;
 pub mod switch;
+// The Edit Text window, opened from the shortcut menu's Edit Text entry.
+pub mod textdlg;
 // The External References palette.
 pub mod xrefs;
+
+pub mod blocks_palette;
 
 pub mod dyngrips;
 pub mod dyninput;
@@ -47,12 +58,14 @@ pub mod gpu;
 pub mod grip_dyn;
 pub mod i18n;
 pub mod icons;
+pub mod keys;
 pub mod layers;
 pub mod managers;
 pub mod menus;
 pub mod modal;
 pub mod opening;
 pub mod options;
+pub mod os_window;
 pub mod palettes;
 pub mod parametric;
 pub mod plotstyles;
@@ -64,6 +77,7 @@ pub mod theme;
 pub mod updates_ui;
 pub mod viewcube;
 pub mod vpscale;
+pub mod wblock;
 
 pub mod exchange;
 
@@ -96,7 +110,6 @@ pub struct UiState {
     pub show_status_bar: bool,
     pub show_command_line: bool,
     pub show_viewcube: bool,
-    pub show_ucs_icon: bool,
     pub show_layer_list: bool,
     /// Keep the system cursor visible over the drawing area (a small crosshair at the centre of the
     /// drawn one) instead of hiding it. Screen magnifiers (Windows Magnifier "follow the mouse
@@ -115,6 +128,8 @@ pub struct UiState {
     pub start_tab: bool,
     pub dialog: Option<String>,
     pub history_lines: usize,
+    /// The user's keyboard shortcuts ([`keys`]).
+    pub shortcuts: keys::UserKeys,
     /// Interface theme: "system" (follow the OS light/dark appearance), "light" or "dark".
     pub theme: theme::ThemePref,
     /// Animation effects (dialog and menu fades, smoothed scrolling): "system" (follow the OS
@@ -129,6 +144,8 @@ pub struct UiState {
     pub recent_files: Vec<String>,
     /// The folder the last APPLOAD file came from: the next pick starts there.
     pub last_lisp_dir: Option<String>,
+    /// The folder the Command Aliases dialog last imported a `.pgp` file from.
+    pub last_pgp_dir: Option<String>,
 }
 
 /// A DXF/DWG file version (2000 … 2018).
@@ -190,7 +207,6 @@ impl Default for UiState {
             show_status_bar: true,
             show_command_line: true,
             show_viewcube: true,
-            show_ucs_icon: true,
             show_layer_list: false,
             system_cursor: false,
             toolset_tab: "Drafting".into(),
@@ -201,12 +217,14 @@ impl Default for UiState {
             start_tab: false,
             dialog: None,
             history_lines: 3,
+            shortcuts: keys::UserKeys::new(),
             theme: theme::ThemePref::default(),
             animations: animation::AnimationPref::default(),
             save_format: SaveFormat::default(),
             save_version: SaveVersion::default().year().to_string(),
             recent_files: Vec::new(),
             last_lisp_dir: None,
+            last_pgp_dir: None,
         }
     }
 }
@@ -216,6 +234,12 @@ impl Default for UiState {
 pub struct Services {
     pub pick_open: Option<Box<dyn Fn() -> Option<String>>>,
     pub pick_save: Option<Box<dyn Fn(&str) -> Option<String>>>,
+    /// Where set, the file dialogs are shown with this instead of calling `pick_open` /
+    /// `pick_save` / `pick_lisp` (which must still be set, to say which dialogs there are), and
+    /// the answer is acted on in a later frame ([`CadApp::pick_then`]). macOS needs it: a panel run modally
+    /// inside the window's event handler gets the window events of its own resizing sent back
+    /// into that handler, and winit aborts the app (#1527).
+    pub start_pick: Option<StartPick>,
     /// Pick a `.lsp` file for APPLOAD, starting in the given folder (empty for the default one).
     /// `None` where there is no native file dialog: the desktop without one asks for the name,
     /// and the web (no file system) says to drop the file (`no_file_system`).
@@ -223,6 +247,45 @@ pub struct Services {
     /// The host has no file system to read a path from (the browser): a dropped file's contents
     /// are what it loads, and APPLOAD says so instead of asking for a name it cannot read.
     pub no_file_system: bool,
+    /// Pick a `.pgp` alias file, starting in the folder given (the last import's).
+    pub pick_pgp: Option<Box<dyn Fn(Option<&str>) -> Option<String>>>,
+    /// The app binary's last step as the app leaves, run once at the end of its `on_exit`. On
+    /// macOS every quit ends the process inside AppKit's terminate, after `on_exit`, so code
+    /// after `eframe::run_native` never runs there (the Nightly session record is finished here).
+    pub at_exit: Option<AtExitFn>,
+}
+
+/// Runs once when the app leaves ([`Services::at_exit`]).
+pub type AtExitFn = Box<dyn FnOnce()>;
+
+/// The file dialog to show: Open, Save with the suggested file name, APPLOAD's `.lsp` picker or
+/// ALIASEDIT's `.pgp` picker, starting in the given folder (empty for the default one).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pick {
+    Open,
+    Save(String),
+    Lisp(String),
+    Pgp(String),
+}
+
+/// Shows a file dialog without waiting for it and calls the callback (from any thread) with the
+/// chosen path, or `None` when the dialog is cancelled ([`Services::start_pick`]).
+pub type StartPick = Box<dyn Fn(Pick, Box<dyn FnOnce(Option<String>) + Send>)>;
+
+/// What to do with the path a file dialog chose ([`CadApp::pick_then`]).
+type PickDone = Box<dyn FnOnce(&mut CadApp, String) -> Result<Value, String>>;
+
+/// A file dialog shown with [`Services::start_pick`] that has not answered yet.
+struct PendingPick {
+    answer: Receiver<Option<String>>,
+    /// The drawing (its `uid`) the answer is for: Save As writes that drawing, export and plot
+    /// read it, and so on, whichever drawing is active when the answer arrives. `None` for the
+    /// dialogs that open a drawing (Open, New from Template, Recover).
+    doc: Option<u64>,
+    /// The close prompt's Save is waiting for this dialog: its other answers wait too
+    /// ([`closing`]).
+    for_close: bool,
+    then: PickDone,
 }
 
 pub struct CadApp {
@@ -232,6 +295,9 @@ pub struct CadApp {
     pub system_animations: Option<bool>,
     /// What `ui.system_cursor` goes back to when the interface is reset ([`Self::set_system_cursor_default`]).
     pub system_cursor_default: bool,
+    /// Whether the host has a native menu bar: off where the menus stay in the window
+    /// ([`Self::set_native_menus`]).
+    pub native_menus: bool,
     pub session: Session,
     pub ui: UiState,
     /// The interface's own preferences from the Options dialog ([`options`]).
@@ -258,15 +324,23 @@ pub struct CadApp {
     /// Admitted `ui.screenshot` requests, including completed-but-undrained ones.
     pub(crate) shots: capture::Shots,
     pub synthetic: Vec<egui::Event>,
+    /// Paste commands waiting for the system clipboard ([`clipboard::defer`]).
+    pub(crate) paste: clipboard::Paste,
     /// Keys, text and clipboard events a floating panel's own OS window left over, with the
     /// modifiers held there, for the main window's next input ([`Self::forward_native_input`]).
     forwarded: Vec<egui::Event>,
     forwarded_modifiers: Option<egui::Modifiers>,
+    /// The Copy, Cut and Paste a floating panel's window fired as framework commands, as the clipboard events the
+    /// shortcuts read ([`Self::queue_fired_edits`]).
+    fired_edits: Vec<egui::Event>,
     /// The main window's own modifiers, put back the frame after forwarded keys went in.
     restore_modifiers: Option<egui::Modifiers>,
-    /// A panel opened from a menu or command, whose floating window comes to the front on the
-    /// next frame (craft-ui's `DockArea::raise_panel`).
-    pub raise_panel: Option<docking::Panel>,
+    /// The panel arrangement the dock shows and the panels' specs ([`docking::LiveDock`]).
+    pub(crate) dock: docking::LiveDock,
+    /// Who CADCraft is to the framework's dock and dialogs ([`framework`]).
+    framework_host: std::sync::Arc<craft_host::Host>,
+    /// The framework dialogs CADCraft keeps open (the update dialogs), run after its own UI.
+    pub framework_dialogs: craft_ui::dialog::DialogHost,
     /// One synthetic batch has been put into `RawInput` and is waiting for a real `App::ui` call.
     synthetic_injected: bool,
     /// Counts settled UI passes (one per painted frame; never hidden logic-only ticks or
@@ -285,8 +359,6 @@ pub struct CadApp {
     shown_follows_system: bool,
     /// Whether egui was last told to animate (`None` until the first frame).
     shown_animations: Option<bool>,
-    /// The interface scale last handed to egui (`None` until the first frame).
-    shown_interface_scale: Option<f32>,
     pub frame_ms: f64,
     pub quit_requested: bool,
     /// The app may close although drawings have unsaved changes (they were dealt with, or the
@@ -314,8 +386,14 @@ pub struct CadApp {
     pub alias_dlg: Option<aliasdlg::AliasDlgState>,
     /// The Hatch and Gradient dialog while open or picking ([`hatchdlg`]).
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
+    /// The Array dialog while open or picking ([`arraydlg`]).
+    pub array_dlg: Option<arraydlg::ArrayDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    /// The Write Block dialog ([`wblock`]).
+    pub wblock: wblock::State,
+    /// A file dialog shown with [`Services::start_pick`]: its answer, and what to do with it.
+    pending_pick: Option<PendingPick>,
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub updates_rt: updates_ui::Runtime,
@@ -328,6 +406,7 @@ impl CadApp {
             system_languages: Vec::new(),
             system_animations: None,
             system_cursor_default: false,
+            native_menus: cfg!(target_os = "macos"),
             session,
             ui: UiState::default(),
             options: options::UiOptions::default(),
@@ -345,10 +424,14 @@ impl CadApp {
             capture_identity_epoch: 0,
             shots: capture::Shots::default(),
             synthetic: Vec::new(),
+            paste: clipboard::Paste::default(),
             forwarded: Vec::new(),
             forwarded_modifiers: None,
+            fired_edits: Vec::new(),
             restore_modifiers: None,
-            raise_panel: None,
+            dock: docking::LiveDock::default(),
+            framework_host: framework::host(),
+            framework_dialogs: craft_ui::dialog::DialogHost::default(),
             synthetic_injected: false,
             ui_frames: 0,
             #[cfg(not(target_arch = "wasm32"))]
@@ -358,7 +441,6 @@ impl CadApp {
             shown_theme: None,
             shown_follows_system: false,
             shown_animations: None,
-            shown_interface_scale: None,
             frame_ms: 0.0,
             quit_requested: false,
             quit_confirmed: false,
@@ -373,10 +455,142 @@ impl CadApp {
             autosave_notice: None,
             alias_dlg: None,
             hatch_dlg: None,
+            array_dlg: None,
             bedit: bedit::State::default(),
+            wblock: wblock::State::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
+            pending_pick: None,
         }
+    }
+
+    /// Ask for a file with the host's dialog (`pick`) and run `then` with the chosen path, on the
+    /// drawing that is active now. `None` when the host has no dialog of that kind. Cancelling
+    /// gives `Ok(Null)`. With a synchronous picker the result is `then`'s; with
+    /// [`Services::start_pick`] the dialog opens and this returns `Ok(Null)` at once: `then` runs
+    /// in a later frame ([`Self::logic`]) with that drawing made active again (if something else
+    /// was switched to meanwhile, such as a control-channel `document.switch`), and not at all if
+    /// the drawing was closed. Its error, if any, shows in the status bar. With no drawing open
+    /// it refuses without showing a dialog. While one dialog is open, no other is shown: the
+    /// request is refused with an error, also shown in the status bar.
+    pub fn pick_then(
+        &mut self,
+        pick: Pick,
+        then: impl FnOnce(&mut CadApp, String) -> Result<Value, String> + 'static,
+    ) -> Option<Result<Value, String>> {
+        self.pick_for(pick, true, Box::new(then))
+    }
+
+    /// [`Self::pick_then`] for a dialog that opens a drawing (Open, New from Template, Recover):
+    /// `then` does not act on the drawing that was active, so it runs whatever was switched to
+    /// or closed meanwhile.
+    pub fn pick_then_open(
+        &mut self,
+        pick: Pick,
+        then: impl FnOnce(&mut CadApp, String) -> Result<Value, String> + 'static,
+    ) -> Option<Result<Value, String>> {
+        self.pick_for(pick, false, Box::new(then))
+    }
+
+    /// Show the dialog `pick` for `then`, bound to the active drawing when `bound`.
+    fn pick_for(&mut self, pick: Pick, bound: bool, then: PickDone) -> Option<Result<Value, String>> {
+        let available = match pick {
+            Pick::Open => self.services.pick_open.is_some(),
+            Pick::Save(_) => self.services.pick_save.is_some(),
+            Pick::Lisp(_) => self.services.pick_lisp.is_some(),
+            Pick::Pgp(_) => self.services.pick_pgp.is_some(),
+        };
+        if !available {
+            return None;
+        }
+        if self.pending_pick.is_some() {
+            return Some(Err(self.refuse_pick("A file dialog is already open; answer it first.".into())));
+        }
+        // A bound answer must not land on a drawing created or opened while the dialog is up.
+        let doc = match (bound, self.session.state()) {
+            (false, _) => None,
+            (true, Ok(st)) => Some(st.uid),
+            (true, Err(e)) => {
+                let why = e.to_string();
+                return Some(Err(self.refuse_pick(why)));
+            }
+        };
+        if let Some(start) = &self.services.start_pick {
+            let (tx, answer) = std::sync::mpsc::channel();
+            start(
+                pick,
+                Box::new(move |path| {
+                    let _ = tx.send(path);
+                }),
+            );
+            self.pending_pick = Some(PendingPick { answer, doc, for_close: false, then });
+            return Some(Ok(Value::Null));
+        }
+        let path = match &pick {
+            Pick::Open => self.services.pick_open.as_ref().and_then(|f| f()),
+            Pick::Save(name) => self.services.pick_save.as_ref().and_then(|f| f(name)),
+            Pick::Lisp(dir) => self.services.pick_lisp.as_ref().and_then(|f| f(dir)),
+            Pick::Pgp(dir) => self.services.pick_pgp.as_ref().and_then(|f| f(Some(dir.as_str()).filter(|d| !d.is_empty()))),
+        };
+        Some(match path {
+            Some(path) => then(self, path),
+            None => Ok(Value::Null),
+        })
+    }
+
+    /// A file dialog that is not shown: the reason goes to the status bar too, since a typed or
+    /// menu command's result is not shown ([`Self::start`]).
+    fn refuse_pick(&mut self, why: String) -> String {
+        self.set_status(why.clone());
+        why
+    }
+
+    /// Start the interactive command `id` with a dialog's answer. `was_prompting`: whether a
+    /// command was running when the dialog was asked for. Starting cancels the running command,
+    /// so a command started while the dialog was open (a control request, say) is kept and this
+    /// one refused instead; one that was already running is cancelled as when the dialog answers
+    /// at once.
+    pub fn start_after_pick(&mut self, id: &str, was_prompting: bool) -> Result<(), String> {
+        if !was_prompting && self.session.prompting() {
+            return Err(format!("{}: another command started while the file dialog was open; run it again.", id.to_ascii_uppercase()));
+        }
+        self.session.start(id).map_err(|e| e.to_string())
+    }
+
+    /// Act on the answer of a dialog started with [`Services::start_pick`], once it arrives.
+    fn finish_pick(&mut self, ctx: &egui::Context) {
+        let Some(pending) = &self.pending_pick else { return };
+        match pending.answer.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
+            Ok(None) => self.pending_pick = None,
+            // The host dropped the answer without giving one: the dialog never opened (its
+            // thread could not start) or failed.
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending_pick = None;
+                self.set_status("The file dialog could not be shown.");
+            }
+            Ok(Some(path)) => {
+                if let Some(PendingPick { doc, then, .. }) = self.pending_pick.take()
+                    && let Err(e) = self.make_active(doc, &path).and_then(|()| then(self, path))
+                {
+                    self.set_status(e);
+                }
+                ctx.request_repaint();
+            }
+        }
+    }
+
+    /// Make the drawing `uid` active again for the answer `path` of a dialog it asked for, or
+    /// refuse when it was closed meanwhile.
+    fn make_active(&mut self, uid: Option<u64>, path: &str) -> Result<(), String> {
+        let Some(uid) = uid else { return Ok(()) };
+        let Some(i) = self.session.docs.iter().position(|d| d.uid == uid) else {
+            return Err(format!("The drawing was closed before the file dialog answered; nothing was done with {path}."));
+        };
+        if self.session.active != i {
+            self.run("document.switch", json!({ "index": i }))?;
+        }
+        Ok(())
     }
 
     /// The interface language shown: the chosen one, or English when this computer has no font
@@ -405,7 +619,11 @@ impl CadApp {
         if let Some(r) = menus::run_ui_command(self, id, &params) {
             return r;
         }
+        // The bars as the interface shows them now (a `ui.set` may have just changed one), and any
+        // MENUBAR or TOOLBAR request applied at once.
+        self.sync_bars();
         let r = self.session.execute(id, &params).map_err(|e| e.to_string());
+        self.sync_bars();
         if let Ok(v) = &r
             && let Some(m) = v.get("message").and_then(Value::as_str)
         {
@@ -421,9 +639,17 @@ impl CadApp {
 
     /// Start a command as if typed (interactive when it has prompts).
     pub fn start(&mut self, name: &str) {
+        if clipboard::defer(self, name, None) {
+            return;
+        }
+        // Starting another command drops a paste still waiting for the clipboard.
+        if !self.paste.running {
+            self.paste.cancel();
+        }
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
             return;
         }
+        self.sync_bars();
         if let Err(e) = self.session.start(name) {
             self.session.echo(e.to_string());
         }
@@ -439,21 +665,61 @@ impl CadApp {
     /// command or system variable) runs `fallback` instead: Enter on a partly typed name accepts
     /// the highlighted AutoComplete suggestion.
     pub fn cmdline_or(&mut self, text: &str, fallback: Option<&str>) -> Option<String> {
+        self.sync_bars();
         if !self.session.prompting() {
             let first = text.split_whitespace().next().unwrap_or("");
             // `cmd {json}` is a programmatic call: the engine runs it with those parameters.
             let json_form = text.trim_start().get(first.len()..).is_some_and(|rest| rest.trim_start().starts_with('{'));
-            if !first.is_empty() && !json_form && menus::run_ui_command(self, &first.to_ascii_lowercase(), &Value::Null).is_some() {
+            // A name typed with the Greek keyboard layout active (ΨΛΟΣΕ for CLOSE) is the Latin name's
+            // keys, unless it is a command of its own, as it is when the engine starts it: the
+            // interface's own commands answer to it too (CLOSE asks about unsaved changes).
+            let name = cadcraft_engine::keyboard::latin_keys(first)
+                .filter(|_| !self.session.greek_word_is_a_command(first))
+                .unwrap_or_else(|| first.to_ascii_lowercase());
+            // A typed command drops a paste still waiting for the clipboard (a typed paste is held anew below).
+            if !first.is_empty() && !self.paste.running {
+                self.paste.cancel();
+            }
+            // A user alias typed alone routes as its command does: an alias of HATCH opens the Hatch
+            // dialog, typed as is or with the Greek layout active. With more on the line
+            // (`KR P ANSI31`) it goes to the engine, which runs the command with those inputs.
+            let alone = text.split_whitespace().nth(1).is_none();
+            let name = if alone {
+                cadcraft_engine::cmd::file::user_alias_command(first)
+                    .or_else(|| cadcraft_engine::cmd::file::user_alias_command(&name))
+                    .unwrap_or(name)
+            } else {
+                name
+            };
+            if !first.is_empty() && !json_form && menus::run_ui_command(self, &name, &Value::Null).is_some() {
+                return None;
+            }
+            // A bare PASTECLIP, PASTEBLOCK or PASTEORIG reads the system clipboard first.
+            if text.trim() == first && clipboard::defer(self, &cadcraft_engine::cmd::resolve_alias(&name), Some(text)) {
                 return None;
             }
         }
-        let e = match (self.session.cmdline(text), fallback) {
+        let r = self.session.cmdline(text);
+        self.sync_bars();
+        let e = match (r, fallback) {
             (Ok(()), _) => return None,
             (Err(cadcraft_engine::EngineError::UnknownCommand(_)), Some(f)) => return self.cmdline(f),
             (Err(e), _) => e.to_string(),
         };
         self.session.echo(e.clone());
         Some(e)
+    }
+
+    /// Apply a menu bar / tool bar change MENUBAR or TOOLBAR asked for, and report the bars shown.
+    fn sync_bars(&mut self) {
+        let b = std::mem::take(&mut self.session.bars_request);
+        if let Some(on) = b.menubar {
+            self.ui.in_window_menu = on;
+        }
+        if let Some(show) = b.toolbar {
+            self.ui.show_toolbar = show;
+        }
+        self.session.bars_shown = cadcraft_engine::cmd::interface::InterfaceBars { menubar: self.ui.in_window_menu, toolbar: self.ui.show_toolbar };
     }
 
     /// The theme the interface shows now (the choice resolved against the OS appearance).
@@ -485,6 +751,12 @@ impl CadApp {
         }
         if let Some(dir) = &self.ui.last_lisp_dir {
             prefs["lispDir"] = json!(dir);
+        }
+        if let Some(dir) = self.ui.last_pgp_dir.as_deref().filter(|d| !d.is_empty()) {
+            prefs["lastPgpDir"] = json!(dir);
+        }
+        if !self.ui.shortcuts.is_empty() {
+            prefs["shortcuts"] = json!(self.ui.shortcuts);
         }
         prefs.to_string()
     }
@@ -519,6 +791,18 @@ impl CadApp {
         if let Some(dir) = v.get("lispDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
             self.ui.last_lisp_dir = Some(dir.to_string());
         }
+        if let Some(dir) = v.get("lastPgpDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
+            self.ui.last_pgp_dir = Some(dir.to_string());
+        }
+        if let Some(keys) = v.get("shortcuts").filter(|k| k.is_object()) {
+            self.ui.shortcuts = keys::from_prefs(keys);
+        }
+    }
+
+    /// Whether the window may answer a request for the system clipboard (Edit > Paste) later than
+    /// the next frame, as native Wayland does; elsewhere it never does ([`clipboard::Paste::set_late_answers`]).
+    pub fn set_clipboard_late_answers(&mut self, late: bool) {
+        self.paste.set_late_answers(late);
     }
 
     /// Make the system cursor the interface default (`on`) and turn it on; saved preferences and
@@ -527,6 +811,15 @@ impl CadApp {
         self.system_cursor_default = on;
         if on {
             self.ui.system_cursor = true;
+        }
+    }
+
+    /// Tell the interface whether the host has a native menu bar. Where it has none, the
+    /// in-window menu is the only menu, so it is shown and a reset keeps it.
+    pub fn set_native_menus(&mut self, on: bool) {
+        self.native_menus = on;
+        if !on {
+            self.ui.in_window_menu = true;
         }
     }
 
@@ -541,7 +834,8 @@ impl CadApp {
 
     /// Open the drawing at `path`. Natively the file is read on a worker thread while an
     /// "Opening ..." card shows ([`opening`]); [`Self::finish_opening`] adds it when ready. On the
-    /// web it opens at once.
+    /// web it opens at once. An already open drawing is selected without re-reading it, retaining
+    /// its unsaved edits and view; window drops and Open Recent use this same entry point.
     pub fn open_path(&mut self, path: &Path) {
         // A LISP file (dropped on the window): loaded as APPLOAD loads it.
         if is_lisp_file(path) {
@@ -549,6 +843,9 @@ impl CadApp {
                 Some(text) => self.load_lisp(&path.to_string_lossy(), &text),
                 None => self.open_failed(format!("APPLOAD: can't read {}", path.display())),
             }
+            return;
+        }
+        if self.select_open_drawing(path) {
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -565,10 +862,32 @@ impl CadApp {
         }
     }
 
+    /// OPEN typed at the command line with the file to open (`OPEN C:\plans\big.dwg`, or the JSON
+    /// form with only a path, `open {"path": "…"}`): read in the background as File ▸ Open reads it
+    /// ([`Self::open_path`]), so a large drawing doesn't freeze the window. False, and the line runs
+    /// as before, for anything else: other parameters (`data`), a LISP file, and on the web, which
+    /// has no threads. Only the keyboard's Enter calls this; programmatic calls (the control
+    /// channel, MCP, scripts, LISP) keep getting their answer at once.
+    pub(crate) fn open_typed(&mut self, line: &str) -> bool {
+        let Some(path) = typed_open_path(line).filter(|p| !is_lisp_file(p)) else { return false };
+        self.open_path(Path::new(&path));
+        true
+    }
+
     /// Add the files whose background read has finished; report the ones that failed as a failed
     /// OPEN is reported. Called every frame.
     pub fn finish_opening(&mut self) {
-        for (_, outcome) in self.opening.poll() {
+        for (path, outcome) in self.opening.poll() {
+            // A drawing may have been opened or saved at this path while the read was pending.
+            if self.select_open_drawing(&path) {
+                continue;
+            }
+            // A recent file that is gone can never be opened again: drop it from the list. A path
+            // whose existence can't be checked (a folder that denies access) stays.
+            if outcome.is_err() && matches!(path.try_exists(), Ok(false)) {
+                let path = path.to_string_lossy();
+                self.ui.recent_files.retain(|p| *p != path);
+            }
             let r = match outcome {
                 Ok(f) => self.session.finish_open(f).map_err(|e| e.to_string()),
                 Err(e) => Err(e),
@@ -578,6 +897,22 @@ impl CadApp {
             }
             self.opened(r);
         }
+    }
+
+    /// Reuse the existing document through the normal tab-switch command, including symlink paths.
+    fn select_open_drawing(&mut self, path: &Path) -> bool {
+        let existing = self.session.docs.iter().position(|d| d.path.as_deref().is_some_and(|p| opening::same_path(Path::new(p), path)));
+        let Some(index) = existing else { return false };
+        match self.run("document.switch", json!({"index": index})) {
+            Ok(_) => {
+                self.ui.start_tab = false;
+                if let Some(path) = self.session.docs.get(index).and_then(|d| d.path.clone()) {
+                    self.remember_recent(path);
+                }
+            }
+            Err(error) => self.open_failed(error),
+        }
+        true
     }
 
     /// Load a LISP file: its routine runs and may wait for the user (APPLOAD typed or from the
@@ -632,7 +967,8 @@ impl CadApp {
             Err(e) => self.set_status(e),
             Ok(v) => {
                 self.ui.start_tab = false;
-                self.canvas.zoom_pending = true;
+                // A drawing that opened on the view it was saved at keeps it (#1626).
+                self.canvas.zoom_pending = !v.get("saved_view").and_then(Value::as_bool).unwrap_or(false);
                 let doc = v.get("index").and_then(Value::as_u64).and_then(|i| self.session.docs.get(usize::try_from(i).ok()?));
                 if let Some(path) = doc.and_then(|d| d.path.clone()) {
                     self.remember_recent(path);
@@ -670,6 +1006,7 @@ impl CadApp {
         // Consume-based queues: each item is handled once, whichever callback delivers it. A
         // reply arriving during a later pass is never starved until the next frame.
         self.drain_control(ctx);
+        self.finish_pick(ctx);
         self.finish_opening();
         // Finishing an open switches to the new drawing.
         capture::note_identity(self, ctx);
@@ -677,17 +1014,13 @@ impl CadApp {
         self.gpu_fault_tick(ctx);
         managers::plot_window_resume(self, ctx);
         hatchdlg::resume(self);
+        wblock::resume(self);
         // What follows is frame work, once per layout frame or hidden tick.
         if ctx.current_pass_index() != 0 {
             return;
         }
         if self.restore_modifiers.is_some() {
             ctx.request_repaint();
-        }
-        // Closing the window with unsaved changes asks first. `run_logic` refreshes viewport
-        // close/focus state, so this must also work while hidden.
-        if ctx.input(|i| i.viewport().close_requested()) && self.request_quit() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
         // A long AutoLISP routine runs one bounded slice per frame, including hidden web/native
         // ticks; it must not depend on a paint or `RequestPaintWhileHidden`.
@@ -798,9 +1131,9 @@ impl CadApp {
             // The batch reached an actual Ui callback; a discarded pass still consumed it.
             self.synthetic_injected = false;
         }
-        // `will_discard()` is false on the settled (final) pass of a frame, whether the frame is
-        // single-pass or the second pass after a layout discard; a discarded pass is skipped.
-        if !ctx.will_discard() {
+        // `will_rerun` is false on the settled (final) pass of a frame, whether the frame is
+        // single-pass or the second pass after a layout discard; a pass that will run again is skipped.
+        if !craft_ui::runtime::frame::will_rerun(&ctx) {
             self.ui_frames = self.ui_frames.saturating_add(1);
             capture::issue(self, &ctx);
         }
@@ -812,6 +1145,7 @@ impl CadApp {
         let ctx = &ctx;
         let language = self.language();
         if self.fonts_language != Some(language) {
+            drawing_fonts::install(ctx);
             theme::install_fonts(ctx, language);
             self.fonts_language = Some(language);
         }
@@ -841,13 +1175,6 @@ impl CadApp {
         if !animate {
             animation::unsmooth_scroll(ctx);
         }
-        // Applied only when the saved scale changes, so egui's own keyboard zoom keeps working
-        // within a session (and is never saved).
-        let scale = self.options.interface_scale;
-        if self.shown_interface_scale != Some(scale) {
-            ctx.set_zoom_factor(scale);
-            self.shown_interface_scale = Some(scale);
-        }
         // Wait for the frame cap on a painted pass, where a wait cannot delay a hidden tick.
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(cap) = &mut self.frame_cap {
@@ -860,6 +1187,7 @@ impl CadApp {
     /// Input-derived work, once per layout frame.
     fn ui_input(&mut self, ctx: &egui::Context) {
         menus::shortcuts(self, ctx);
+        self.zoom_keys(ctx, egui::ViewportId::ROOT);
         #[cfg(not(target_arch = "wasm32"))]
         {
             let dropped = ctx.input_mut(|input| std::mem::take(&mut input.raw.dropped_files));
@@ -878,6 +1206,7 @@ impl CadApp {
     /// Draw one UI pass: title/toolbar, optional menu/status bar/file tabs, the standalone tool-set strip when a drawing is shown but Tool Sets is not docked, docking or the start page, and the floating overlays; record `frame_ms`. Runs on every pass, including one egui later discards.
     fn draw(&mut self, ui: &mut egui::Ui) {
         let t0 = now_ms();
+        self.sync_bars();
         control::begin_frame(ui.ctx());
         let t = theme::Tokens::get();
         chrome::title_and_toolbar(self, ui);
@@ -898,6 +1227,7 @@ impl CadApp {
             if has_doc {
                 docking::show(self, ui);
             } else {
+                self.canvas.shown = None;
                 chrome::start_page(self, ui);
             }
         });
@@ -911,6 +1241,7 @@ impl CadApp {
         autosave::show(self, ui.ctx());
         autosave::gpu_notice(self, ui.ctx());
         autosave::failure_notice(self, ui.ctx());
+        self.run_framework_dialogs(ui);
         self.frame_ms = now_ms() - t0;
     }
 
@@ -957,6 +1288,27 @@ pub fn now_ms() -> f64 {
 /// A LISP source file, by its name.
 fn is_lisp_file(name: impl AsRef<Path>) -> bool {
     name.as_ref().extension().is_some_and(|e| e.eq_ignore_ascii_case("lsp"))
+}
+
+/// The file an `OPEN <path>` or `open {"path": "…"}` line names ([`CadApp::open_typed`]). `None`
+/// for other lines, JSON with other keys, and on the web.
+fn typed_open_path(line: &str) -> Option<String> {
+    if cfg!(target_arch = "wasm32") {
+        return None;
+    }
+    let (name, rest) = line.trim().split_once(char::is_whitespace)?;
+    if !name.trim_start_matches(['_', '.']).eq_ignore_ascii_case("open") {
+        return None;
+    }
+    let rest = rest.trim();
+    let path = if rest.starts_with('{') {
+        let v: Value = serde_json::from_str(rest).ok()?;
+        let o = v.as_object().filter(|o| o.len() == 1)?;
+        o.get("path")?.as_str()?.to_string()
+    } else {
+        rest.strip_prefix('"').and_then(|r| r.strip_suffix('"')).unwrap_or(rest).to_string()
+    };
+    (!path.trim().is_empty()).then_some(path)
 }
 
 #[cfg(test)]
@@ -1009,6 +1361,7 @@ mod tests {
         start(&mut single);
         start(&mut twice);
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         frame(&mut single, &ctx, None);
         two_pass_frame(&mut twice, &ctx);
         let counter = |app: &CadApp| match app.session.lisp_var("CC-TWO") {
@@ -1032,6 +1385,7 @@ mod tests {
         let (request, reply) = ControlRequest::new("engine.execute", json!({ "command": "line", "params": { "points": [[0.0, 0.0], [10.0, 0.0]] } }));
         tx.send(request).expect("the request is queued");
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         two_pass_frame(&mut app, &ctx);
         let entities = app.session.doc().map(cadcraft_doc::Drawing::entity_count).unwrap_or_default();
         assert_eq!(entities, 1, "one command ran once, in the first pass");
@@ -1044,6 +1398,7 @@ mod tests {
     fn hidden_logic_does_not_run_frame_only_work() {
         let mut a = app();
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         // A logic-only call (what eframe runs for a hidden window) reports pass index zero too.
         a.logic(&ctx);
         assert_eq!(a.ui_frames, 0, "no real Ui callback ran");
@@ -1060,6 +1415,7 @@ mod tests {
 
         let mut a = CadApp::new(Session::new(), Services::default());
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         let started = a
             .session
             .lisp_eval("(setq cc-hidden 0) (while (< cc-hidden 400000) (setq cc-hidden (1+ cc-hidden)))", false, false, Vec::new())
@@ -1083,6 +1439,7 @@ mod tests {
     fn one_synthetic_batch_waits_for_a_real_ui_pass() {
         let mut a = app();
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         a.synthetic.push(egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE });
         let mut first = egui::RawInput::default();
         a.raw_input_hook(&ctx, &mut first);
@@ -1118,6 +1475,7 @@ mod tests {
         assert_eq!(b.ui.theme, ThemePref::Light, "bad prefs are ignored");
         // A fixed choice ignores the OS; the tokens and egui follow the choice.
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         frame(&mut b, &ctx, Some(egui::Theme::Dark));
         assert_eq!(Tokens::get(), Tokens::LIGHT);
         assert_eq!(ctx.theme(), egui::Theme::Light);
@@ -1135,6 +1493,7 @@ mod tests {
         let mut a = app();
         a.start("ui.theme.system");
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         frame(&mut a, &ctx, Some(egui::Theme::Light));
         assert_eq!(Tokens::get(), Tokens::LIGHT);
         assert_eq!(ctx.theme(), egui::Theme::Light);
@@ -1153,6 +1512,7 @@ mod tests {
         let mut a = app();
         a.start("ui.theme.system");
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         frame(&mut a, &ctx, Some(egui::Theme::Light));
         // A concrete Light would pin the native window appearance and hide later OS changes.
         assert_eq!(ctx.options(|o| o.theme_preference), egui::ThemePreference::System);
@@ -1198,5 +1558,55 @@ mod tests {
         assert_eq!(SaveFormat::Dwg.suggested_name(Some("  ")), "Drawing.dwg");
         let ui: UiState = serde_json::from_value(json!({ "saveFormat": "dwg" })).unwrap_or_default();
         assert_eq!(ui.save_format, SaveFormat::Dwg);
+    }
+
+    #[test]
+    fn options_reset_brings_the_interface_back() {
+        // Hiding the interface (View/Window toggles) can leave no way back — on Windows the
+        // in-window menu bar is the only menu there is. Options > Reset must restore it (#1240).
+        let mut a = app();
+        a.run("ui.toggle.toolbar", json!({ "on": false })).unwrap();
+        a.run("ui.toggle.menubar", json!({ "on": cfg!(target_os = "macos") })).unwrap();
+        a.start("ui.hidepalettes");
+        assert!(!a.ui.show_toolbar && !a.ui.show_palettes && !a.ui.show_toolsets);
+        assert_eq!(a.ui.in_window_menu, cfg!(target_os = "macos"), "the test did not hide the menu bar");
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(a.ui.show_toolbar, "the tool bar is still hidden");
+        assert!(a.ui.show_palettes, "the palettes are still hidden");
+        assert!(a.ui.show_toolsets);
+        assert_eq!(a.ui.in_window_menu, !cfg!(target_os = "macos"), "the menu bar did not come back");
+    }
+
+    #[test]
+    fn options_reset_keeps_the_menu_where_the_host_has_no_native_one() {
+        // With CADCRAFT_NO_NATIVE_MENU=1 the menus stay in the window: the host reports no native
+        // menu bar, so the in-window one is the only menu and the reset must leave it (#1240).
+        let mut a = app();
+        a.set_native_menus(false);
+        assert!(a.ui.in_window_menu, "the host's setting did not show the in-window menu");
+        a.run("ui.toggle.menubar", json!({ "on": false })).unwrap();
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(a.ui.in_window_menu, "the only menu bar did not come back");
+        // Beside a native menu bar, the reset returns to the platform default.
+        a.set_native_menus(true);
+        a.run("ui.toggle.menubar", json!({ "on": true })).unwrap();
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(!a.ui.in_window_menu, "the in-window menu is not the default beside a native one");
+    }
+
+    #[test]
+    fn options_reset_keeps_the_users_shortcuts_and_folders() {
+        // The reset brings hidden bars back (#1240); it must not also lose the user's own
+        // keyboard shortcuts or the folders the file pickers remember.
+        let mut a = app();
+        a.ui.shortcuts.insert("line".into(), "Ctrl+Shift+L".into());
+        a.ui.last_lisp_dir = Some("lisp-folder".into());
+        a.ui.last_pgp_dir = Some("pgp-folder".into());
+        a.run("ui.toggle.toolbar", json!({ "on": false })).unwrap();
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(a.ui.show_toolbar, "the tool bar is still hidden");
+        assert_eq!(a.ui.shortcuts.get("line").map(String::as_str), Some("Ctrl+Shift+L"), "the reset lost a user shortcut");
+        assert_eq!(a.ui.last_lisp_dir.as_deref(), Some("lisp-folder"));
+        assert_eq!(a.ui.last_pgp_dir.as_deref(), Some("pgp-folder"));
     }
 }

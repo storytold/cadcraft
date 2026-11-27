@@ -64,7 +64,11 @@ pub(super) fn list(a: &[Value]) -> R {
 pub(super) fn append(a: &[Value]) -> R {
     let mut items = Vec::new();
     for v in a {
-        items.extend(list_arg(v)?);
+        let l = list_arg(v)?;
+        // Check the result's cells before holding them: the same long list given many times
+        // would otherwise grow far past the cell cap inside this one call (#1930).
+        super::super::value::check_new_cells(items.len().saturating_add(l.len()))?;
+        items.extend(l);
     }
     Ok(Value::list(items))
 }
