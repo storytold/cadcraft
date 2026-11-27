@@ -523,9 +523,7 @@ pub fn submit(app: &mut CadApp) {
     }
     crate::context_menu::note_input(app, &text);
     if text.is_empty() {
-        if let Err(e) = app.session.input(Input::Enter) {
-            app.session.echo(e.to_string());
-        }
+        app.cmdline("");
         return;
     }
     // OPEN with a file name reads it in the background, as File ▸ Open does (no frozen window).
