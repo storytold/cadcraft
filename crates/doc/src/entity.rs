@@ -54,7 +54,7 @@ pub use dim::{AssocSnap, DimAssoc, DimBreak, DimKind, DimMarks, Dimension, Inspe
 pub use fill::{Gradient, Hatch, HatchLoop};
 pub use layout::{Image, Table, TableCell, Viewport};
 pub use proxy::{ProxyTables, proxy_entities};
-pub use text::{HAlign, MText, MTextColumnType, MTextColumns, Text, VAlign};
+pub use text::{HAlign, MText, MTextBackground, MTextColumnType, MTextColumns, Text, VAlign};
 pub use wipeout::Wipeout;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Unknown {

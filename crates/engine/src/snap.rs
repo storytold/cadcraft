@@ -1308,6 +1308,7 @@ mod tests {
                     line_spacing: 1.0,
                     line_spacing_exact: false,
                     columns: None,
+                    background: None,
                 };
                 d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
             }
@@ -1339,6 +1340,7 @@ mod tests {
                 line_spacing: 1.0,
                 line_spacing_exact: false,
                 columns: None,
+                background: None,
             };
             d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
         }
@@ -1422,6 +1424,7 @@ mod tests {
                 line_spacing: 1.0,
                 line_spacing_exact: false,
                 columns: None,
+                background: None,
             };
             d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
         }

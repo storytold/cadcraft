@@ -151,6 +151,7 @@ impl Interactive for LeaderM {
                         line_spacing: 1.0,
                         line_spacing_exact: false,
                         columns: None,
+                        background: None,
                     }),
                     EntityKind::MText(m) => Some(m.clone()),
                     _ => None,
@@ -313,6 +314,7 @@ pub(super) fn add_leader(s: &mut Session, pts: &[Vec2], spline: bool, arrow: boo
                 line_spacing: 1.0,
                 line_spacing_exact: false,
                 columns: None,
+                background: None,
             }))?)
         }
         Annotation::Quick { lines, width } => {

@@ -72,6 +72,7 @@ fn definition(tag: &str, x: f64, modes: AttribModes, invisible: bool, multiline:
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            background: None,
         };
         MultilineAttrib { mtext, read_as: format!("{tag}\nTWO") }
     });

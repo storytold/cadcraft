@@ -810,6 +810,7 @@ mod tests {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            background: None,
         })
     }
 

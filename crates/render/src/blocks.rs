@@ -207,22 +207,23 @@ fn attributes(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert
             // on insertion), except those set on the attribute itself: ByBlock = the reference's,
             // layer 0 = the reference's layer.
             let def = defs.get(&a.tag.to_ascii_lowercase()).copied();
-            let (ink, lw, shown, t) = match (def, a.props.is_empty()) {
-                (None, true) => (rgb, resolve(ctx, e, b.plotting).1, true, reference),
+            let (ink, lw, shown, t, attr_ctx, attr_layer) = match (def, a.props.is_empty()) {
+                (None, true) => (rgb, resolve(ctx, e, b.plotting).1, true, reference, sub_ctx(ctx, e, Mat3::IDENTITY), e.common.layer.clone()),
                 (def, _) => {
                     let c = a.props.over(&def.map(|d| d.common.clone()).unwrap_or_else(by_block));
-                    let (ink, lw, _, _, shown, layer_t, fade) = resolve_common(&sub_ctx(ctx, e, Mat3::IDENTITY), &c, b.plotting);
+                    let sub = sub_ctx(ctx, e, Mat3::IDENTITY);
+                    let (ink, lw, _, _, shown, layer_t, fade) = resolve_common(&sub, &c, b.plotting);
                     // ByBlock takes the reference's own transparency, not its locked-layer fade.
                     let t = if b.opts.transparency { transparency(c.transparency, layer_t, own) } else { 0 };
                     let t = if b.opts.on_screen { t.max(fade) } else { t };
-                    (ink, lw, shown, t)
+                    (ink, lw, shown, t, sub, c.layer)
                 }
             };
             if shown {
                 b.transparency = t;
                 let lw = if b.opts.lineweights { lw } else { 0.0 };
                 match (&multiline, &sh) {
-                    (Some(m), _) => mtext(b, ctx, m, ink, lw),
+                    (Some(m), _) => mtext(b, &attr_ctx, &attr_layer, m, ink, lw),
                     (None, Some(sh)) => b.shaped(ctx, ink, lw, sh),
                     (None, None) => {}
                 }
