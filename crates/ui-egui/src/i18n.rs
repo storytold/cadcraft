@@ -55,9 +55,11 @@ pub enum Preference {
     Vietnamese,
     #[serde(rename = "ta")]
     Tamil,
+    #[serde(rename = "fi")]
+    Finnish,
 }
 impl Preference {
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::Auto,
         Self::English,
         Self::Greek,
@@ -80,6 +82,7 @@ impl Preference {
         Self::Bosnian,
         Self::Vietnamese,
         Self::Tamil,
+        Self::Finnish,
     ];
 
     /// Every preference in the order the Interface Language dialog lists them: Auto, then English
@@ -132,6 +135,7 @@ impl Preference {
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
             Self::Tamil => "ta",
+            Self::Finnish => "fi",
         }
     }
 
@@ -188,6 +192,7 @@ impl Preference {
                     "Tamil"
                 }
             }
+            Self::Finnish => "Suomi",
         }
     }
 
@@ -223,6 +228,7 @@ impl Preference {
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
             Self::Tamil => "ta",
+            Self::Finnish => "fi",
             Self::Auto => locales.iter().find_map(|s| locale_language(s)).unwrap_or("en"),
         }
     }
@@ -239,7 +245,7 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 21] = [
+pub static LANGUAGES: [Language; 22] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     Language { code: "pl", name: "Polski", source: include_str!("i18n/pl.tsv"), plural: plural_pl, plural_forms: 3, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
@@ -304,6 +310,8 @@ pub static LANGUAGES: [Language; 21] = [
     Language {
         code: "ta", name: "தமிழ்", source: include_str!("i18n/ta.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new()
     },
+    // Finnish plurals follow the English rule: one (1), other (partitive singular after the number).
+    Language { code: "fi", name: "Suomi", source: include_str!("i18n/fi.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
 ];
 
 /// BCP 47 and POSIX locale tags, including `uk-UA`, `uk_UA.UTF-8` and `pt_BR.UTF-8`.
