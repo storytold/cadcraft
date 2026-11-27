@@ -112,7 +112,7 @@ fn layout_tab_menu() {
 
     // Page Setup acts on the right-clicked tab.
     let g = sm::layout_tab_entries(&app, "Sheet A");
-    assert!(find(&g, "Page Setup Manager...").is_some() && find(&g, "Print...").is_some());
+    assert!(find(&g, "Page Setup Manager...").is_some() && find(&g, "Plot...").is_some());
 }
 
 #[test]
