@@ -63,19 +63,11 @@ enum Order {
     Under,
 }
 
-/// Move `hs` in the current space's draw order, keeping their order among themselves. Above and
-/// Under place them right over the topmost reference object or right under the lowest one.
-/// Returns how many objects moved.
-fn reorder(s: &mut Session, hs: &[Handle], order: Order, refs: &[Handle]) -> Result<usize> {
-    let space = s.space();
-    let d = s.doc_mut()?;
-    let Some(st) = d.space_mut(&space) else { return Ok(0) };
+fn reorder_store(st: &mut cadcraft_doc::EntityStore, hs: &[Handle], order: Order) -> usize {
     let index: HashMap<Handle, usize> = st.handles().into_iter().enumerate().map(|(i, h)| (h, i)).collect();
     let mut moving: Vec<(usize, Handle)> = hs.iter().filter_map(|h| index.get(h).map(|i| (*i, *h))).collect();
     moving.sort_unstable();
     moving.dedup();
-    let set: HashSet<Handle> = moving.iter().map(|m| m.1).collect();
-    let refs: Vec<(usize, Handle)> = refs.iter().filter(|h| !set.contains(h)).filter_map(|h| index.get(h).map(|i| (*i, *h))).collect();
     match order {
         Order::Front => {
             for (_, h) in &moving {
@@ -87,6 +79,29 @@ fn reorder(s: &mut Session, hs: &[Handle], order: Order, refs: &[Handle]) -> Res
                 st.send_to_back(*h);
             }
         }
+        Order::Above | Order::Under => {}
+    }
+    moving.len()
+}
+
+/// Move `hs` in the current space's draw order, keeping their order among themselves. Above and
+/// Under place them right over the topmost reference object or right under the lowest one.
+/// Returns how many objects moved.
+fn reorder(s: &mut Session, hs: &[Handle], order: Order, refs: &[Handle]) -> Result<usize> {
+    let space = s.space();
+    let d = s.doc_mut()?;
+    let Some(st) = d.space_mut(&space) else { return Ok(0) };
+    if matches!(order, Order::Front | Order::Back) {
+        return Ok(reorder_store(st, hs, order));
+    }
+    let index: HashMap<Handle, usize> = st.handles().into_iter().enumerate().map(|(i, h)| (h, i)).collect();
+    let mut moving: Vec<(usize, Handle)> = hs.iter().filter_map(|h| index.get(h).map(|i| (*i, *h))).collect();
+    moving.sort_unstable();
+    moving.dedup();
+    let set: HashSet<Handle> = moving.iter().map(|m| m.1).collect();
+    let refs: Vec<(usize, Handle)> = refs.iter().filter(|h| !set.contains(h)).filter_map(|h| index.get(h).map(|i| (*i, *h))).collect();
+    match order {
+        Order::Front | Order::Back => {}
         Order::Above => {
             let Some(&(_, mut cur)) = refs.iter().max() else { return Err(EngineError::Other("no reference objects".into())) };
             for (_, h) in &moving {
@@ -181,15 +196,23 @@ impl Annot {
     }
 }
 
-/// Every object of the current space that `keep` accepts, in draw order.
-fn of_kind(s: &Session, keep: impl Fn(&EntityKind) -> bool) -> Result<Vec<Handle>> {
-    let d = s.doc()?;
-    Ok(d.space(&s.space()).map(|st| st.iter().filter(|e| keep(&e.kind)).map(|e| e.handle).collect()).unwrap_or_default())
+/// Reorder objects across all spaces (model space and all paper space layouts).
+fn reorder_all_spaces(s: &mut Session, order: Order, keep: impl Fn(&EntityKind) -> bool) -> Result<usize> {
+    let d = s.doc_mut()?;
+    let mut total = 0;
+    // Model space
+    let hs: Vec<Handle> = d.model.iter().filter(|e| keep(&e.kind)).map(|e| e.handle).collect();
+    total += reorder_store(&mut d.model, &hs, order);
+    // All paper space layouts
+    for layout in &mut d.layouts {
+        let hs: Vec<Handle> = layout.entities.iter().filter(|e| keep(&e.kind)).map(|e| e.handle).collect();
+        total += reorder_store(&mut layout.entities, &hs, order);
+    }
+    Ok(total)
 }
 
 fn annotations_to_front(s: &mut Session, which: Annot) -> Result<Value> {
-    let hs = of_kind(s, |k| which.matches(k))?;
-    let n = reorder(s, &hs, Order::Front, &[])?;
+    let n = reorder_all_spaces(s, Order::Front, |k| which.matches(k))?;
     Ok(json!({ "moved": n, "message": format!("{n} object(s) brought to front.") }))
 }
 
@@ -208,8 +231,7 @@ fn run_texttofront(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_hatchtoback(s: &mut Session, _p: &Value) -> Result<Value> {
-    let hs = of_kind(s, |k| matches!(k, EntityKind::Hatch(_)))?;
-    let n = reorder(s, &hs, Order::Back, &[])?;
+    let n = reorder_all_spaces(s, Order::Back, |k| matches!(k, EntityKind::Hatch(_)))?;
     Ok(json!({ "moved": n, "message": format!("{n} hatch object(s) sent to back.") }))
 }
 

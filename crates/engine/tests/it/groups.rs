@@ -155,3 +155,50 @@ fn erased_members_leave_groups() {
     s.cmdline("").unwrap();
     assert_eq!(groups(&s).iter().map(|g| g.0.as_str()).collect::<Vec<_>>(), ["B"]);
 }
+
+#[test]
+fn copy_whole_group_replicates_group() {
+    let (mut s, hs) = three_lines();
+    s.execute("group", &json!({ "name": "Pair", "description": "two lines", "handles": hex(&hs[..2]) })).unwrap();
+    assert_eq!(s.doc().unwrap().groups.len(), 1);
+
+    // Copying both members with COPY creates a new unnamed group *A1.
+    let r = s.execute("copy", &json!({ "handles": hex(&hs[..2]), "delta": [0, 20] })).unwrap();
+    let copied: Vec<String> = r["handles"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+    assert_eq!(copied.len(), 2);
+    let gs = groups(&s);
+    assert_eq!(gs.len(), 2, "a new group was created for the copied pair");
+    assert_eq!(gs[1].0, "*A1");
+    assert_eq!(gs[1].1, "two lines");
+    assert_eq!(hex(&gs[1].2), copied);
+
+    // Copying only ONE member of the group does not create another group.
+    s.execute("copy", &json!({ "handles": [hs[0].hex()], "delta": [0, 40] })).unwrap();
+    assert_eq!(s.doc().unwrap().groups.len(), 2, "partial copy does not replicate group");
+
+    // Copying to clipboard and pasting also replicates the whole group.
+    s.set_selection(vec![hs[0], hs[1]]);
+    s.execute("copyclip", &json!({})).unwrap();
+    let r = s.execute("pasteclip", &json!({ "at": [50, 50] })).unwrap();
+    let pasted: Vec<String> = r["handles"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+    let gs = groups(&s);
+    assert_eq!(gs.len(), 3, "pasting whole group replicates it");
+    assert_eq!(gs[2].0, "*A2");
+    assert_eq!(hex(&gs[2].2), pasted);
+}
+
+#[test]
+fn groupdisplaymode_sysvar() {
+    let mut s = Session::new();
+    let v = s.execute("getvar", &json!({ "name": "GROUPDISPLAYMODE" })).unwrap();
+    assert_eq!(v["value"], 2, "GROUPDISPLAYMODE defaults to 2");
+
+    s.execute("setvar", &json!({ "name": "GROUPDISPLAYMODE", "value": 0 })).unwrap();
+    assert_eq!(s.settings.groupdisplaymode, 0);
+
+    s.execute("setvar", &json!({ "name": "GROUPDISPLAYMODE", "value": 1 })).unwrap();
+    assert_eq!(s.settings.groupdisplaymode, 1);
+
+    assert!(s.execute("setvar", &json!({ "name": "GROUPDISPLAYMODE", "value": 3 })).is_err());
+    assert!(s.execute("setvar", &json!({ "name": "GROUPDISPLAYMODE", "value": -1 })).is_err());
+}

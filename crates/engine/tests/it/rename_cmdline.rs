@@ -82,6 +82,17 @@ fn rename_prompts_type_old_and_new_name() {
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert!(s.log[n..].iter().any(|l| l.contains("Renaming a material is not available yet.")), "{:?}", &s.log[n..]);
     assert_eq!(s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Line(_))).count(), 2);
+
+    // VPort configuration rename
+    s.doc_mut().unwrap().vports.push(cadcraft_doc::VportConfig { name: "MyVP".into(), tiles: vec![] });
+    s.script("-RENAME VP MyVP NewVP\n").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    let d = s.doc().unwrap();
+    assert!(d.vports.iter().any(|v| v.name == "NewVP"));
+    assert!(!d.vports.iter().any(|v| v.name == "MyVP"));
+
+    // Cannot rename *Active viewport configuration
+    assert!(s.execute("rename", &json!({ "table": "vport", "from": "*Active", "to": "Active2" })).is_err());
 }
 
 /// What `script` adds to the log; the command has ended.

@@ -31,7 +31,7 @@ use draw::{dashed_polygon, dashed_rect, draw_drag_gpu, draw_highlight_gpu, draw_
 use dyn_boxes::dynamic_input;
 pub(crate) use dyn_boxes::length_units;
 use grid::draw_grid;
-use grips::{click_grip, grip_at, grip_menu, grip_options, grip_rect};
+use grips::{click_grip, draw_selection_grips, grip_at, grip_menu, grip_options};
 use list::{OnlyList, PrimIndex, ensure_list, rebuilt_preview};
 #[cfg(test)]
 use list::{preview_options, prims_of};
@@ -1270,50 +1270,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
     } else {
         crate::parametric::dismiss_inline(app, ui.ctx());
     }
-    // Grips on selected objects (when idle or editing grips).
-    let grip_edit = app.session.running.as_ref().is_some_and(|r| r.id == "grip");
-    if (!grip_edit && (app.canvas.grip_editing || app.session.prompting())) || sel.is_empty() {
-        app.canvas.hot_grips.clear();
-    }
-    if !grip_edit {
-        app.canvas.dyn_hot = None;
-    }
-    app.canvas.grip_editing = grip_edit;
-    if (!app.session.prompting() || grip_edit)
-        && app.session.shows_grips(sel.len())
-        && let Ok(st) = app.session.state()
-    {
-        let gs = app.session.settings.gripsize as f32;
-        for h in sel.iter().take(200) {
-            if let Some(e) = st.doc.entity(*h)
-                && st.shows(e)
-            {
-                let grips = e.kind.grips();
-                let count = grips.len();
-                for (gi, g) in grips.into_iter().enumerate() {
-                    let sp = xf.to_screen(g);
-                    if rect.contains(sp) {
-                        let r = grip_rect(&e.kind, count, gi, sp, gs);
-                        let hot = app.canvas.hot_grips.contains(&(*h, gi));
-                        let warm = !hot && hover_pos.is_some_and(|hp| r.expand(2.0).contains(hp));
-                        painter.rect_filled(
-                            r,
-                            0.0,
-                            if hot {
-                                t.grip_hot
-                            } else if warm {
-                                Color32::from_rgb(0xff, 0x7f, 0x9f)
-                            } else {
-                                t.grip
-                            },
-                        );
-                        painter.rect_stroke(r, 0.0, Stroke::new(1.0, Color32::from_rgb(0x10, 0x30, 0x80)), egui::StrokeKind::Middle);
-                    }
-                }
-            }
-        }
-        crate::dyngrips::draw(app, painter, &xf, rect, hover_pos);
-    }
+    draw_selection_grips(app, painter, &xf, rect, hover_pos, t);
     // Rubber band preview of the active command.
     // `xf` is the space being edited: paper space, or model space inside the active viewport.
     // While the Array window is open the pointer is over it, so fall back to the last canvas

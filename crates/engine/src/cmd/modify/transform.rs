@@ -84,6 +84,7 @@ pub(crate) fn at_elevation(s: &Session, p: Vec2) -> Vec3 {
 fn edit_entities(s: &mut Session, hs: &[Handle], copy: bool, edit: impl Fn(&mut Entity)) -> Result<Vec<Handle>> {
     let d = s.doc_mut()?;
     let mut out = Vec::new();
+    let mut copies = Vec::new();
     for h in hs {
         let Some(sp) = d.space_of(*h) else { continue };
         if copy {
@@ -94,6 +95,7 @@ fn edit_entities(s: &mut Session, hs: &[Handle], copy: bool, edit: impl Fn(&mut 
             if let Some(st) = d.space_mut(&sp) {
                 st.push(ne);
                 out.push(nh);
+                copies.push((*h, nh));
             }
         } else {
             let locked = d.entity(*h).and_then(|e| d.layer(&e.common.layer)).is_some_and(|l| l.locked);
@@ -103,6 +105,9 @@ fn edit_entities(s: &mut Session, hs: &[Handle], copy: bool, edit: impl Fn(&mut 
             d.modify_entity(*h, &edit)?;
             out.push(*h);
         }
+    }
+    if copy && !copies.is_empty() {
+        crate::cmd::groups::replicate_groups_for_copies(d, &copies);
     }
     Ok(out)
 }

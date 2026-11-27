@@ -79,16 +79,26 @@ pub(crate) fn paste(s: &mut Session, m: &Mat3) -> Result<Vec<Handle>> {
     let defs = s.clipboard_source.as_ref().map(|c| c.defs.clone());
     let space = s.space();
     let d = s.doc_mut()?;
-    let renames = defs.map(|x| merge(d, &x)).unwrap_or_default();
+    let renames = defs.as_ref().map(|x| merge(d, x)).unwrap_or_default();
     let mut out = Vec::new();
+    let mut copies = Vec::new();
     for e in &ents {
+        let old_h = e.handle;
         let mut e = adopt(d, e, &renames);
         e.kind.transform(m);
         d.ensure_layer(&e.common.layer);
         out.push(e.handle);
+        copies.push((old_h, e.handle));
         if let Some(st) = d.space_mut(&space) {
             st.push(e);
         }
+    }
+    if let Some(c) = &defs
+        && !c.groups.is_empty()
+    {
+        super::groups::replicate_groups_from(d, &c.groups, &copies);
+    } else {
+        super::groups::replicate_groups_for_copies(d, &copies);
     }
     s.set_selection(out.clone());
     Ok(out)
@@ -272,6 +282,8 @@ fn defs_for(src: &Drawing, ents: &[Entity]) -> Drawing {
     d.mleader_styles = pick(&src.mleader_styles, &used.mleader_styles, |t| &t.name);
     d.table_styles = pick(&src.table_styles, &used.table_styles, |t| &t.name);
     d.blocks = src.blocks.iter().filter(|(k, _)| used.blocks.contains(&up(k))).map(|(k, b)| (k.clone(), b.clone())).collect();
+    let ent_handles: HashSet<Handle> = ents.iter().map(|e| e.handle).collect();
+    d.groups = src.groups.iter().filter(|g| !g.members.is_empty() && g.members.iter().all(|m| ent_handles.contains(m))).cloned().collect();
     d.layouts.clear();
     d
 }

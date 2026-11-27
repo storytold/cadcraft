@@ -145,3 +145,53 @@ fn texttofront_and_hatchtoback() {
     s.cmdline("").unwrap();
     assert!(s.log.iter().any(|l| l.contains("2 object(s) brought to front")), "{:?}", s.log);
 }
+
+#[test]
+fn texttofront_and_hatchtoback_across_all_spaces() {
+    let mut s = Session::new();
+    // In Model space: 1 line, 1 hatch, 1 text.
+    s.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    s.execute("rectang", &json!({ "p1": [0, 0], "p2": [10, 10] })).unwrap();
+    s.execute("hatch", &json!({ "points": [[5, 5]], "pattern": "SOLID" })).unwrap();
+    s.execute("text", &json!({ "at": [0, 0], "height": 2, "text": "MText1" })).unwrap();
+
+    // Create a paper space layout and switch to it.
+    s.execute("layout.new", &json!({ "name": "Sheet1", "viewport": false })).unwrap();
+    s.execute("layout.set", &json!({ "name": "Sheet1" })).unwrap();
+
+    // In Sheet1 paper space: 1 line, 1 hatch, 1 text.
+    s.execute("line", &json!({ "points": [[0, 0], [20, 0]] })).unwrap();
+    s.execute("rectang", &json!({ "p1": [0, 0], "p2": [20, 20] })).unwrap();
+    s.execute("hatch", &json!({ "points": [[10, 10]], "pattern": "SOLID" })).unwrap();
+    s.execute("text", &json!({ "at": [0, 0], "height": 3, "text": "PText1" })).unwrap();
+
+    // Move hatches to the front in both spaces first.
+    let m_hatch = s.doc().unwrap().model.iter().find(|e| matches!(e.kind, EntityKind::Hatch(_))).unwrap().handle;
+    let p_layout = s.doc().unwrap().layouts.iter().find(|l| l.name == "Sheet1").unwrap();
+    let p_hatch = p_layout.entities.iter().find(|e| matches!(e.kind, EntityKind::Hatch(_))).unwrap().handle;
+
+    s.execute("layout.set", &json!({ "name": "Model" })).unwrap();
+    s.execute("draworder.front", &json!({ "handles": [m_hatch.hex()] })).unwrap();
+    s.execute("layout.set", &json!({ "name": "Sheet1" })).unwrap();
+    s.execute("draworder.front", &json!({ "handles": [p_hatch.hex()] })).unwrap();
+
+    // HATCHTOBACK acts across ALL spaces: model space AND layouts.
+    let r = s.execute("hatchtoback", &json!({})).unwrap();
+    assert_eq!(r["moved"], 2, "hatches sent to back in both model space and paper layout");
+
+    let doc = s.doc().unwrap();
+    let m_first = doc.model.iter().next().unwrap();
+    assert!(matches!(m_first.kind, EntityKind::Hatch(_)), "model space hatch is back");
+    let l_first = doc.layouts.iter().find(|l| l.name == "Sheet1").unwrap().entities.iter().next().unwrap();
+    assert!(matches!(l_first.kind, EntityKind::Hatch(_)), "paper space hatch is back");
+
+    // TEXTTOFRONT acts across ALL spaces: brings text in both model space and paper layout to front.
+    let r = s.execute("texttofront", &json!({ "objects": "text" })).unwrap();
+    assert_eq!(r["moved"], 2, "texts brought to front in both model space and paper layout");
+
+    let doc = s.doc().unwrap();
+    let m_last = doc.model.iter().last().unwrap();
+    assert!(matches!(m_last.kind, EntityKind::Text(_)), "model space text is front");
+    let l_last = doc.layouts.iter().find(|l| l.name == "Sheet1").unwrap().entities.iter().last().unwrap();
+    assert!(matches!(l_last.kind, EntityKind::Text(_)), "paper space text is front");
+}

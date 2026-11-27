@@ -71,6 +71,35 @@ fn next_unnamed(d: &Drawing) -> String {
     (1..=d.groups.len() + 1).map(|n| format!("*A{n}")).find(|n| !used.contains(n)).unwrap_or_else(|| format!("*A{}", d.groups.len() + 1))
 }
 
+/// When entities are copied, replicate any whole groups whose members were all copied.
+pub(crate) fn replicate_groups_from(d: &mut Drawing, src_groups: &[Group], copies: &[(Handle, Handle)]) {
+    if copies.is_empty() || src_groups.is_empty() {
+        return;
+    }
+    let map: std::collections::HashMap<Handle, Handle> = copies.iter().copied().collect();
+    let mut new_groups = Vec::new();
+    for g in src_groups {
+        let active_members: Vec<Handle> = g.members.iter().copied().filter(|h| d.entity(*h).is_some()).collect();
+        if !active_members.is_empty() && active_members.iter().all(|h| map.contains_key(h)) {
+            let new_members: Vec<Handle> = active_members.iter().filter_map(|h| map.get(h).copied()).collect();
+            new_groups.push((g.description.clone(), g.selectable, new_members));
+        }
+    }
+    for (desc, selectable, members) in new_groups {
+        if d.groups.len() >= MAX_GROUPS {
+            break;
+        }
+        let name = next_unnamed(d);
+        d.groups.push(Group { name, description: desc, selectable, members });
+    }
+}
+
+/// When entities in the drawing `d` are copied, replicate any whole groups among them.
+pub(crate) fn replicate_groups_for_copies(d: &mut Drawing, copies: &[(Handle, Handle)]) {
+    let groups = d.groups.clone();
+    replicate_groups_from(d, &groups, copies);
+}
+
 /// `hs` without repeats and without handles of objects that don't exist.
 fn existing(d: &Drawing, hs: &[Handle]) -> Vec<Handle> {
     let mut seen = std::collections::HashSet::new();

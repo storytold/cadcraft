@@ -71,3 +71,29 @@ fn layer_commands_reject_unloaded_linetypes_and_duplicate_renames() {
     s.execute("layer.set", &json!({ "name": "A", "newName": "a", "linetype": "continuous" })).unwrap();
     assert_eq!(s.doc().unwrap().layer("a").unwrap().linetype, "Continuous");
 }
+
+#[test]
+fn layer_cmdline_state_save_restore_rename_delete() {
+    let mut s = Session::new();
+    s.execute("layer.new", &json!({ "name": "L1", "color": "1" })).unwrap();
+    // Test -LAYER A (stAte) Save
+    s.script("-LAYER A S St1 \n\n").unwrap();
+    assert!(s.doc().unwrap().layer_states.iter().any(|st| st.name == "St1"));
+
+    // Modify layer L1 color
+    s.execute("layer.set", &json!({ "name": "L1", "color": "2" })).unwrap();
+    assert_eq!(s.doc().unwrap().layer("L1").unwrap().color, cadcraft_color::Color::Index(2));
+
+    // Restore St1
+    s.script("-LAYER A R St1 \n\n").unwrap();
+    assert_eq!(s.doc().unwrap().layer("L1").unwrap().color, cadcraft_color::Color::Index(1));
+
+    // Rename St1 -> St2 (Name)
+    s.script("-LAYER A N St1 St2 \n\n").unwrap();
+    assert!(s.doc().unwrap().layer_states.iter().any(|st| st.name == "St2"));
+    assert!(!s.doc().unwrap().layer_states.iter().any(|st| st.name == "St1"));
+
+    // Delete St2
+    s.script("-LAYER A D St2 \n\n").unwrap();
+    assert!(!s.doc().unwrap().layer_states.iter().any(|st| st.name == "St2"));
+}
