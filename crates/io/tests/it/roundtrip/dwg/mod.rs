@@ -57,12 +57,15 @@ fn check_version_with(case: &str, original: &Drawing, expected: &Drawing, versio
 }
 
 fn check_version_using(case: &str, original: &Drawing, expected: &Drawing, version: Version, verify: impl Fn(&Drawing, &Drawing, &str)) {
+    let expected_dimensions = compare::authored_text_dimensions(expected);
+    let expected = &expected_dimensions;
+    cadcraft_io::dwg_worker::allow_in_process();
     let options = SaveOptions { version: Some(version), binary: false };
     let mut current = original.clone();
     for pass in 1..=2 {
         let context = format!("{case} · DWG {version} · pass={pass}");
         let bytes = write_with(&current, "memory.dwg", &options).unwrap_or_else(|e| panic!("{context}: write: {e}"));
-        assert_eq!(cadcraft_dwg::version(&bytes).as_deref(), Some(version.code()), "{context}: wire version");
+        assert_eq!(craft_dwg::version(&bytes).as_deref(), Some(version.code()), "{context}: wire version");
         let back = read(&bytes, "memory.dwg").unwrap_or_else(|e| panic!("{context}: read: {e}"));
         assert!(back.read_notes.is_empty(), "{context}: read notes: {:?}", back.read_notes);
         assert!(back.skipped_records.is_empty(), "{context}: skipped records: {:?}", back.skipped_records);

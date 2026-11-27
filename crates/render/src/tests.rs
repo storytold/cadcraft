@@ -3,6 +3,11 @@ use crate::*;
 use cadcraft_doc::{Common, Drawing, EntityKind, Hatch, HatchLoop, Space};
 use cadcraft_geom::{PolyVertex, Vec3};
 
+// The synthetic TrueType file both this suite and the PDF writer's build: the fonts layer's
+// test-only helper, inlined rather than published or depended on.
+#[path = "../../fonts/tests/support/sfnt.rs"]
+mod sfnt;
+
 fn sample() -> Drawing {
     let mut d = Drawing::new_imperial();
     d.add(&Space::Model, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(10.0, 0.0, 0.0) }))
@@ -77,7 +82,7 @@ fn hatch_pattern_and_solid() {
     let h = Hatch {
         pattern: "ANSI31".into(),
         solid: false,
-        loops: vec![HatchLoop { vertices: sq.clone(), outer: true, sources: Vec::new() }],
+        loops: vec![HatchLoop { vertices: sq.clone(), outer: true, boundary_flags: None, sources: Vec::new() }],
         scale: 1.0,
         angle: 0.0,
         associative: false,
@@ -277,6 +282,61 @@ fn system_font() -> Option<&'static str> {
     ["Arial", "Helvetica", "DejaVuSans", "Verdana", "LiberationSans-Regular"].into_iter().find(|n| cadcraft_fonts::ttf::find(n).is_some())
 }
 
+/// #666: on screen, filled glyphs outside the area being looked at are left out (the canvas
+/// builds again when the view leaves it); plots and builds without a view keep every glyph.
+#[test]
+fn glyphs_outside_the_view_are_left_out_of_screen_builds_only() {
+    let Some(font) = system_font() else { return };
+    let d = text_doc(font, "OH");
+    let tris = |o: &Options| build(&d, &Space::Model, o).prims.iter().filter(|p| p.kind == Kind::Tris).count();
+    let all = tris(&Options::default());
+    assert!(all > 0);
+    let near = Options { view: Some(Bounds2::new(Vec2::new(-1.0, -1.0), Vec2::new(3.0, 2.0))), ..Options::default() };
+    assert_eq!(tris(&near), all, "a view over the text keeps it");
+    let far = Options { view: Some(Bounds2::new(Vec2::new(100.0, 100.0), Vec2::new(110.0, 110.0))), ..Options::default() };
+    assert_eq!(tris(&far), 0, "a view far from the text leaves its glyphs out");
+    let plot = build_plot(&d, &Space::Model, &far);
+    assert_eq!(plot.prims.iter().filter(|p| p.kind == Kind::Tris).count(), all, "plots keep every glyph");
+}
+
+// ---------- a fixture TrueType font: no font file, no installed font ----------
+
+/// A closed ellipse round (500, 350), wound by `clockwise`: one contour of a glyph outline.
+fn ring(rx: f64, ry: f64, points: usize, clockwise: bool) -> Vec<(i16, i16)> {
+    let dir = if clockwise { -1.0 } else { 1.0 };
+    (0..points)
+        .map(|i| {
+            (
+                (500.0 + rx * (dir * std::f64::consts::TAU * i as f64 / points as f64).cos()) as i16,
+                (350.0 + ry * (dir * std::f64::consts::TAU * i as f64 / points as f64).sin()) as i16,
+            )
+        })
+        .collect()
+}
+
+/// A TrueType font whose only glyph, "O", is a 128-point ring: the flattened outline a real font's
+/// curve gives, at the same scale, with plenty of detail to simplify. It is built in code so the
+/// level-of-detail test needs no installed font and no font file in the repository (#651).
+fn fixture_font() -> &'static str {
+    const NAME: &str = "cadcraft-render-lod.ttf";
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| cadcraft_fonts::ttf::register(NAME, fixture_font_bytes()));
+    NAME
+}
+
+fn fixture_font_bytes() -> Vec<u8> {
+    sfnt::bytes(&sfnt::Sfnt {
+        // Glyph 1 is "O": a 128-point ring, its counter a second, oppositely wound contour.
+        glyphs: &[sfnt::notdef(), sfnt::glyph(&[ring(500.0, 350.0, 128, false), ring(250.0, 150.0, 128, true)])],
+        cmap: &[(0x4F, 0x4F, 1 - 0x4F)], // "O" → glyph 1
+        advance: 1000,                   // one em wide
+        lsb: 0,
+        metrics: 2,                 // hmtx matches the two metrics hhea declares
+        fs_type: 0,                 // any use
+        ink_box: [0, 0, 1000, 700], // the ring's box; the 700-unit cap height is the unit scale
+    })
+}
+
 #[test]
 fn truetype_text_is_filled_or_outlined() {
     let Some(font) = system_font() else { return };
@@ -296,6 +356,31 @@ fn truetype_text_is_filled_or_outlined() {
     let l = build(&d, &Space::Model, &Options::default());
     assert!(l.prims.iter().all(|p| p.kind == Kind::Polyline), "TEXTFILL=0 outlines");
     assert!(l.prims.len() >= 3, "O has two contours, H one");
+}
+
+// Regression test for #651: filled TrueType text was triangulated at full outline detail at every
+// zoom, so a page of small text on screen produced millions of triangles and froze the canvas.
+#[test]
+fn small_filled_text_on_screen_is_simplified_but_plots_keep_full_detail() {
+    let d = text_doc(fixture_font(), "OOOO");
+    let tris = |l: &DisplayList| l.prims.iter().filter(|p| p.kind == Kind::Tris).map(|p| l.points(p).len() / 3).sum::<usize>();
+    let plot = build_plot(&d, &Space::Model, &Options::default());
+    let full = tris(&plot);
+    assert!(full > 100, "a plot keeps every point of the 128-point rings: {full} triangles");
+    // One pixel is a tenth of the cap height: the rings are simplified to a few points, the shapes
+    // stay.
+    let reduced = build(&d, &Space::Model, &screen(0.1, None));
+    assert!(tris(&reduced) < full / 2, "{} triangles at 10 px per cap height, {full} in a plot", tris(&reduced));
+    assert!(tris(&reduced) > 0 && reduced.bounds.width() > plot.bounds.width() * 0.9, "{:?} vs {:?}", reduced.bounds, plot.bounds);
+    // An em under two pixels is drawn as the ink's box: two triangles a glyph, same extent.
+    let tiny = build(&d, &Space::Model, &screen(2.0, None));
+    assert_eq!(tris(&tiny), 2 * 4, "one box per glyph");
+    assert!(
+        tiny.bounds.width() > plot.bounds.width() * 0.9 && tiny.bounds.height() > plot.bounds.height() * 0.9,
+        "{:?} vs {:?}",
+        tiny.bounds,
+        plot.bounds
+    );
 }
 
 #[test]
@@ -446,7 +531,7 @@ fn pattern_hatch(pattern: &str, scale: f64, (x0, y0, x1, y1): (f64, f64, f64, f6
     Hatch {
         pattern: pattern.into(),
         solid: false,
-        loops: vec![HatchLoop { vertices: sq.to_vec(), outer: true, sources: Vec::new() }],
+        loops: vec![HatchLoop { vertices: sq.to_vec(), outer: true, boundary_flags: None, sources: Vec::new() }],
         scale,
         angle: 0.0,
         associative: false,
@@ -833,6 +918,80 @@ fn attributes_draw_with_their_own_transparency() {
     assert!(build(&d, &Space::Model, &Options::default()).prims.iter().all(|p| p.transparency == 0));
 }
 
+/// A block "K" with a line along y = 0 and the definition `def` (its text at y = 1), referenced
+/// at `at` with `attribs`, under ATTMODE `attmode`: the points drawn above the line.
+fn drawn_above_line(def: cadcraft_doc::Attrib, attribs: Vec<cadcraft_doc::Attrib>, attmode: i64, at: Vec3) -> Vec<cadcraft_geom::Vec2> {
+    let mut d = Drawing::new_imperial();
+    d.header.set_i64("ATTMODE", attmode);
+    let mut blk = cadcraft_doc::Block::new("K");
+    let (c, k) = line_common(Common::default());
+    blk.entities.push(block_entity(1, c, k));
+    blk.entities.push(block_entity(2, Common::default(), EntityKind::AttDef(def)));
+    d.blocks.insert("K".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("K") else { panic!("an insert") };
+    ins.insert = at;
+    ins.attribs = attribs;
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let l = build(&d, &Space::Model, &Options::default());
+    l.prims.iter().flat_map(|p| l.points(p).iter().copied()).filter(|p| p.y > at.y + 0.5).collect()
+}
+
+fn constant(invisible: bool) -> cadcraft_doc::Attrib {
+    cadcraft_doc::Attrib { constant: true, invisible, ..attrib("C") }
+}
+
+#[test]
+fn a_constant_attribute_definition_draws_its_value_with_the_reference() {
+    // #3413: a constant value isn't copied into the reference's attributes; the block draws it.
+    let at = Vec3::new(100.0, 200.0, 0.0);
+    let pts = drawn_above_line(constant(false), vec![], 1, at);
+    assert!(!pts.is_empty(), "the constant value is drawn");
+    // Where the definition puts it, moved with the reference.
+    assert!(pts.iter().all(|p| p.x > at.x && p.x < at.x + 10.0 && p.y < at.y + 3.0), "{pts:?}");
+    // A variable definition draws nothing from the block (its attribute is drawn instead).
+    assert!(drawn_above_line(attrib("C"), vec![], 1, at).is_empty());
+    // A reference that carries an attribute for the constant (placed, as attributes are, in
+    // drawing coordinates where the definition's text lands) draws it once, not twice.
+    let mut own = attrib("c");
+    own.text.insert = own.text.insert + at;
+    assert_eq!(drawn_above_line(constant(false), vec![own], 1, at).len(), pts.len());
+}
+
+#[test]
+fn many_constant_definitions_are_matched_to_the_attributes_without_comparing_every_pair() {
+    // #1923: a reference with N attributes of a block with N constant definitions, the tags N long
+    // ones alike up to their last characters, no attribute's a definition's. Asking for each
+    // definition whether the reference carries its tag by comparing it with every attribute cost
+    // N x N comparisons of whole tags for each copy drawn (many seconds here); gathering the
+    // reference's tags once costs milliseconds. The values are empty and the attributes invisible,
+    // so drawing them costs nothing.
+    const N: usize = 4000;
+    let tag = |kind: char, i: usize| format!("{}{kind}{i:05}", "T".repeat(1000));
+    let mut d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("K");
+    for (h, i) in (1..).zip(0..N) {
+        let mut a = cadcraft_doc::Attrib { constant: true, ..attrib(&tag('D', i)) };
+        a.text.value.clear();
+        blk.entities.push(block_entity(h, Common::default(), EntityKind::AttDef(a)));
+    }
+    d.blocks.insert("K".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("K") else { panic!("an insert") };
+    ins.attribs = (0..N).map(|i| cadcraft_doc::Attrib { invisible: true, ..attrib(&tag('A', i)) }).collect();
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let t = std::time::Instant::now();
+    build(&d, &Space::Model, &Options::default());
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
+}
+
+#[test]
+fn constant_attribute_definitions_follow_attmode() {
+    let at = Vec3::ZERO;
+    // ATTMODE 0 hides every attribute; 1 the invisible ones; 2 shows them all.
+    assert!(drawn_above_line(constant(false), vec![], 0, at).is_empty());
+    assert!(drawn_above_line(constant(true), vec![], 1, at).is_empty());
+    assert!(!drawn_above_line(constant(true), vec![], 2, at).is_empty());
+}
+
 #[test]
 fn attributes_follow_the_reference_layer_and_have_no_definition() {
     use cadcraft_doc::Transparency::Percent;
@@ -927,6 +1086,105 @@ fn cancelled_build_stops_early() {
     let drawing = cadcraft_doc::Drawing::new_imperial();
     assert!(!crate::hatch::pattern_lines_until(&drawing, &h, &loops, 0.0, None, None).is_empty());
     assert!(crate::hatch::pattern_lines_until(&drawing, &h, &loops, 0.0, None, set.as_deref()).is_empty());
+}
+
+// ---------- locked-layer fade ----------
+
+/// A line on locked layer "Locked" (own transparency `own`) and a line on layer 0.
+fn locked_lines(own: cadcraft_doc::Transparency) -> Drawing {
+    let mut d = Drawing::new_imperial();
+    d.layers.push(cadcraft_doc::Layer { name: "Locked".into(), locked: true, ..Default::default() });
+    let (c, k) = line_common(Common { layer: "Locked".into(), transparency: own, ..Default::default() });
+    d.add(&Space::Model, c, k).unwrap();
+    let (c, k) = line_common(Common::default());
+    d.add(&Space::Model, c, k).unwrap();
+    d
+}
+
+fn faded(l: &DisplayList) -> Vec<u8> {
+    l.prims.iter().map(|p| p.transparency).collect()
+}
+
+fn on_screen(o: Options) -> Options {
+    Options { on_screen: true, ..o }
+}
+
+#[test]
+fn objects_on_locked_layers_fade_on_screen() {
+    use cadcraft_doc::Transparency::{ByLayer, Percent};
+    let mut d = locked_lines(ByLayer);
+    // Default 50, whether transparency display is on or off; the unlocked line is unchanged.
+    for opts in [on_screen(Options::default()), on_screen(with_transparency())] {
+        let l = build(&d, &Space::Model, &opts);
+        assert_eq!(faded(&l), vec![50, 0]);
+        assert!(l.prims[0].alpha() < 255);
+        assert_eq!(l.prims[1].alpha(), 255);
+    }
+    // Builds without the on-screen flag (exports) and plots never fade.
+    for opts in [Options::default(), with_transparency()] {
+        assert_eq!(faded(&build(&d, &Space::Model, &opts)), vec![0, 0]);
+    }
+    assert_eq!(faded(&build_plot(&d, &Space::Model, &on_screen(Options::default()))), vec![0, 0]);
+    for (v, want) in [(0, 0), (-30, 0), (70, 70)] {
+        d.header.set_i64("LAYLOCKFADECTL", v);
+        assert_eq!(faded(&build(&d, &Space::Model, &on_screen(Options::default()))), vec![want, 0], "LAYLOCKFADECTL {v}");
+    }
+    // An object more transparent than the fade keeps its own transparency.
+    let d = locked_lines(Percent(80));
+    assert_eq!(faded(&build(&d, &Space::Model, &on_screen(with_transparency()))), vec![80, 0]);
+    assert_eq!(faded(&build(&d, &Space::Model, &on_screen(Options::default()))), vec![50, 0]);
+    assert_eq!(faded(&build(&d, &Space::Model, &with_transparency())), vec![80, 0]);
+}
+
+#[test]
+fn layer_zero_in_a_block_on_a_locked_layer_fades() {
+    let mut d = Drawing::new_imperial();
+    d.layers.push(cadcraft_doc::Layer { name: "Locked".into(), locked: true, ..Default::default() });
+    let mut blk = cadcraft_doc::Block::new("B");
+    let (c, k) = line_common(Common::default());
+    blk.entities.push(block_entity(1, c, k));
+    d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+    d.add(&Space::Model, Common { layer: "Locked".into(), ..Default::default() }, insert_of("B")).unwrap();
+    assert_eq!(faded(&build(&d, &Space::Model, &on_screen(Options::default()))), vec![50]);
+    assert_eq!(faded(&build(&d, &Space::Model, &Options::default())), vec![0]);
+}
+#[test]
+fn byblock_child_on_an_unlocked_layer_does_not_inherit_the_fade() {
+    use cadcraft_doc::Transparency::{ByBlock, ByLayer, Percent};
+    // A ByBlock line on unlocked layer "Open" in a block inserted on locked layer "Locked".
+    let drawing = |insert_transparency| {
+        let mut d = Drawing::new_imperial();
+        d.layers.push(cadcraft_doc::Layer { name: "Locked".into(), locked: true, ..Default::default() });
+        d.layers.push(cadcraft_doc::Layer { name: "Open".into(), ..Default::default() });
+        let mut blk = cadcraft_doc::Block::new("B");
+        let (c, k) = line_common(Common { layer: "Open".into(), transparency: ByBlock, ..Default::default() });
+        blk.entities.push(block_entity(1, c, k));
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        let common = Common { layer: "Locked".into(), transparency: insert_transparency, ..Default::default() };
+        d.add(&Space::Model, common, insert_of("B")).unwrap();
+        d
+    };
+    // The child takes the reference's own transparency, not its display fade.
+    assert_eq!(faded(&build(&drawing(ByLayer), &Space::Model, &on_screen(with_transparency()))), vec![0]);
+    assert_eq!(faded(&build(&drawing(Percent(20)), &Space::Model, &on_screen(with_transparency()))), vec![20]);
+}
+
+#[test]
+fn byblock_attribute_on_an_unlocked_layer_does_not_inherit_the_fade() {
+    use cadcraft_doc::Transparency::{ByBlock, Percent};
+    // A ByBlock attribute definition on unlocked layer "Open", in a reference on locked "Locked".
+    for (reference, want) in [(cadcraft_doc::Transparency::ByLayer, 0), (Percent(20), 20)] {
+        let mut d = attributed(
+            Common { layer: "Open".into(), transparency: ByBlock, ..Default::default() },
+            Common { layer: "Locked".into(), transparency: reference, ..Default::default() },
+        );
+        d.layers.push(cadcraft_doc::Layer { name: "Open".into(), ..Default::default() });
+        d.layer_mut("Locked").unwrap().locked = true;
+        let l = build(&d, &Space::Model, &on_screen(with_transparency()));
+        let (line, text) = l.prims.split_first().unwrap();
+        assert_eq!(line.transparency, 50, "the layer-0 line takes the locked reference layer's fade");
+        assert!(!text.is_empty() && text.iter().all(|p| p.transparency == want), "{:?}", faded(&l));
+    }
 }
 
 /// #1434: a closed polyline with a global width narrower than a pixel loses whole sides at
@@ -1127,6 +1385,21 @@ fn raster_hatch_pattern_matches_one_by_one() {
     }
 }
 
+/// An OLE2FRAME draws its frame, the rectangle from its two corner points (#2422), and nothing
+/// when a corner is missing.
+#[test]
+fn ole_frame_draws_its_outline() {
+    let tag = |code: i32, value: &str| cadcraft_doc::RawTag { code, value: value.into() };
+    let frame =
+        |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags, graphics: Vec::new() });
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), frame(vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")])).unwrap();
+    d.add(&Space::Model, Common::default(), frame(vec![tag(10, "1"), tag(20, "2")])).unwrap();
+    let l = build(&d, &Space::Model, &Options { tolerance: 0.01, ..Default::default() });
+    assert_eq!(l.prims.len(), 1, "only the frame with both corners is drawn");
+    assert_eq!(l.prims[0].len, 5, "a closed rectangle: five points");
+}
+
 /// `Options::linetypes` off draws a dashed line, a dashed wide polyline and a linetype on a layer
 /// as the same whole line a Continuous one draws: what hit tests look at.
 #[test]
@@ -1150,4 +1423,148 @@ fn without_linetypes_every_line_is_drawn_whole() {
     assert_eq!(dashed.tris, continuous.tris);
     let drawn = build(&drawing("DASHED"), &Space::Model, &Options::default());
     assert!(drawn.prims.len() > 2 * continuous.prims.len(), "drawn with its linetype: {} primitives", drawn.prims.len());
+}
+
+/// A proxy draws its proxy graphics like block contents: layer 0 and ByBlock in the picture are
+/// the proxy's own, and the proxy's layer hides all of it.
+#[test]
+fn proxy_graphics_draw_like_block_contents() {
+    let mut d = Drawing::new_imperial();
+    d.layers.push(cadcraft_doc::Layer { name: "Notes".into(), color: Color::Index(3), ..Default::default() });
+    let byblock = Common { color: Color::ByBlock, ..Default::default() };
+    let graphics = vec![
+        block_entity(7, byblock, EntityKind::Line(cadcraft_doc::Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) })),
+        block_entity(
+            7,
+            Common { color: Color::Index(1), ..Default::default() },
+            EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::new(15.0, 0.0, 0.0), radius: 5.0 }),
+        ),
+    ];
+    let proxy = EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics });
+    d.add(&Space::Model, Common { layer: "Notes".into(), ..Default::default() }, proxy).unwrap();
+    let l = build(&d, &Space::Model, &Options::default());
+    assert_eq!(l.prims.iter().map(|p| p.color).collect::<Vec<_>>(), [Rgb(0, 255, 0), Rgb(255, 0, 0)]);
+    let b = d.extents(&Space::Model);
+    assert!((b.min.x, b.max.x, b.max.y) == (0.0, 20.0, 5.0), "{b:?}");
+    d.layer_mut("Notes").unwrap().frozen = true;
+    assert!(build(&d, &Space::Model, &Options::default()).prims.is_empty());
+}
+
+/// On a locked layer, a proxy's graphics fade like a block's contents: layer 0 in the picture takes
+/// the proxy's fade, a ByBlock part on an unlocked layer only the proxy's own transparency.
+#[test]
+fn proxy_graphics_on_a_locked_layer_fade_like_block_contents() {
+    use cadcraft_doc::Transparency::{ByBlock, ByLayer, Percent};
+    for (own, want) in [(ByLayer, 0), (Percent(20), 20)] {
+        let mut d = Drawing::new_imperial();
+        d.layers.push(cadcraft_doc::Layer { name: "Locked".into(), locked: true, ..Default::default() });
+        d.layers.push(cadcraft_doc::Layer { name: "Open".into(), ..Default::default() });
+        let line = |x: f64| EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 1.0, 0.0, 0.0) });
+        let graphics = vec![
+            block_entity(7, Common::default(), line(0.0)),
+            block_entity(7, Common { layer: "Open".into(), transparency: ByBlock, ..Default::default() }, line(2.0)),
+        ];
+        let proxy = EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics });
+        d.add(&Space::Model, Common { layer: "Locked".into(), transparency: own, ..Default::default() }, proxy).unwrap();
+        assert_eq!(faded(&build(&d, &Space::Model, &on_screen(with_transparency()))), vec![50.max(want), want], "{own:?}");
+    }
+}
+
+/// A broken table whose parts, with their repeated labels, together hold more cells than a table may
+/// lay out is drawn as its outline, though the table's own cells are within the limit.
+#[test]
+fn broken_table_cells_count_across_its_parts() {
+    let d = Drawing::new_imperial();
+    let t = cadcraft_doc::Table {
+        col_widths: vec![1.0; 600],
+        row_heights: vec![1.0; 1000],
+        title: true,
+        header: true,
+        breaks: Some(cadcraft_doc::TableBreak { enabled: true, height: 3.0, ..Default::default() }),
+        ..Default::default()
+    };
+    assert!(t.parts().len() > 500 && 1000 * 600 <= crate::MAX_LAYOUT_CELLS);
+    let g = crate::table_geometry(&d, &t);
+    let parts = t.parts();
+    assert_eq!((g.lines.len(), g.texts.len(), g.fills.len()), (4 * parts.len(), 0, 0));
+    // Each part's box starts at its own origin.
+    let top = |i: usize| g.lines[4 * i].a;
+    assert!((0..parts.len()).all(|i| top(i) == parts[i].origin));
+}
+
+#[test]
+fn rotated_and_reversed_copies_of_a_curved_loop_fill_once() {
+    let ring = |rot: usize, rev: bool| {
+        let mut v: Vec<PolyVertex> = [(0.0, 0.0, 0.5), (4.0, 0.0, -0.25), (4.0, 3.0, 0.0), (0.0, 3.0, 0.1)]
+            .map(|(x, y, bulge)| PolyVertex { bulge, ..PolyVertex::new(Vec2::new(x, y)) })
+            .to_vec();
+        if rev {
+            // The same boundary wound the other way: bulges move to the other end of their edge and flip.
+            let b: Vec<f64> = v.iter().map(|q| q.bulge).collect();
+            v.reverse();
+            let n = v.len();
+            for (j, q) in v.iter_mut().enumerate() {
+                q.bulge = -b[(n - 1 - j + n - 1) % n];
+            }
+        }
+        v.rotate_left(rot);
+        HatchLoop { vertices: v, outer: true, boundary_flags: None, sources: Vec::new() }
+    };
+    let mut h = pattern_hatch("SOLID", 1.0, (0.0, 0.0, 1.0, 1.0));
+    h.loops = vec![ring(0, false), ring(2, false), ring(1, true), ring(3, true)];
+    assert_eq!(loops_of(&h).len(), 1);
+    // A different boundary is kept.
+    h.loops.push(HatchLoop {
+        vertices: ring(0, false).vertices.into_iter().map(|q| PolyVertex { bulge: 0.0, ..q }).collect(),
+        outer: true,
+        boundary_flags: None,
+        sources: Vec::new(),
+    });
+    assert_eq!(loops_of(&h).len(), 2);
+}
+
+// ---------- point budget (#1922) ----------
+
+fn circle() -> EntityKind {
+    EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::ZERO, radius: 100.0 })
+}
+
+/// A block of one circle referenced as 1,000 copies in place: every copy is cheap to the
+/// block-expansion budget but costs hundreds of points.
+fn arrayed_circles() -> Drawing {
+    let mut d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("B");
+    blk.entities.push(block_entity(1, Common::default(), circle()));
+    d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("B") else { panic!("an insert") };
+    ins.cols = 1000;
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    d
+}
+
+fn points(l: &DisplayList) -> usize {
+    l.verts.len() + l.tris.len()
+}
+
+#[test]
+fn block_copies_stop_at_the_point_budget_and_say_so() {
+    let d = arrayed_circles();
+    let full = build(&d, &Space::Model, &Options::default());
+    assert!(!full.truncated && points(&full) > 100_000, "{}", points(&full));
+    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, 10_000);
+    assert!(l.truncated);
+    assert!(points(&l) > 0 && points(&l) <= 10_000, "{}", points(&l));
+    assert!(l.prims.iter().all(|p| p.start as usize + p.len as usize <= l.verts.len()));
+}
+
+#[test]
+fn objects_built_on_all_cores_stop_at_the_point_budget_and_say_so() {
+    // Enough objects for the parallel build: the parts share one budget and report together.
+    let mut d = Drawing::new_imperial();
+    for _ in 0..600 {
+        d.add(&Space::Model, Common::default(), circle()).unwrap();
+    }
+    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, 10_000);
+    assert!(l.truncated);
+    assert!(points(&l) > 0 && points(&l) <= 10_000, "{}", points(&l));
 }

@@ -36,16 +36,18 @@ fn check_block(s: &Session, b: Option<&str>) -> Result<()> {
 pub(crate) fn divide_points(c: &Chain, n: usize) -> Vec<(Vec2, Vec2)> {
     let l = c.len();
     let range = if c.closed { 0..n } else { 1..n };
-    range.filter_map(|i| c.at_length(l * i as f64 / n as f64)).collect()
+    let ends = c.end_lengths();
+    range.filter_map(|i| c.at_length_in(&ends, l * i as f64 / n as f64)).collect()
 }
 
 pub(crate) fn measure_points(c: &Chain, step: f64) -> Vec<(Vec2, Vec2)> {
     let l = c.len();
+    let ends = c.end_lengths();
     let mut out = Vec::new();
     let mut k = 1usize;
     while (k as f64) * step < l - 1e-9 && out.len() < MAX_GEN {
         let d = k as f64 * step;
-        out.extend(c.at_length(d));
+        out.extend(c.at_length_in(&ends, d));
         k += 1;
     }
     out
@@ -137,6 +139,15 @@ impl DivideM {
     pub(super) fn new(measure: bool) -> Self {
         DivideM { measure, obj: None, phase: DivPhase::Object, block: None, align: true }
     }
+
+    /// The JSON form's parameters for the picked object, before the count or length.
+    fn params(&self, h: Handle, pick: Vec2) -> Value {
+        let mut params = json!({ "handle": h.hex(), "align": self.align, "from": [pick.x, pick.y] });
+        if let Some(b) = &self.block {
+            params["block"] = json!(b);
+        }
+        params
+    }
 }
 
 impl Interactive for DivideM {
@@ -185,27 +196,37 @@ impl Interactive for DivideM {
                 self.phase = DivPhase::Value;
                 Ok(Step::Continue)
             }
-            (DivPhase::Value, inp @ (Input::Text(_) | Input::Point(_))) => {
+            (DivPhase::Value, inp @ (Input::Text(_) | Input::Point(_))) if self.measure => {
                 let Some((h, pick)) = self.obj else { return Ok(Step::Cancel) };
                 let v = match inp {
                     Input::Text(t) => number(&t).ok_or_else(|| other("Requires a number."))?,
                     Input::Point(q) => pick.dist(q),
                     _ => return Ok(Step::Continue),
                 };
-                let mut params = json!({ "handle": h.hex(), "align": self.align, "from": [pick.x, pick.y] });
-                if let Some(b) = &self.block {
-                    params["block"] = json!(b);
+                let mut params = self.params(h, pick);
+                params["length"] = json!(v);
+                run_measure(s, &params)?;
+                Ok(Step::Done)
+            }
+            (DivPhase::Value, inp) if !self.measure => {
+                // A whole number as typed: AutoCAD 2024 takes +5 and 05 here and refuses 5.0, 5.,
+                // 1e1, 4.5, 1, 32768, x, Enter and a point, naming the Block keyword while the
+                // prompt still offers it (measured).
+                let n = match inp {
+                    Input::Text(t) => t.trim().parse::<u64>().ok().filter(|n| (2..=32767).contains(n)),
+                    _ => None,
                 }
-                if self.measure {
-                    params["length"] = json!(v);
-                    run_measure(s, &params)?;
-                } else {
-                    if !(2.0..=32767.0).contains(&v) || v.fract() != 0.0 {
-                        return Err(other("Requires an integer between 2 and 32767."));
-                    }
-                    params["segments"] = json!(v as u64);
-                    run_divide(s, &params)?;
-                }
+                .ok_or_else(|| {
+                    other(if self.block.is_some() {
+                        "Requires an integer between 2 and 32767."
+                    } else {
+                        "Requires an integer between 2 and 32767, or option keyword."
+                    })
+                })?;
+                let Some((h, pick)) = self.obj else { return Ok(Step::Cancel) };
+                let mut params = self.params(h, pick);
+                params["segments"] = json!(n);
+                run_divide(s, &params)?;
                 Ok(Step::Done)
             }
             (_, Input::Enter) => Ok(Step::Cancel),

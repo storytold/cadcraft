@@ -274,6 +274,7 @@ fn area_subtracts_an_island_touching_the_outer_loop() {
     let lp = |pts: &[(f64, f64)], outer: bool| HatchLoop {
         vertices: pts.iter().map(|&(x, y)| PolyVertex::new(Vec2::new(x, y))).collect(),
         outer,
+        boundary_flags: None,
         sources: vec![],
     };
     let mut s = Session::new();

@@ -3,6 +3,7 @@ use super::{
     Accept, Entity, EntityKind, Handle, Input, Interactive, Mat3, Prompt, Result, SelectKind, SelectMode, Session, Step, Value, Vec2, bad, json,
     line, points_param,
 };
+use cadcraft_geom::Arc;
 
 /// An area whose vertices STRETCH moves: a window's box, or a polygon closed back to its first
 /// point.
@@ -21,19 +22,34 @@ impl StretchArea {
     }
 }
 
-/// Add to `hs` the visible multilines in `space` with a control vertex inside `area`. A crossing
-/// selection tests the drawn element lines, which sit away from the control vertices by the
-/// multiline's scale, so a small area around a vertex alone would miss them.
-fn add_mline_vertex_hits(d: &cadcraft_doc::Drawing, space: &cadcraft_doc::Space, area: &StretchArea, hs: &mut Vec<Handle>) {
-    let Some(store) = d.space(space) else { return };
+/// Add to `hs` the multilines in the edit space that a selection can take there (visible, and
+/// inside an MSPACE viewport not on a layer frozen in it) with a control vertex inside `area`. A
+/// crossing selection tests the drawn element lines, which sit away from the control vertices by
+/// the multiline's scale, so a small area around a vertex alone would miss them.
+fn add_mline_vertex_hits(s: &Session, area: &StretchArea, hs: &mut Vec<Handle>) {
+    let Ok(d) = s.doc() else { return };
+    let Some(store) = d.space(&s.space()) else { return };
+    let frozen = s.viewport_frozen();
     for e in store.iter() {
         if let EntityKind::MLine(m) = &e.kind
-            && d.is_visible(e)
+            && crate::select::selectable(d, e, frozen)
             && !hs.contains(&e.handle)
             && m.vertices.iter().any(|v| area.contains(v.p.xy()))
         {
             hs.push(e.handle);
         }
+    }
+}
+
+/// The bulge that keeps an arc's height (bulge × chord / 2) when its chord changes length; none
+/// once the chord collapses to a point, which has no arc left to keep.
+fn keep_height(bulge: f64, old_chord: f64, new_chord: f64) -> f64 {
+    if new_chord.is_nan() || new_chord <= 1e-12 {
+        0.0
+    } else if old_chord.is_finite() {
+        bulge * old_chord / new_chord
+    } else {
+        bulge
     }
 }
 
@@ -52,18 +68,56 @@ fn stretch_entity(e: &mut Entity, wins: &[StretchArea], d: Vec2) {
             mv(&mut l.b);
         }
         EntityKind::LwPolyline(pl) => {
+            let old: Vec<Vec2> = pl.vertices.iter().map(|v| v.p).collect();
             for v in &mut pl.vertices {
                 if inside(v.p) {
                     v.p += d;
                 }
             }
+            // An arc segment keeps its height (bulge × chord / 2) as its ends move, as in AutoCAD.
+            let n = pl.vertices.len();
+            let segs = if pl.closed { n } else { n.saturating_sub(1) };
+            for i in 0..segs {
+                let j = (i + 1) % n;
+                let (Some(a0), Some(b0), Some(b1)) = (old.get(i), old.get(j), pl.vertices.get(j).map(|v| v.p)) else { continue };
+                if let Some(v) = pl.vertices.get_mut(i)
+                    && v.bulge != 0.0
+                {
+                    v.bulge = keep_height(v.bulge, a0.dist(*b0), v.p.dist(b1));
+                }
+            }
         }
         EntityKind::MLine(m) => m.vertices.iter_mut().for_each(|v| mv(&mut v.p)),
         EntityKind::Arc(a) => {
-            // Arcs keep their shape: move when the centre is inside.
-            if inside(a.center.xy()) {
-                a.center.x += d.x;
-                a.center.y += d.y;
+            // AutoCAD moves the ends inside the area and keeps the arc's height (bulge × chord / 2);
+            // the centre alone moves nothing. An end stretched onto the other leaves the arc as it
+            // was: AutoCAD collapses it into a zero-radius arc at that point (radius 6e-16, start
+            // 180°, end 0°), an object nothing can draw or pick, which CADCraft does not make.
+            let g = Arc::new(a.center.xy(), a.radius, a.start, a.end);
+            let (s0, e0) = (g.start_point(), g.end_point());
+            let (s_in, e_in) = (inside(s0), inside(e0));
+            let (s1, e1) = (if s_in { s0 + d } else { s0 }, if e_in { e0 + d } else { e0 });
+            if s_in && e_in {
+                // Both ends move: the arc moves whole (a full sweep has no chord to rebuild from).
+                (a.center.x, a.center.y) = (a.center.x + d.x, a.center.y + d.y);
+            } else if (s_in || e_in)
+                && let Some((r, _)) =
+                    cadcraft_geom::bulge_to_arc(s1, e1, keep_height(cadcraft_geom::arc_to_bulge(g.sweep()), s0.dist(e0), s1.dist(e1)))
+            {
+                (a.center.x, a.center.y) = (r.center.x, r.center.y);
+                (a.radius, a.start, a.end) = (r.radius, r.start, r.end);
+            }
+        }
+        // Control points inside the area move (AutoCAD).
+        EntityKind::Spline(sp) if sp.fit.is_empty() => sp.control.iter_mut().filter(|p| inside(**p)).for_each(|p| *p += d),
+        // A spline built from fit points: the fit points inside the area move and it is fitted
+        // through them again, its fit data kept (AutoCAD 2024). All of them inside, it moves.
+        EntityKind::Spline(sp) => {
+            if sp.fit.iter().all(|p| inside(*p)) {
+                sp.transform(&Mat3::translate(d));
+            } else if sp.fit.iter().any(|p| inside(*p)) {
+                let fit: Vec<Vec2> = sp.fit.iter().map(|p| if inside(*p) { *p + d } else { *p }).collect();
+                *sp = sp.refit(&fit, sp.closed);
             }
         }
         EntityKind::Solid(so) | EntityKind::Trace(so) => so.corners.iter_mut().for_each(mv),
@@ -94,19 +148,19 @@ pub(super) fn run_stretch(s: &mut Session, p: &Value) -> Result<Value> {
     };
     // A fence marks no area: the objects it crosses move whole.
     if let Some(fence) = listed("fence", 2)? {
-        let hs = crate::select::select_fence(s.doc()?, &space, &fence);
+        let hs = crate::select::select_fence_in(s.doc()?, &space, s.viewport_frozen(), &fence);
         let moved = transform_entities(s, &hs, &Mat3::translate(d), false)?;
         return Ok(json!({ "stretched": moved.len() }));
     }
     let (mut hs, area) = if let Some(poly) = listed("polygon", 3)? {
-        (crate::select::select_polygon(s.doc()?, &space, &poly, true), StretchArea::Polygon(poly))
+        (crate::select::select_polygon_in(s.doc()?, &space, s.viewport_frozen(), &poly, true), StretchArea::Polygon(poly))
     } else {
         let w = points_param(p, "window").ok_or_else(|| bad("stretch", "`window` [[x,y],[x,y]], `polygon` or `fence` is required"))?;
         let (Some(a), Some(b)) = (w.first(), w.get(1)) else { return Err(bad("stretch", "window needs 2 corners")) };
         let bx = cadcraft_geom::Bounds2::new(*a, *b);
-        (crate::select::select_window(s.doc()?, &space, bx, true), StretchArea::Box(bx))
+        (crate::select::select_window_in(s.doc()?, &space, s.viewport_frozen(), bx, true), StretchArea::Box(bx))
     };
-    add_mline_vertex_hits(s.doc()?, &space, &area, &mut hs);
+    add_mline_vertex_hits(s, &area, &mut hs);
     hs.retain(|h| !crate::cmd::curves::is_locked(s, *h));
     let doc = s.doc_mut()?;
     let areas = [area];
@@ -173,7 +227,7 @@ impl StretchM {
     /// of two) the mode is dropped.
     fn finish_mode(&mut self, s: &mut Session, m: SelectMode) -> Result<()> {
         let space = s.space();
-        let Some(mut hs) = m.select(s.doc()?, &space) else { return Ok(()) };
+        let Some(mut hs) = m.select_in(s.doc()?, &space, s.viewport_frozen()) else { return Ok(()) };
         let crossing = match (m.kind, m.pts.first().zip(m.pts.get(1))) {
             (SelectKind::Crossing | SelectKind::CPolygon, _) => true,
             (SelectKind::Box, Some((a, b))) => b.x < a.x,
@@ -189,7 +243,7 @@ impl StretchM {
         };
         let whole = area.is_none();
         if let (Some(a), true, false) = (&area, crossing, self.removing) {
-            add_mline_vertex_hits(s.doc()?, &space, a, &mut hs);
+            add_mline_vertex_hits(s, a, &mut hs);
         }
         if let (Some(a), false) = (area, self.removing) {
             self.windows.push(a);
@@ -228,10 +282,10 @@ impl StretchM {
                 Some(c) => {
                     let bx = cadcraft_geom::Bounds2::new(c, p);
                     let space = s.space();
-                    let mut hs = crate::select::select_window(s.doc()?, &space, bx, p.x < c.x);
+                    let mut hs = crate::select::select_window_in(s.doc()?, &space, s.viewport_frozen(), bx, p.x < c.x);
                     if !self.removing {
                         if p.x < c.x {
-                            add_mline_vertex_hits(s.doc()?, &space, &StretchArea::Box(bx), &mut hs);
+                            add_mline_vertex_hits(s, &StretchArea::Box(bx), &mut hs);
                         }
                         self.windows.push(StretchArea::Box(bx));
                     }
@@ -240,7 +294,8 @@ impl StretchM {
                 None => {
                     let aperture = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
                     let space = s.space();
-                    match crate::select::pick(s.doc()?, &space, p, aperture) {
+                    // A removal names its object (`picks_one`): the named one is found, not another lying there.
+                    match s.pick_object(&space, p, aperture)? {
                         Some(h) => self.add(s, vec![h], true),
                         None => self.corner = Some(p),
                     }
@@ -251,6 +306,7 @@ impl StretchM {
                 self.corner = None;
                 let d = s.doc()?;
                 let store = d.space(&s.space());
+                let frozen = s.viewport_frozen();
                 let word = t.trim().to_ascii_lowercase();
                 // `_C`, `_L`: the English name, as scripts write it.
                 let word = word.strip_prefix('_').unwrap_or(&word).to_string();
@@ -267,9 +323,14 @@ impl StretchM {
                         self.removing = false;
                         None
                     }
-                    "all" => Some(store.map(|st| st.iter().filter(|e| d.is_visible(e)).map(|e| e.handle).collect()).unwrap_or_default()),
-                    "l" | "last" => Some(store.and_then(|st| st.last()).map(|e| vec![e.handle]).unwrap_or_default()),
-                    "p" | "previous" => Some(s.state()?.previous_selection.clone()),
+                    "all" => Some(
+                        store.map(|st| st.iter().filter(|e| crate::select::selectable(d, e, frozen)).map(|e| e.handle).collect()).unwrap_or_default(),
+                    ),
+                    "l" | "last" => Some(store.and_then(|st| crate::select::last_in(st, frozen)).map(|h| vec![h]).unwrap_or_default()),
+                    "p" | "previous" => {
+                        let st = s.state()?;
+                        Some(st.drawn_in_viewport(&st.previous_selection))
+                    }
                     _ => {
                         s.echo("*Invalid selection*");
                         None
@@ -314,13 +375,16 @@ impl Interactive for StretchM {
         s.echo("Select objects to stretch by crossing-window or crossing-polygon...");
         Ok(Step::Continue)
     }
+    /// Returns the active interactive prompt for the current `STRETCH` phase.
     fn prompt(&self, _s: &Session) -> Prompt {
         if let (StretchPhase::Select, Some(m)) = (self.phase, &self.mode) {
             return m.prompt();
         }
         match (self.phase, self.corner) {
             (StretchPhase::Select, Some(c)) => Prompt::new("Specify opposite corner", Accept::POINT).corner(c),
-            (StretchPhase::Select, None) => Prompt::new(if self.removing { "Remove objects" } else { "Select objects" }, Accept::POINT),
+            (StretchPhase::Select, None) => {
+                Prompt { picks_one: self.removing, ..Prompt::new(if self.removing { "Remove objects" } else { "Select objects" }, Accept::POINT) }
+            }
             (StretchPhase::Base, _) => Prompt::new("Specify base point", Accept::POINT).kw(&["Displacement"]).default("Displacement"),
             (StretchPhase::Displacement, _) => Prompt::new("Specify displacement", Accept::POINT).default("0,0"),
             (StretchPhase::Second, _) => Prompt::new("Specify second point or <use first point as displacement>", Accept::POINT).base_opt(self.base),
