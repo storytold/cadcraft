@@ -13,6 +13,7 @@ mod fill;
 mod hatch;
 mod linetype;
 mod linetype_text;
+mod loops;
 mod mline;
 mod outline;
 pub mod paper;
@@ -100,6 +101,9 @@ struct Ctx<'a> {
     block_pstyle: Option<usize>,
     /// Transparency (percent) of the block reference being expanded, for `ByBlock`.
     block_transparency: u8,
+    /// The block whose contents are being drawn (`None` at the top level): a dimension in it whose
+    /// own block leads back to it is drawn from its definition points (see [`loops`]).
+    block: Option<&'a cadcraft_doc::Block>,
 }
 
 impl Ctx<'_> {
@@ -130,6 +134,9 @@ struct Builder<'a> {
     points: &'a std::sync::atomic::AtomicUsize,
     /// The most points the build may hold: [`MAX_DISPLAY_POINTS`] (less in tests).
     max_points: usize,
+    /// The loops of the drawing's block graph, worked out once for the whole build when a search
+    /// near a dimension's block does not settle whether it leads back (see [`loops`]).
+    loops: &'a std::sync::OnceLock<loops::BlockLoops>,
 }
 
 /// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy
@@ -380,7 +387,13 @@ impl<'a> Builder<'a> {
             transparency: self.transparency,
             points: self.points,
             max_points: self.max_points,
+            loops: self.loops,
         }
+    }
+    /// Whether block `to` leads back to block `from` in `d`, the drawing being built (see
+    /// [`loops`]).
+    fn leads_back(&self, d: &Drawing, from: &cadcraft_doc::Block, to: &cadcraft_doc::Block) -> bool {
+        loops::leads_back(d, self.loops, from, to)
     }
     /// Take one unit of the block-expansion budget; false once it is spent, or once the build
     /// holds all the points it may ([`MAX_DISPLAY_POINTS`]), so block copies stop being visited.

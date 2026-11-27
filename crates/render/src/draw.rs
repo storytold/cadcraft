@@ -366,13 +366,17 @@ fn draw_dimension(
     own: u8,
 ) {
     let (lt, ltscale) = stroke;
+    // A dimension inside a block whose own block leads back to that block (it is the block, or
+    // they lie on a loop of references, dimensions and multileaders) is drawn from its definition
+    // points, as one whose block is missing is (see `loops`, #1923).
     if let Some(blk) = dm.block.as_ref().and_then(|n| ctx.d.block(n))
         && ctx.depth < cadcraft_doc::MAX_BLOCK_DEPTH
+        && !ctx.block.is_some_and(|outer| b.leads_back(ctx.d, outer, blk))
     {
         // DXF group 12: a moved dimension keeps its `*D` block where it was and the offset in
         // the insertion point, so the block draws translated by it (#2634).
         let off = dm.insertion_point.xy();
-        let sub = Ctx { block_pstyle: b.named, block_transparency: own, ..sub_ctx(ctx, e, Mat3::translate(off)) };
+        let sub = Ctx { block: Some(blk), block_pstyle: b.named, block_transparency: own, ..sub_ctx(ctx, e, Mat3::translate(off)) };
         // DIMTFILL: the block's MTEXT carries no background mask here, so a background
         // around each of the block's texts is drawn before the block's first text or first
         // line of the text's marks, except for a text that a SOLID of the block covers.
