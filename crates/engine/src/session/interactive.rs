@@ -540,7 +540,8 @@ impl Session {
     /// The post-command passes, in order, run after every command — by [`Session::execute`] and
     /// when an interactive command finishes — so their edits land in the command's own undo step:
     /// group membership is pruned, constraints are inferred, purged and re-solved, and
-    /// associative dimensions and hatches follow their sources. A new pass is added here, once.
+    /// associative dimensions and hatches follow their sources. A new built-in pass is added here,
+    /// once; an add-on registers its own with `register_after_command`, and those run last.
     ///
     /// `before` is the drawing the command started from; `uid` (when known) is the document it
     /// started in, so associativity is not applied across a document switch; `ok` is false for a
@@ -551,6 +552,28 @@ impl Session {
         cmd::groups::after_command(self, before);
         cmd::constraints::after_command(self, before, ok);
         assoc::after_command(self, before, uid);
+        // Passes add-ons registered (`register_after_command`). One that panics is reported, the
+        // drawing and selection go back to what they were before that pass, and the next passes
+        // still run. Saving the drawing shares it (an `Arc`); it is copied only if the pass edits.
+        // The document is found again by its `uid`, not its index, since a pass may switch or
+        // close drawings, and it becomes the active one again. Like the guard in `guard.rs`, this
+        // does nothing on wasm, where a panic aborts.
+        for pass in crate::after_command_passes() {
+            let saved = self.state().ok().map(|st| (st.uid, Arc::clone(&st.doc), st.selection.clone()));
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pass(self, before, ok))).is_err() {
+                if let Some((uid, doc, selection)) = saved
+                    && let Some((i, st)) = self.docs.iter_mut().enumerate().find(|(_, st)| st.uid == uid)
+                {
+                    st.doc = doc;
+                    st.selection = selection;
+                    if self.active != i {
+                        self.active = i;
+                        self.bump_doc_epoch();
+                    }
+                }
+                self.echo("A post-command pass of an add-on failed; its changes were skipped.".to_string());
+            }
+        }
     }
 
     fn resume_suspended(&mut self) {

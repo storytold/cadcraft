@@ -627,7 +627,7 @@ struct ObjectWritePlan<'a> {
     ms_br: &'a String,
     ps_brs: &'a [(String, String, &'a Layout)],
     layout_handles: &'a [String],
-    xrecords: &'a [(&'static str, String, Vec<String>)],
+    xrecords: &'a [(&'a str, String, Vec<String>)],
     scales: &'a [(&'a cadcraft_doc::AnnoScale, String)],
     pstyles: &'a [(String, String)],
     table_styles: &'a [TableStyle],
@@ -1140,6 +1140,8 @@ pub(super) fn tags_kept_for(
     let layout_dict = w.h();
     let table_style_dict = w.h();
     // CADCraft data in XRECORDs of the named object dictionary: (key, handle, text chunks).
+    // Extension values other crates keep on the drawing come last, one XRECORD per key.
+    let ext_records: Vec<(String, Vec<String>)> = dxf_ext::ext_chunks(d);
     let mut xrecords: Vec<(&str, String, Vec<String>)> = Vec::new();
     // The drawing's own next handle: table records and objects are numbered above it, so
     // reading it back (instead of $HANDSEED) keeps their handles across saves (#495).
@@ -1164,6 +1166,9 @@ pub(super) fn tags_kept_for(
     }
     if let Some(chunks) = dxf_ext::anno_chunks(d) {
         xrecords.push((dxf_ext::ANNOTATION_KEY, w.h(), chunks));
+    }
+    for (key, chunks) in &ext_records {
+        xrecords.push((key.as_str(), w.h(), chunks.clone()));
     }
     // The annotation scale list: the ACAD_SCALELIST dictionary of SCALE objects.
     let scale_dict = w.h();

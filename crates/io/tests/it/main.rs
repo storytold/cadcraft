@@ -33,6 +33,7 @@ mod dynblock_rotate_flip;
 mod dynblock_scale_polar;
 mod entity_props_roundtrip;
 mod exhausted_handseed;
+mod extension_data;
 mod followups_626;
 mod groups_roundtrip;
 mod hatch_assoc_roundtrip;
