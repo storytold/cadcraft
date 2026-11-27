@@ -374,6 +374,30 @@ fn pattern_definition(tags: &[Tag], scale: f64, angle: f64, origin: Vec2) -> Vec
         .collect()
 }
 
+/// The pattern lines of a hatch read in a mirrored OCS (extrusion (0,0,-1)) turned into the world
+/// frame its boundary was mirrored into: each line as the file drew it (angle, base point and
+/// offset at hatch angle `ocs_angle`) is mirrored in x, then kept the library's way for the
+/// mirrored hatch angle `world_angle`. Without this, lines at an angle other than the hatch's
+/// kept their unmirrored direction and position against a mirrored boundary (issue #3120).
+pub(super) fn mirror_pattern_lines(lines: &mut [cadcraft_doc::library::PatternLine], origin: Vec2, scale: f64, ocs_angle: f64, world_angle: f64) {
+    // The same fallbacks as `pattern_definition` used when it stored the lines.
+    let scale = if scale.is_finite() && scale > 1e-9 { scale } else { 1.0 };
+    let ocs_angle = if ocs_angle.is_finite() { ocs_angle } else { 0.0 };
+    let world_angle = if world_angle.is_finite() { world_angle } else { 0.0 };
+    let mirror = |v: Vec2| Vec2::new(-v.x, v.y);
+    for line in lines {
+        let file_angle = line.angle.to_radians() + ocs_angle;
+        let base = mirror(origin + Vec2::new(line.origin.0, line.origin.1).rotate(ocs_angle) * scale);
+        let offset = mirror(Vec2::new(line.delta.0, line.delta.1).rotate(file_angle) * scale);
+        let angle = std::f64::consts::PI - file_angle;
+        let local = (base - origin).rotate(-world_angle) * (1.0 / scale);
+        let delta = offset.rotate(-angle) * (1.0 / scale);
+        line.angle = (angle - world_angle).to_degrees();
+        line.origin = (local.x, local.y);
+        line.delta = (delta.x, delta.y);
+    }
+}
+
 /// Hatch origin and background colour from `CADCRAFT` xdata: `1000 HATCH`, `1011` origin,
 /// `1000` background colour name (empty for none). Defaults when absent.
 fn hatch_xdata(tags: &[Tag]) -> (Vec2, Option<Color>) {

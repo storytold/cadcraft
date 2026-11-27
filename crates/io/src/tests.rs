@@ -3360,6 +3360,31 @@ fn mirrored_hatch_extrusion_flips_boundary() {
     }
 }
 
+/// Issue #3120: a mirrored HATCH's pattern lines mirror with its boundary. The file draws one
+/// line at 55° from (1, 0.5) with offset (-0.2, 0.3) in its OCS; under extrusion (0,0,-1) that
+/// is a line at 125° from (-1, 0.5) with offset (0.2, 0.3) in the world. Before, only the hatch
+/// angle was mirrored and the line stayed at 55° - 10° + 170° = 215° (35°), off its true slant.
+#[test]
+fn mirrored_hatch_mirrors_its_pattern_lines() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nHATCH\n8\n0\n10\n0\n20\n0\n30\n0\n210\n0\n220\n0\n230\n-1\n2\nMYPAT\n70\n0\n71\n0\n91\n1\n\
+                92\n2\n72\n0\n73\n1\n93\n4\n10\n1\n20\n0\n10\n3\n20\n0\n10\n3\n20\n2\n10\n1\n20\n2\n97\n0\n75\n0\n76\n1\n\
+                52\n10\n41\n2\n77\n0\n78\n1\n53\n55\n43\n1\n44\n0.5\n45\n-0.2\n46\n0.3\n79\n2\n49\n0.5\n49\n-0.25\n98\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "h.dxf").unwrap();
+    let h = first(&d, |k| if let EntityKind::Hatch(h) = k { Some(h.clone()) } else { None });
+    assert!((h.angle.to_degrees() - 170.0).abs() < 1e-9, "hatch angle {}", h.angle.to_degrees());
+    let [l] = h.pattern_lines.as_slice() else { panic!("one pattern line: {:?}", h.pattern_lines) };
+    // The line in the world, the way the renderer and the writer place it.
+    let ang = l.angle.to_radians() + h.angle;
+    let base = h.origin + Vec2::new(l.origin.0, l.origin.1).rotate(h.angle) * h.scale;
+    let offset = Vec2::new(l.delta.0, l.delta.1).rotate(ang) * h.scale;
+    let dir = cadcraft_geom::norm_angle(ang).to_degrees();
+    assert!((dir - 125.0).abs() < 1e-9, "line direction {dir}");
+    assert!(base.near(Vec2::new(-1.0, 0.5), 1e-9), "base point {base:?}");
+    assert!(offset.near(Vec2::new(0.2, 0.3), 1e-9), "offset {offset:?}");
+    let dashes: Vec<f64> = l.dashes.iter().map(|d| d * h.scale).collect();
+    assert_eq!(dashes, vec![0.5, -0.25]);
+}
+
 /// Issue #1886: a HATCH in a tilted plane (a terrain face) is drawn as seen from above, not turned
 /// about the origin. With extrusion (0, 0.5, -√3/2) the OCS axes are x = (-1,0,0) and
 /// y = (0, √3/2, 1/2): the square (1,0)..(3,2) lies over (-3,0)..(-1,√3), from z 0 up to z 1.
