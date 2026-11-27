@@ -18,6 +18,7 @@ pub mod blockedit;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod capped_read;
 pub mod cmd;
+pub mod disk_stamp;
 pub mod doc_path;
 pub mod file_access;
 mod finite;

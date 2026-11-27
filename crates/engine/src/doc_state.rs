@@ -41,6 +41,9 @@ pub struct DocState {
     /// The Block Editor (BEDIT), when it is open: `doc` is then the editor's drawing, and the
     /// drawing itself waits in it ([`DocState::drawing`]).
     pub block_edit: Option<blockedit::BlockEdit>,
+    /// What the drawing's file held when it was read or last saved here: a save over it checks
+    /// that nobody else wrote it in between ([`crate::disk_stamp`]).
+    pub disk: Option<crate::disk_stamp::DiskStamp>,
     /// The user was told that the current UCS is tilted ([`Session::note_tilted_ucs`]).
     pub ucs_tilted_noted: bool,
     /// What the last erase removed, for OOPS.
@@ -79,6 +82,7 @@ impl DocState {
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             binary_dxf: false,
             block_edit: None,
+            disk: None,
             ucs_tilted_noted: false,
             erased: Default::default(),
             fonts_noted: String::new(),
