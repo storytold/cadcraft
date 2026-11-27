@@ -15,7 +15,7 @@
 //! plot applies them once its plot scale is known.
 
 use cadcraft_doc::{EndStyle, FillStyle, JoinStyle};
-use cadcraft_geom::Vec2;
+use cadcraft_geom::{MITER_LIMIT, Vec2};
 
 use crate::{DisplayList, Kind};
 
@@ -57,9 +57,6 @@ pub const PATTERN_MM: f64 = 1.0;
 /// Pattern cells visited per display list; past it the remaining areas stay solid (huge areas at
 /// a tiny plot scale would otherwise produce unbounded geometry).
 pub const MAX_PATTERN_CELLS: usize = 2_000_000;
-
-/// Miters longer than this many half widths are drawn bevelled (as PDF's default miter limit).
-pub(crate) const MITER_LIMIT: f64 = 10.0;
 
 /// Segments of a half circle (round ends and joins).
 const ROUND_STEPS: usize = 12;

@@ -376,6 +376,27 @@ fn wide_polyline_extents_follow_the_band() {
     assert!(near_bounds(b, (0.0, 0.0), (10.0, 0.0)), "{b:?}");
 }
 
+/// #3443: where two wide segments meet in a miter, the extents reach its tip, which lies past both
+/// bands; a corner sharper than the miter limit is bevelled and adds nothing to the bands.
+#[test]
+fn wide_polyline_extents_reach_the_miter_tips() {
+    let seg = |a: (f64, f64), b: (f64, f64)| wide_pline(&[(a.0, a.1, 0.0, 0.0, 0.0), (b.0, b.1, 0.0, 0.0, 0.0)], false, 2.0);
+    let same = |a: Bounds2, b: Bounds2| (a.min - b.min).len() < 1e-9 && (a.max - b.max).len() < 1e-9;
+    // A sharp left turn at (20, 0), 2 wide. The first band's outer (right) edge is y = -1. The
+    // second segment runs along u = (-20, 8) / l, so its right edge passes (20, 0) + (8, 20) / l
+    // and meets y = -1 a further (l + 20) / 8 along -u.
+    let b = wide_pline(&[(0.0, 0.0, 0.0, 0.0, 0.0), (20.0, 0.0, 0.0, 0.0, 0.0), (0.0, 8.0, 0.0, 0.0, 0.0)], false, 2.0);
+    let l = 464.0_f64.sqrt();
+    let tip_x = 20.0 + 8.0 / l + 2.5 * (l + 20.0) / l;
+    let bands = seg((0.0, 0.0), (20.0, 0.0)).union(&seg((20.0, 0.0), (0.0, 8.0)));
+    assert!(tip_x > bands.max.x + 1.0, "the tip is past the bands: {tip_x} {bands:?}");
+    assert!((b.max.x - tip_x).abs() < 1e-9, "{b:?} {tip_x}");
+    assert!((b.min - bands.min).len() < 1e-9 && (b.max.y - bands.max.y).abs() < 1e-9, "only the tip adds: {b:?} {bands:?}");
+    // Past the miter limit the corner is bevelled: the extents are the bands'.
+    let b = wide_pline(&[(0.0, 0.0, 0.0, 0.0, 0.0), (10.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.5, 0.0, 0.0, 0.0)], false, 2.0);
+    assert!(same(b, seg((0.0, 0.0), (10.0, 0.0)).union(&seg((10.0, 0.0), (0.0, 0.5)))), "{b:?}");
+}
+
 /// A wide arc segment reaches its outer edge (radius plus half the width), never less, and only
 /// by the sampling tolerance more.
 #[test]

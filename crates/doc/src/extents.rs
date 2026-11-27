@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use cadcraft_geom::{Arc, Bounds2, EPS, Polyline, Vec2, bulge_to_arc};
+use cadcraft_geom::{Arc, Bounds2, EPS, Polyline, Vec2, band_edges, band_ends, band_joins, bulge_to_arc};
 
 use crate::{Drawing, Entity, EntityKind, LwPolyline, Prim, TagKey};
 
@@ -613,9 +613,12 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
 }
 
 /// The polyline's drawn extent: its centre line, widened by the filled band of every segment,
-/// with the constant width or each segment's own start/end widths tapering along it, as drawn.
+/// with the constant width or each segment's own start/end widths tapering along it, and by the
+/// miters where the bands meet, as drawn. (A wide polyline drawn with a linetype has no miters
+/// yet, so there its extents can reach past a corner by up to the miter's length.)
 fn lwpolyline_bounds(p: &LwPolyline) -> Bounds2 {
     let mut b = Polyline { vertices: p.vertices.clone(), closed: p.closed }.bounds();
+    let mut ends = Vec::new();
     let n = p.vertices.len();
     let count = if p.closed { n } else { n.saturating_sub(1) };
     // The constant width wins, as when drawing; non-finite or negative widths count as zero.
@@ -623,6 +626,20 @@ fn lwpolyline_bounds(p: &LwPolyline) -> Bounds2 {
     for i in 0..count {
         let (Some(v), Some(w)) = (p.vertices.get(i), p.vertices.get((i + 1) % n)) else { continue };
         let (h0, h1) = if p.const_width > 0.0 { (half(p.const_width), half(p.const_width)) } else { (half(v.start_width), half(v.end_width)) };
+        // Where this segment's band starts and ends, for the miters with its neighbours; a thin
+        // segment has ends too, as a wide neighbour still mitres against it.
+        let centre_line = match bulge_to_arc(v.p, w.p, v.bulge) {
+            None => vec![v.p, w.p],
+            Some((arc, ccw)) => {
+                let mut pts = Vec::new();
+                arc.tessellate((arc.radius + h0.max(h1)) * 1e-4, &mut pts);
+                if !ccw {
+                    pts.reverse();
+                }
+                pts
+            }
+        };
+        ends.extend(band_ends(&centre_line, &band_edges(&centre_line, 2.0 * h0, 2.0 * h1), 2.0 * h0, 2.0 * h1));
         if h0 == 0.0 && h1 == 0.0 {
             // A thin segment: the centre line already counts.
             continue;
@@ -660,6 +677,10 @@ fn lwpolyline_bounds(p: &LwPolyline) -> Bounds2 {
                 }
             }
         }
+    }
+    // A bevel's points are on the bands already; only a miter's tip reaches past them.
+    for tip in band_joins(&ends, p.closed).iter().filter_map(|j| j.tip) {
+        b.add(tip);
     }
     b
 }

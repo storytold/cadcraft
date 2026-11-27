@@ -1,9 +1,7 @@
 //! Polygon filling: even-odd regions to triangles (slab decomposition), wide polylines.
 
 use cadcraft_doc::LwPolyline;
-use cadcraft_geom::{MAX_TESSELLATED_POINTS, Polyline, Segment, Vec2};
-
-use crate::pen::MITER_LIMIT;
+use cadcraft_geom::{BandJoin, MAX_TESSELLATED_POINTS, Polyline, Segment, Vec2, band_edges, band_ends, band_joins};
 
 /// Triangulate an even-odd region bounded by closed loops (holes allowed) by cutting it into
 /// horizontal slabs at every vertex y and emitting trapezoids. Two edges that cross inside a slab
@@ -143,87 +141,47 @@ pub fn wide_polyline(p: &LwPolyline, tol: f64) -> Vec<Vec2> {
 fn wide_polyline_within(p: &LwPolyline, tol: f64, budget: &mut usize) -> Vec<Vec2> {
     let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
     let mut out = Vec::new();
-    let mut ends: Vec<(BandEnd, BandEnd)> = Vec::new();
+    let mut ends = Vec::new();
     let n = p.vertices.len();
     for (i, seg) in pl.segments().iter().enumerate() {
         let v = p.vertices.get(i % n.max(1)).copied().unwrap_or_default();
         let (w0, w1) = if p.const_width > 0.0 { (p.const_width, p.const_width) } else { (v.start_width, v.end_width) };
         let mut pts = Vec::new();
         sample_within(seg, tol, budget, &mut pts);
-        let m = pts.len();
-        if m < 2 {
+        if pts.len() < 2 {
             continue;
         }
-        let mut edges = Vec::with_capacity(m);
-        for (k, q) in pts.iter().enumerate() {
-            let t = k as f64 / (m - 1) as f64;
-            let w = (w0 + (w1 - w0) * t) / 2.0;
-            let dir = if k + 1 < m { pts.get(k + 1).map(|n| *n - *q) } else { pts.get(k.wrapping_sub(1)).map(|pv| *q - *pv) }
-                .unwrap_or(Vec2::X)
-                .normalized();
-            let nrm = dir.perp() * w;
-            let cur = (*q + nrm, *q - nrm);
-            if let Some(&(a, b)) = edges.last() {
-                out.extend_from_slice(&[a, b, cur.1, a, cur.1, cur.0]);
+        let edges = band_edges(&pts, w0, w1);
+        for pair in edges.windows(2) {
+            if let [(a, b), cur] = pair {
+                out.extend_from_slice(&[*a, *b, cur.1, *a, cur.1, cur.0]);
             }
-            edges.push(cur);
         }
-        // A segment of no length (a repeated vertex) has no direction to join along: the
-        // segments on either side of it meet at the same point and join each other.
-        let end = |c: usize, inner: usize, w: f64| {
-            let (centre, toward) = (*pts.get(c)?, *pts.get(inner)?);
-            (centre.dist(toward) > cadcraft_geom::EPS).then_some(())?;
-            Some(BandEnd { centre, toward, edge: *edges.get(c)?, inner_edge: *edges.get(inner)?, hw: w / 2.0 })
-        };
-        if let (Some(start), Some(finish)) = (end(0, 1, w0), end(m - 1, m - 2, w1)) {
-            ends.push((start, finish));
-        }
+        ends.extend(band_ends(&pts, &edges, w0, w1));
     }
-    // The corner at each vertex where one segment's band ends and the next one's starts.
-    for pair in ends.windows(2) {
-        if let [(_, arriving), (leaving, _)] = pair {
-            corner(&mut out, arriving, leaving);
-        }
-    }
-    if p.closed
-        && ends.len() > 1
-        && let (Some(last), Some(first)) = (ends.last(), ends.first())
-    {
-        corner(&mut out, &last.1, &first.0);
+    for join in band_joins(&ends, p.closed) {
+        corner(&mut out, &join);
     }
     out
 }
 
-/// One end of a segment's band: its centre point and the sample next to it inside the segment,
-/// with the band's edge points (left, right of the centre line) at both.
-struct BandEnd {
-    centre: Vec2,
-    toward: Vec2,
-    edge: (Vec2, Vec2),
-    inner_edge: (Vec2, Vec2),
-    hw: f64,
-}
-
-/// Fill the corner between the band arriving at `a` and the one leaving from `b`: their outer
-/// edges are extended until they meet (a miter), or joined straight across (a bevel) when they
-/// would meet further out than [`MITER_LIMIT`] half widths. Each edge keeps its own direction,
-/// so tapered segments meet where their edges do.
-fn corner(out: &mut Vec<Vec2>, a: &BandEnd, b: &BandEnd) {
-    let c = a.centre;
-    let (d0, d1) = ((a.centre - a.toward).normalized(), (b.toward - b.centre).normalized());
-    let scale = a.hw.max(b.hw);
-    let turn = d0.cross(d1);
-    if scale <= 0.0 || turn.abs() <= 1e-12 {
-        return; // no width, or straight on (or straight back)
-    }
-    // The outer side of the turn: right of a left turn, left of a right turn.
-    let pick = |e: (Vec2, Vec2)| if turn > 0.0 { e.1 } else { e.0 };
-    let (a0, a1, b0, b1) = (pick(a.inner_edge), pick(a.edge), pick(b.edge), pick(b.inner_edge));
-    let miter = cadcraft_geom::line_line_infinite(a0, a1, b1, b0)
-        .filter(|&(tip, t, u)| t >= 1.0 - 1e-9 && u >= 1.0 - 1e-9 && tip.dist(c) <= MITER_LIMIT * scale);
-    match miter {
-        Some((tip, ..)) => out.extend_from_slice(&[c, a1, tip, c, tip, b0]),
-        None => out.extend_from_slice(&[c, a1, b0]),
+/// The triangles that fill a corner, all counter-clockwise like those of a band of positive width:
+/// the fill uses the non-zero rule, so a clockwise corner would cancel a band it lies over (where a
+/// polyline folds back over its own corner) and leave a hole.
+fn corner(out: &mut Vec<Vec2>, j: &BandJoin) {
+    let mut tri = |a: Vec2, b: Vec2| {
+        if (a - j.centre).cross(b - j.centre) >= 0.0 {
+            out.extend_from_slice(&[j.centre, a, b]);
+        } else {
+            out.extend_from_slice(&[j.centre, b, a]);
+        }
+    };
+    match j.tip {
+        Some(tip) => {
+            tri(j.from, tip);
+            tri(tip, j.to);
+        }
+        None => tri(j.from, j.to),
     }
 }
 
@@ -408,7 +366,7 @@ pub(crate) mod tests {
     fn sharp_corners_are_bevelled() {
         let tris = wide_polyline(&wide(&[(0.0, 0.0), (10.0, 0.0), (0.0, 0.5)], false, 2.0), 0.01);
         let reach = tris.iter().map(|p| p.x).fold(f64::MIN, f64::max);
-        assert!(reach < 10.0 + MITER_LIMIT, "{reach}");
+        assert!(reach < 10.0 + cadcraft_geom::MITER_LIMIT, "{reach}");
     }
 
     /// Straight on, no corner is added: the band covers each point once, so a translucent
@@ -417,6 +375,49 @@ pub(crate) mod tests {
     fn straight_runs_add_no_corner() {
         let tris = wide_polyline(&wide(&[(0.0, 0.0), (5.0, 0.0), (10.0, 0.0)], false, 2.0), 0.01);
         assert!((area(&tris) - 20.0).abs() < 1e-9, "{}", area(&tris));
+    }
+
+    /// The winding number of the triangles around `p`, as the non-zero fill rule counts it.
+    fn winding(tris: &[Vec2], p: Vec2) -> i32 {
+        tris.chunks(3).filter(|t| cover(t, p) > 0).map(|t| if (t[1] - t[0]).cross(t[2] - t[0]) >= 0.0 { 1 } else { -1 }).sum()
+    }
+
+    /// Where a polyline folds back over its own corner, that corner stays filled: wound against
+    /// the band over it, the corner would cancel it under the non-zero fill rule and leave a hole.
+    #[test]
+    fn a_band_over_a_corner_keeps_it_filled() {
+        // A right turn at (10, 0) whose miter the last segment runs back up through, and its
+        // mirror image, a left turn.
+        for flip in [1.0, -1.0] {
+            let pts = [(0.0, 0.0), (10.0, 0.0), (10.0, -10.0), (10.5, -10.0), (10.5, 5.0)].map(|(x, y)| (x, y * flip));
+            let tris = wide_polyline(&wide(&pts, false, 2.0), 0.01);
+            assert!(winding(&tris, Vec2::new(10.7, 0.5 * flip)) != 0, "flip {flip}");
+            assert!(tris.chunks(3).all(|t| (t[1] - t[0]).cross(t[2] - t[0]) >= 0.0), "flip {flip}");
+        }
+    }
+
+    /// A wide polyline's extents are what it draws: they take in every corner and no more, at any
+    /// sampling tolerance (#3443).
+    #[test]
+    fn drawn_corners_match_the_extents() {
+        let cases = [
+            // A sharp mitred bend, a bevelled one, a fold back over a corner, and a closed
+            // polyline (a corner at its first vertex).
+            wide(&[(0.0, 0.0), (20.0, 0.0), (0.0, 8.0)], false, 2.0),
+            wide(&[(0.0, 0.0), (10.0, 0.0), (0.0, 0.5)], false, 2.0),
+            wide(&[(0.0, 0.0), (10.0, 0.0), (10.0, -10.0), (10.5, -10.0), (10.5, 5.0)], false, 2.0),
+            wide(&[(0.0, 0.0), (10.0, 3.0), (2.0, 9.0)], true, 1.5),
+        ];
+        for p in cases {
+            let mut d = cadcraft_doc::Drawing::new_metric();
+            d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), cadcraft_doc::EntityKind::LwPolyline(p.clone())).unwrap();
+            let ext = d.extents(&cadcraft_doc::Space::Model);
+            for tol in [1.0, 0.1, 0.01] {
+                let drawn = cadcraft_geom::Bounds2::from_points(wide_polyline(&p, tol).iter().copied());
+                let gap = (drawn.min - ext.min).len().max((drawn.max - ext.max).len());
+                assert!(gap < 1e-9, "tol {tol}: drawn {drawn:?}, extents {ext:?}");
+            }
+        }
     }
 
     #[test]
