@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use super::common::T;
-use super::entities::{entity_extras, entity_plot_style, entity_with_table_budget, insert_attribs, polyline_entity};
+use super::entities::{entity_extras, entity_plot_style, entity_with_table_budget, insert_attribs, polyline_entity, reference_left_tilted};
 use super::objects::{MAX_OBJECTS, Objects, page_setup};
 use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, Vec2, record_slices};
 
@@ -83,7 +83,8 @@ pub(super) fn parse_entities(
             }
             "INSERT" if t.i(66) == Some(1) => {
                 let ins_layer = kindent.as_ref().map(|(c, _)| c.layer.clone()).unwrap_or_default();
-                let attribs = insert_attribs(recs, &mut i, &ins_layer);
+                let left_tilted = kindent.as_ref().is_some_and(|(c, _)| reference_left_tilted(c.extrusion));
+                let attribs = insert_attribs(recs, &mut i, &ins_layer, left_tilted);
                 if let Some((_, EntityKind::Insert(ins))) = kindent.as_mut() {
                     ins.attribs = attribs;
                 }
