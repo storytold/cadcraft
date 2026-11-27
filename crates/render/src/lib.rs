@@ -100,6 +100,9 @@ struct Ctx<'a> {
     block_pstyle: Option<usize>,
     /// Transparency (percent) of the block reference being expanded, for `ByBlock`.
     block_transparency: u8,
+    /// The entities drawn are a dimension's block: its POINT objects are the dimension's
+    /// definition points, drawn as dots whatever the point style (`PDMODE`).
+    dim_block: bool,
 }
 
 impl Ctx<'_> {

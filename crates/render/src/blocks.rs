@@ -41,6 +41,8 @@ pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
         block_pstyle: ctx.block_pstyle,
         // The reference's own, set by the caller (`Builder::transparency` while it draws).
         block_transparency: ctx.block_transparency,
+        // A block inside a dimension's block (an arrowhead) is an ordinary block.
+        dim_block: false,
     }
 }
 
