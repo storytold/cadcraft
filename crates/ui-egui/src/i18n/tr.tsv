@@ -299,6 +299,7 @@
 	Distance	Uzaklık
 	Divide	Böl
 	Do not plot (click: plot)	Çizdirme (tıklayın: çizdir)
+	Don't Save	Kaydetme
 	Donut	Halka
 	Double-click to edit the description	Açıklamayı düzenlemek için çift tıklayın
 	Down	Aşağı
@@ -895,6 +896,7 @@
 	Save Layer State	Katman Durumunu Kaydet
 	Save Reference Edits	Referans Düzenlemelerini Kaydet
 	Save State	Durumu Kaydet
+	Save changes to {name}?	{name} üzerindeki değişiklikler kaydedilsin mi?
 	Save new drawings as	Yeni çizimleri şu biçimde kaydet
 	Saved Path	Kayıtlı Yol
 	Scale	Ölçekle
@@ -1316,6 +1318,7 @@
 	Y	Y
 	Yellow	Sarı
 	Yes	Evet
+	Your changes will be lost if you don't save them.	Kaydetmezseniz değişiklikleriniz kaybolur.
 	Zoom	Yakınlaştır
 	Zoom All	Tümüne Yakınlaştır
 	Zoom Dynamic	Dinamik Yakınlaştırma
