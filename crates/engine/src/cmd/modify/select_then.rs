@@ -571,7 +571,9 @@ impl Interactive for SelectThen {
             }
             (Op::Scale, 1, inp @ (Input::Point(_) | Input::Text(_) | Input::Enter)) => {
                 let f = match inp {
-                    Input::Point(p) => self.pts[0].dist(p),
+                    Input::Point(p) => Some(self.pts[0].dist(p))
+                        .filter(|f| f.is_finite() && *f > 1e-12)
+                        .ok_or_else(|| EngineError::Other("Requires a positive number.".into()))?,
                     Input::Text(t) => {
                         number(&t).filter(|f| f.is_finite() && *f > 0.0).ok_or_else(|| EngineError::Other("Requires a positive number.".into()))?
                     }
