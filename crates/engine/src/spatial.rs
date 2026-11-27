@@ -74,6 +74,8 @@ pub struct SpatialIndex {
     blocks: BTreeMap<String, Arc<Block>>,
     dim_styles: Vec<DimStyle>,
     dimscale: f64,
+    /// ATTMODE: a block reference takes room for the constant attribute values it shows.
+    attmode: i64,
     /// Annotation scale factor and ANNOALLVISIBLE: annotative objects measure at that scale.
     anno: (u64, bool),
     /// Layers turned off or frozen: block contents on them take no room in their inserts.
@@ -126,7 +128,7 @@ impl SpatialIndex {
     }
 
     /// Build, reusing `prev` for chunks the two stores share (only when the bounds context —
-    /// blocks, dimension styles, DIMSCALE, hidden layers — is the same).
+    /// blocks, dimension styles, DIMSCALE, ATTMODE, hidden layers — is the same).
     fn build_from(d: &Drawing, store: &EntityStore, prev: Option<&SpatialIndex>) -> SpatialIndex {
         let prev = prev.filter(|p| p.same_context(d));
         let old: std::collections::HashMap<usize, Arc<ChunkIx>> =
@@ -164,6 +166,7 @@ impl SpatialIndex {
             blocks: (*d.blocks).clone(),
             dim_styles: d.dim_styles.to_vec(),
             dimscale: d.header.f64("DIMSCALE", 1.0),
+            attmode: d.header.i64("ATTMODE", 1),
             anno: anno_key(d),
             hidden_layers: hidden_layers(d).map(str::to_owned).collect(),
             chunks,
@@ -178,6 +181,7 @@ impl SpatialIndex {
         self.blocks.len() == d.blocks.len()
             && self.blocks.iter().zip(&d.blocks).all(|((ka, a), (kb, b))| ka == kb && Arc::ptr_eq(a, b))
             && self.dimscale.to_bits() == d.header.f64("DIMSCALE", 1.0).to_bits()
+            && self.attmode == d.header.i64("ATTMODE", 1)
             && self.dim_styles == *d.dim_styles
             && self.anno == anno_key(d)
             && self.hidden_layers.iter().map(String::as_str).eq(hidden_layers(d))
@@ -570,6 +574,65 @@ mod tests {
         assert_eq!(select::select_window(&d, &Space::Model, small, false), vec![h]);
     }
 
+    /// ATTMODE decides whether a reference shows its block's constant attribute values, and so
+    /// whether they take room in its bounds, without touching the space or the block table: the
+    /// index must not be reused across a change of it.
+    #[test]
+    fn index_follows_attmode_for_constant_attribute_values() {
+        let mut d = Drawing::new_imperial();
+        let mut blk = (**drawing(1, 0).blocks.get("B").unwrap()).clone();
+        let text = cadcraft_doc::Text {
+            insert: v3(0.0, 500.0),
+            align_pt: None,
+            height: 1.0,
+            value: "C4".into(),
+            rotation: 0.0,
+            width_factor: 1.0,
+            oblique: 0.0,
+            style: "Standard".into(),
+            halign: Default::default(),
+            valign: Default::default(),
+        };
+        let def = cadcraft_doc::Attrib {
+            tag: "C".into(),
+            text,
+            invisible: false,
+            constant: true,
+            prompt: String::new(),
+            props: Default::default(),
+            multiline: None,
+            modes: Default::default(),
+        };
+        blk.entities.push(Entity { handle: cadcraft_doc::Handle(2_000_000), common: Common::default(), kind: EntityKind::AttDef(def) });
+        d.blocks.insert("B".into(), Arc::new(blk));
+        for i in 0..MIN_INDEXED {
+            let x = 1000.0 + i as f64;
+            d.add(&Space::Model, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: v3(x, 0.0), b: v3(x, 1.0) })).unwrap();
+        }
+        let insert = Insert {
+            block: "B".into(),
+            insert: v3(0.0, 0.0),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            attribs: Vec::new(),
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+            clip: None,
+        };
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
+        d.header.set_i64("ATTMODE", 0);
+        let hidden = SpatialIndex::build(&d, &d.model);
+
+        d.header.set_i64("ATTMODE", 1);
+        assert!(!hidden.matches(&d, &d.model));
+        let reused = SpatialIndex::build_from(&d, &d.model, Some(&hidden));
+        let fresh = SpatialIndex::build(&d, &d.model);
+        let last = u32::try_from(MIN_INDEXED).unwrap();
+        assert_eq!(reused.bounds(last), fresh.bounds(last));
+        assert_ne!(fresh.bounds(last), hidden.bounds(last), "the value shown at ATTMODE 1 takes room");
+    }
     #[test]
     fn small_spaces_are_scanned() {
         let d = drawing(1, MIN_INDEXED - 1);
