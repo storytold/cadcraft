@@ -37,6 +37,8 @@ use skrifa::{FontRef, GlyphId, MetadataProvider};
 
 use crate::{Run, Shaped};
 
+mod list;
+pub use list::{FontEntry, installed_fonts};
 #[cfg(not(target_arch = "wasm32"))]
 mod dirs;
 
@@ -315,6 +317,7 @@ struct Fallback {
 }
 
 /// Where a font file's bytes come from.
+#[derive(Clone)]
 enum Source {
     /// An installed font file, read on first use.
     File(PathBuf),

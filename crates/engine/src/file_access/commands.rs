@@ -65,6 +65,7 @@ pub const FILES: &[&str] = &[
 
 /// Commands that can't be held to the roots, and why.
 pub const REFUSED: &[(&str, &str)] = &[
+    ("style.fonts", "it reads installed fonts outside the automation roots"),
     ("drawingrecovery", "it works on the autosave folder (SAVEFILEPATH), which is the server's own"),
     ("blocklibraries", "it keeps its list of libraries in the settings folder, which is the server's own"),
 ];
@@ -83,6 +84,7 @@ pub const NO_FILES: &[&str] = &[
     "blockspalette",
     "dimoverride.clear",
     "-dimstyle",
+    "-style",
     "dimstyle.overrides",
     "dimstyle.saveas",
     "properties.describe",
