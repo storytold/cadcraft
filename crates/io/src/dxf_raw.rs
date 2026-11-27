@@ -13,7 +13,7 @@
 //! owner is gone go with it.
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject, class_group, class_index, class_number, proxy_has_string_stream};
@@ -970,6 +970,123 @@ fn is_unknown_assoc_action(tags: &[RawTag]) -> bool {
     assoc_action_marker(tags).is_some() && assoc_action_list(tags).is_none()
 }
 
+/// How a kept object depends on another in the dependency prune of [`finish`].
+#[derive(Clone, Copy)]
+enum Link {
+    /// The other is its `dependentOnObject`.
+    Target,
+    /// The other is its owner (group 330).
+    Owner,
+    /// Its owner is null and the other holds it by group 360.
+    Holder,
+    /// The other is an action of unknown form that names it.
+    Named,
+}
+
+/// Mark dropped in `alive_memo` the kept dependencies whose `dependentOnObject` is not written, and
+/// the kept objects whose owner, as [`owner_of`] finds it, is dropped, until nothing more goes.
+/// `objs`: the kept objects by handle; `own`: their group 330 owners; `hard`: their hard owners;
+/// `roles` and `entities`: the written roles and entities a target may name.
+fn prune_dependencies(
+    f: &Foreign,
+    objs: &HashMap<String, &ForeignObject>,
+    own: &HashMap<String, Option<String>>,
+    hard: &HashMap<String, Vec<String>>,
+    roles: &HashMap<ForeignKey, String>,
+    entities: &HashSet<String>,
+    alive_memo: &mut HashMap<String, bool>,
+) {
+    // A dependency stays while a written action of unknown form names it by group 330 or 360, or is
+    // its owner. That action's list and count stay as read, and only the dangling target becomes
+    // null. Each kept action is classified once, here.
+    let unknown_actions: HashSet<String> = f.objects.iter().filter(|o| is_unknown_assoc_action(&o.tags)).map(|o| o.handle.hex()).collect();
+    // What an object's fate depends on, by the object it names: when that one is dropped, the object
+    // is looked at again. Built once, so the prune takes time linear in the objects and their links
+    // whatever order a chain of them has in the file.
+    let mut watchers: HashMap<String, Vec<(String, Link)>> = HashMap::new();
+    // For each dependency: how many written actions of unknown form name it.
+    let mut named_by: HashMap<String, usize> = HashMap::new();
+    // For each object with a null owner and hard owners: how many of them are written.
+    let mut holders: HashMap<String, usize> = HashMap::new();
+    // Each dependency's target, read once.
+    let mut targets: HashMap<String, String> = HashMap::new();
+    let live = |m: &HashMap<String, bool>, h: &str| m.get(h) == Some(&true);
+    for o in f.objects.iter().filter(|o| live(alive_memo, &o.handle.hex())) {
+        let h = o.handle.hex();
+        if unknown_actions.contains(&h) {
+            let named: HashSet<String> =
+                o.tags.iter().take_while(|t| t.code < 1000).filter(|t| matches!(t.code, 330 | 360)).map(|t| norm(&t.value)).collect();
+            for n in named {
+                *named_by.entry(n.clone()).or_default() += 1;
+                watchers.entry(h.clone()).or_default().push((n, Link::Named));
+            }
+        }
+        if let Some(t) = assoc_dependency_target(o) {
+            if objs.contains_key(&t) {
+                watchers.entry(t.clone()).or_default().push((h.clone(), Link::Target));
+            }
+            targets.insert(h.clone(), t);
+        }
+        match own.get(&h).cloned().flatten().filter(|o| o != "0") {
+            Some(owner) => watchers.entry(owner).or_default().push((h.clone(), Link::Owner)),
+            None => {
+                let owners = hard.get(&h).map(Vec::as_slice).unwrap_or_default();
+                if !owners.is_empty() {
+                    holders.insert(h.clone(), owners.iter().filter(|x| live(alive_memo, x)).count());
+                }
+                for x in owners {
+                    watchers.entry(x.clone()).or_default().push((h.clone(), Link::Holder));
+                }
+            }
+        }
+    }
+    // Every written object is looked at once, and again when its target or owner is dropped or when
+    // the last of its hard owners or naming actions is: at most four times, whatever the file holds.
+    let mut queue: VecDeque<String> = f.objects.iter().map(|o| o.handle.hex()).filter(|h| live(alive_memo, h)).collect();
+    while let Some(h) = queue.pop_front() {
+        if !live(alive_memo, &h) {
+            continue;
+        }
+        // The owner is found as for the first liveness pass ([`owner_of`]). A null-owner child goes
+        // with its hard owner, and a child with another live hard owner stays.
+        let owner_dropped = match own.get(&h).cloned().flatten().filter(|o| o != "0") {
+            Some(owner) => objs.contains_key(&owner) && !live(alive_memo, &owner),
+            None => holders.get(&h) == Some(&0),
+        };
+        let kept_by_unknown = named_by.get(&h).is_some_and(|&n| n > 0)
+            || own.get(&h).and_then(Option::as_deref).is_some_and(|owner| unknown_actions.contains(owner) && live(alive_memo, owner));
+        let dead_target = !kept_by_unknown
+            && targets.get(&h).is_some_and(|t| {
+                if objs.contains_key(t) {
+                    !live(alive_memo, t)
+                } else if let Some(role) = handle(t).and_then(|th| f.targets.get(&th)) {
+                    !roles.contains_key(role)
+                } else {
+                    !entities.contains(t)
+                }
+            });
+        if !(owner_dropped || dead_target) {
+            continue;
+        }
+        alive_memo.insert(h.clone(), false);
+        for (w, link) in watchers.get(&h).map(Vec::as_slice).unwrap_or_default() {
+            // A count matters only once it reaches zero.
+            let count = match link {
+                Link::Named => named_by.get_mut(w),
+                Link::Holder => holders.get_mut(w),
+                Link::Target | Link::Owner => None,
+            };
+            if let Some(n) = count {
+                *n = n.saturating_sub(1);
+                if *n > 0 {
+                    continue;
+                }
+            }
+            queue.push_back(w.clone());
+        }
+    }
+}
+
 /// Remaps the kept data's handles onto a written file.
 struct Map<'a> {
     f: &'a Foreign,
@@ -1289,60 +1406,7 @@ pub(crate) fn finish(
     // the kept objects whose owner, as [`owner_of`] finds it, is a dropped dependency. Leaving an
     // active dependency with its group 330 remapped to "0" breaks the associative reactor invariant.
     let entities: HashSet<String> = all_entities(d).map(|e| e.handle.hex()).filter(|h| written.contains(h)).collect();
-    // A dependency stays when an action of unknown form names it by group 330 or 360, or is its
-    // owner. That action's list and count stay as read, and only the dangling target becomes null.
-    // Each kept action is classified once, here.
-    let unknown_actions: Vec<&ForeignObject> = f.objects.iter().filter(|o| is_unknown_assoc_action(&o.tags)).collect();
-    let unknown_handles: HashSet<String> = unknown_actions.iter().map(|o| o.handle.hex()).collect();
-    let unknown_refs: HashSet<String> = unknown_actions
-        .iter()
-        .flat_map(|o| o.tags.iter().take_while(|t| t.code < 1000).filter(|t| matches!(t.code, 330 | 360)).map(|t| norm(&t.value)))
-        .collect();
-    let in_unknown_action =
-        |h: &str| unknown_refs.contains(h) || own.get(h).and_then(Option::as_deref).is_some_and(|owner| unknown_handles.contains(owner));
-    // Each pass that changes something drops at least one live object, so the loop ends.
-    loop {
-        let mut changed = false;
-        for o in &f.objects {
-            let h = o.handle.hex();
-            if alive_memo.get(&h) != Some(&true) || in_unknown_action(&h) {
-                continue;
-            }
-            let dead_target = assoc_dependency_target(o).is_some_and(|t| {
-                if objs.contains_key(&t) {
-                    alive_memo.get(&t) != Some(&true)
-                } else if let Some(role) = handle(&t).and_then(|th| f.targets.get(&th)) {
-                    !roles.contains_key(role)
-                } else {
-                    !entities.contains(&t)
-                }
-            });
-            if dead_target {
-                alive_memo.insert(h, false);
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-        // The owner is found as for the first liveness pass ([`owner_of`]). A null-owner child goes
-        // with its hard owner, and a child with another live hard owner stays.
-        let mut cascade = true;
-        while cascade {
-            cascade = false;
-            for o in &f.objects {
-                let h = o.handle.hex();
-                if alive_memo.get(&h) != Some(&true) {
-                    continue;
-                }
-                let owner = owner_of(own.get(&h).cloned().flatten(), &h, &hard, |x| alive_memo.get(x) == Some(&true));
-                if owner.is_some_and(|owner| objs.contains_key(&owner) && alive_memo.get(&owner) != Some(&true)) {
-                    alive_memo.insert(h, false);
-                    cascade = true;
-                }
-            }
-        }
-    }
+    prune_dependencies(f, &objs, &own, &hard, &roles, &entities, &mut alive_memo);
     // New handles for the written kept objects, above every written handle and the seed.
     let mut fresh = Fresh::new(tags);
     // The entities of unmodeled types join the records only below, so their handles are not in
