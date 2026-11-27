@@ -5,10 +5,14 @@
 //! (`getpoint`, `pause`) and carry on later, so the interface keeps drawing while a routine
 //! waits. Each drawing has its own symbols, as in AutoCAD. A run is one undo step.
 
+/// A block-definition entity and its successor in the block, by handle.
+pub type BlockSlots = HashMap<Handle, (Arc<cadcraft_doc::Entity>, Option<Handle>)>;
+
 pub mod builtins;
 mod drawing;
 pub mod eval;
 pub mod input;
+mod objects;
 pub mod read;
 mod startup;
 pub mod value;
@@ -54,13 +58,20 @@ pub struct Env {
     pub next_file: u32,
     /// Entities `entdel` deleted (it brings them back when called again), with their space.
     pub deleted: HashMap<Handle, (cadcraft_doc::Space, Arc<cadcraft_doc::Entity>)>,
-    /// Every entity's handle in creation order, for the drawing it was taken from (`entnext`).
-    pub order: Option<(usize, Arc<Vec<Handle>>)>,
+    /// Every entity's handle in creation order (`entlast`, `entnext`), with clones of the spaces
+    /// it was taken from (model space, then each layout): it is reused only while the drawing's
+    /// spaces still share every chunk with them ([`cadcraft_doc::EntityStore::same_as`]).
+    pub order: Option<(Vec<cadcraft_doc::EntityStore>, Arc<Vec<Handle>>)>,
+    /// Each block-definition entity with its successor in its block (None for the last), for the drawing
+    /// it was taken from: `entnext`'s indexed lookup, which also tells whether a handle is a block's.
+    pub block_next: Option<(usize, Arc<BlockSlots>)>,
     /// `tblnext`'s place in each table.
     pub tblnext: HashMap<String, usize>,
     /// A block definition `entmake` has begun (a BLOCK list) and not yet ended (ENDBLK): the
     /// entities made meanwhile go into it, numbered when it ends.
     pub pending_block: Option<(cadcraft_doc::Block, Vec<cadcraft_doc::Entity>)>,
+    /// Entity names of non-graphic objects (dictionaries, table records, layouts).
+    pub(crate) objects: objects::Names,
     /// The command history's length after LISP last printed a line: when something else wrote since
     /// (a prompt, a command's echo), a leading newline only ends that line.
     pub printed_at: Option<usize>,
@@ -77,8 +88,10 @@ impl Default for Env {
             next_file: 1,
             deleted: HashMap::new(),
             order: None,
+            block_next: None,
             tblnext: HashMap::new(),
             pending_block: None,
+            objects: objects::Names::default(),
             printed_at: None,
         };
         builtins::install(&mut e);
@@ -123,6 +136,16 @@ pub struct LispState {
     acad_loaded: bool,
     /// Memory caps (lowered by tests).
     pub(crate) limits: Limits,
+    /// Interpreter steps all synchronous callbacks have run, nested ones included. A callback's
+    /// allowance counts what ran since it started, so the callbacks it calls spend its steps.
+    pub(crate) callback_used: u64,
+    /// Work synchronous callbacks did inside the running step, already counted in `callback_used`:
+    /// the step is charged it without charging the enclosing callback a second time.
+    pub(crate) callback_work: u64,
+    /// The `callback_used` value the callback running now (and so every one it calls) must not
+    /// pass: the lowest of its own and its callers' allowances, and of what is left to an
+    /// expression typed at a prompt.
+    pub(crate) callback_ceiling: Option<u64>,
 }
 
 /// What U and REDO inside the running routine take back: the commands it ran, each as the drawing
@@ -178,6 +201,9 @@ struct Run {
     inputs: std::collections::VecDeque<Value>,
     /// Run to the end without waiting (programmatic calls): `get…` without an input gets nil.
     blocking: bool,
+    /// An expression typed at a command's prompt ([`Session::lisp_eval_answer`]): blocking, with
+    /// [`ANSWER_CAP`] steps instead of [`BLOCKING_CAP`].
+    answer: bool,
     /// Steps taken, for the cap on blocking runs.
     steps: u64,
     /// The `*error*` handler is the one running.
@@ -193,6 +219,10 @@ struct Run {
 const SLICE: u64 = 400_000;
 /// Steps a blocking run (a programmatic call) may take before it is stopped.
 const BLOCKING_CAP: u64 = 500_000_000;
+/// Steps an expression typed at a command's prompt may take, the callbacks it runs included. It
+/// runs blocking, since its value is the prompt's answer, so the interface draws no frame and
+/// Esc doesn't reach it until it ends; a routine at `Command:` runs a slice per frame instead.
+const ANSWER_CAP: u64 = 20_000_000;
 
 impl Session {
     /// The LISP environment of the active drawing.
@@ -201,8 +231,19 @@ impl Session {
         self.lisp.envs.remove(&uid).unwrap_or_default()
     }
 
+    /// Put a drawing's environment back, unless the drawing was closed meanwhile (a routine
+    /// cancelled by CLOSE ends after its drawing went away).
     fn lisp_env_put(&mut self, uid: u64, env: Env) {
-        self.lisp.envs.insert(uid, env);
+        if uid == 0 || self.docs.iter().any(|d| d.uid == uid) {
+            self.lisp.envs.insert(uid, env);
+        }
+    }
+
+    /// Drop the environments of drawings no longer open: one holds clones of its drawing's
+    /// entity stores ([`Env::order`]), which would otherwise outlive the drawing.
+    pub(crate) fn lisp_forget_closed(&mut self) {
+        let docs = &self.docs;
+        self.lisp.envs.retain(|uid, _| *uid == 0 || docs.iter().any(|d| d.uid == *uid));
     }
 
     /// A routine is running (possibly waiting for input).
@@ -239,12 +280,19 @@ impl Session {
         inputs: Vec<Value>,
     ) -> crate::Result<Option<std::result::Result<Value, String>>> {
         let forms = read::read_all(src).map_err(|e| crate::EngineError::Other(format!("; error: {}", e.msg)))?;
-        self.lisp_start(Machine::forms(forms), print, blocking, inputs, "LISP".into())
+        self.lisp_start(Machine::forms(forms), print, blocking, inputs, "LISP".into(), false)
+    }
+
+    /// Evaluate an expression typed at a command's prompt, whose value is the answer: it runs to
+    /// the end as a programmatic call does, within [`ANSWER_CAP`] steps.
+    pub(crate) fn lisp_eval_answer(&mut self, src: &str) -> crate::Result<Option<std::result::Result<Value, String>>> {
+        let forms = read::read_all(src).map_err(|e| crate::EngineError::Other(format!("; error: {}", e.msg)))?;
+        self.lisp_start(Machine::forms(forms), false, true, Vec::new(), "LISP".into(), true)
     }
 
     /// Call a LISP function (`c:` commands typed at the command line).
     fn lisp_call(&mut self, f: Value, label: String) -> crate::Result<Option<std::result::Result<Value, String>>> {
-        self.lisp_start(Machine::calling(f, Vec::new()), false, false, Vec::new(), label)
+        self.lisp_start(Machine::calling(f, Vec::new()), false, false, Vec::new(), label, false)
     }
 
     fn lisp_start(
@@ -254,6 +302,7 @@ impl Session {
         blocking: bool,
         inputs: Vec<Value>,
         label: String,
+        answer: bool,
     ) -> crate::Result<Option<std::result::Result<Value, String>>> {
         if self.lisp.active {
             return Err(crate::EngineError::Other("a LISP routine is already running".into()));
@@ -272,6 +321,7 @@ impl Session {
             before,
             inputs: inputs.into(),
             blocking,
+            answer,
             steps: 0,
             handler: false,
             string_bytes: 0,
@@ -330,11 +380,21 @@ impl Session {
             let mut env = self.lisp_env_take();
             value::set_string_budget(run.string_bytes, self.lisp.limits.string_bytes);
             value::set_cell_limit(self.lisp.limits.cells.max(run.cells_at_start));
+            // What the routine feeds the command line is the program's input: the command it
+            // starts, even when another one is running and the token reaches
+            // [`Session::typed`] first, never opens a dialog. Restored after the slice, a panic
+            // in it included, so a person's later command keeps its own origin.
+            let program_input = std::mem::replace(&mut self.program_input, true);
+            // Set for every slice (callbacks run only inside one). An answer's callbacks
+            // (`vl-sort`'s comparator…) run inside one of its steps: they share what is left of
+            // its allowance instead of each taking a callback's own.
+            self.lisp.callback_ceiling = run.answer.then(|| self.lisp.callback_used.saturating_add(ANSWER_CAP.saturating_sub(run.steps)));
             let outcome = {
                 let machine = &mut run.machine;
                 let mut ctx = Ctx { s: self, env: &mut env, depth: 0 };
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| machine.run(&mut ctx, SLICE)))
             };
+            self.program_input = program_input;
             run.string_bytes = value::string_bytes_used();
             let outcome = match outcome {
                 Ok(o) => o,
@@ -353,6 +413,26 @@ impl Session {
             let uid = run.uid;
             self.lisp_flush(&mut env, false);
             self.lisp_env_put(uid, env);
+            // The work the slice did, which one step can take far past the slice. After a panic
+            // `used` is still the previous slice's; the run ends with the error anyway.
+            run.steps = run.steps.saturating_add(run.machine.used);
+            // An answer that failed past its cap was stopped by the cap too: a callback that ran
+            // out of what was left ends here past the cap, since the step that called it counts.
+            let past_cap = if run.answer {
+                run.steps > ANSWER_CAP && matches!(outcome, Outcome::Wait(_) | Outcome::Error(_))
+            } else {
+                run.steps > BLOCKING_CAP && matches!(outcome, Outcome::Wait(_))
+            };
+            if run.blocking && past_cap {
+                let msg = if run.answer {
+                    format!("expression at a prompt stopped after {ANSWER_CAP} steps; run long routines at Command:, where Esc stops them")
+                } else {
+                    format!("routine stopped after {BLOCKING_CAP} steps")
+                };
+                self.lisp.run = Some(run);
+                self.lisp_error(LispError::quit(msg));
+                return;
+            }
             match outcome {
                 Outcome::Done(v) => {
                     self.lisp.run = Some(run);
@@ -365,13 +445,7 @@ impl Session {
                     return;
                 }
                 Outcome::Wait(Need::Yield) => {
-                    run.steps = run.steps.saturating_add(SLICE);
                     if run.blocking {
-                        if run.steps > BLOCKING_CAP {
-                            self.lisp.run = Some(run);
-                            self.lisp_error(LispError::quit(format!("routine stopped after {BLOCKING_CAP} steps")));
-                            return;
-                        }
                         self.lisp.run = Some(run);
                         continue;
                     }
@@ -415,9 +489,12 @@ impl Session {
 
     /// Move printed text to the command history: complete lines, and with `all` the rest too.
     fn lisp_flush(&mut self, env: &mut Env, all: bool) {
-        while let Some(i) = env.out.find('\n') {
-            let line: String = env.out.drain(..=i).collect();
-            let line = line.trim_end_matches(['\n', '\r']).to_string();
+        // One pass over the buffer, dropping the printed lines once at the end: draining each line
+        // from the front shifted the rest every time, quadratic in newline-dense output.
+        let mut done = 0;
+        while let Some(i) = env.out.get(done..).and_then(|rest| rest.find('\n')) {
+            let line = env.out.get(done..done + i).unwrap_or_default().trim_end_matches('\r').to_string();
+            done += i + 1;
             // `(princ "\nText")` after a prompt or a command's echo ends that line instead of
             // leaving an empty one; after LISP's own line it does print an empty line.
             if line.is_empty() && env.printed_at != Some(self.log.len()) {
@@ -427,6 +504,7 @@ impl Session {
             self.echo(line);
             env.printed_at = Some(self.log.len());
         }
+        env.out.drain(..done);
         if all && !env.out.is_empty() {
             let line = std::mem::take(&mut env.out);
             self.echo(line);
@@ -441,7 +519,7 @@ impl Session {
         let steps = std::mem::take(&mut self.lisp.steps);
         let mut env = self.lisp.envs.remove(&run.uid).unwrap_or_default();
         self.lisp_flush(&mut env, true);
-        self.lisp.envs.insert(run.uid, env);
+        self.lisp_env_put(run.uid, env);
         if let (Ok(v), true) = (&result, run.print) {
             let text = value::to_text(v, true);
             if !builtins::is_null_symbol(v) {
@@ -524,7 +602,7 @@ impl Session {
     /// A routine waits for the user's answer to a `get…` function: its prompt.
     pub(crate) fn lisp_prompt(&self) -> Option<Prompt> {
         match self.lisp.run.as_ref()?.waiting.as_ref()? {
-            Need::Get(req) => Some(req.prompt()),
+            Need::Get(req) => Some(req.prompt(&self.input_ucs())),
             _ => None,
         }
     }
@@ -535,10 +613,15 @@ impl Session {
         let Need::Get(req) = self.lisp.run.as_ref()?.waiting.as_ref()? else { return None };
         let line =
             |a: cadcraft_geom::Vec2, b: cadcraft_geom::Vec2| cadcraft_doc::EntityKind::Line(cadcraft_doc::Line { a: a.to3(0.0), b: b.to3(0.0) });
-        let Some(b) = req.first.or(req.base).map(|p| cadcraft_geom::Vec2::new(p[0], p[1])) else { return Some(Vec::new()) };
+        // The base is a UCS point (as the routine gave it); the preview is drawn in world space.
+        let ucs = self.input_ucs();
+        let Some(bu) = req.first.or(req.base).map(|p| cadcraft_geom::Vec2::new(p[0], p[1])) else { return Some(Vec::new()) };
+        let b = ucs.to_wcs(bu);
         Some(match req.kind {
             input::GetKind::Corner => {
-                let (c1, c2) = (cadcraft_geom::Vec2::new(cursor.x, b.y), cadcraft_geom::Vec2::new(b.x, cursor.y));
+                // The rectangle runs along the UCS axes, as the corner it returns is measured.
+                let cu = ucs.to_ucs(cursor);
+                let (c1, c2) = (ucs.to_wcs(cadcraft_geom::Vec2::new(cu.x, bu.y)), ucs.to_wcs(cadcraft_geom::Vec2::new(bu.x, cu.y)));
                 vec![line(b, c1), line(c1, cursor), line(cursor, c2), line(c2, b)]
             }
             input::GetKind::Point | input::GetKind::Dist | input::GetKind::Angle { .. } => vec![line(b, cursor)],
@@ -717,6 +800,8 @@ fn file_key(name: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod ucs_tests;
 
 #[cfg(test)]
 mod block_tests;

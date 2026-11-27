@@ -212,6 +212,7 @@ fn whole_drawings_are_told_from_cut_off_ones() {
 /// in a 2018 and a 2000 file, it doesn't replace the good backup; whole, it does.
 #[test]
 fn a_dwg_cut_off_anywhere_keeps_the_good_backup() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let _saving = saving();
     hooks();
     for version in [2018, 2000] {

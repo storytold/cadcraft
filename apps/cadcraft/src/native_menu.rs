@@ -15,6 +15,9 @@ pub struct NativeMenu {
     items: HashMap<String, (String, String, MenuItem)>,
     submenus: Vec<(String, Submenu)>,
     predefined: Vec<(&'static str, PredefinedMenuItem)>,
+    /// Quit CADCraft: a close request of the main window, so unsaved drawings are asked about first.
+    /// muda's predefined Quit ends the process through `terminate:` without asking.
+    quit: MenuItem,
     language: &'static str,
     /// Monotonic time of the last enablement refresh. `NEG_INFINITY` makes the first poll refresh
     /// immediately: `now_ms` starts near zero, so the old `0.0` sentinel suppressed the first
@@ -58,7 +61,6 @@ impl NativeMenu {
             ("Hide CADCraft", PredefinedMenuItem::hide(Some(i18n::tr(language, "Hide CADCraft")))),
             ("Hide Others", PredefinedMenuItem::hide_others(Some(i18n::tr(language, "Hide Others")))),
             ("Show All", PredefinedMenuItem::show_all(Some(i18n::tr(language, "Show All")))),
-            ("Quit CADCraft", PredefinedMenuItem::quit(Some(i18n::tr(language, "Quit CADCraft")))),
         ];
         // The Mac place for preferences: CADCraft ▸ Settings… (⌘,) opens the Options dialog.
         let settings = MenuItem::with_id("cc-settings", i18n::tr(language, "Settings..."), true, accel("Cmd+Comma"));
@@ -69,6 +71,8 @@ impl NativeMenu {
                 let _ = app_menu.append(&PredefinedMenuItem::separator());
             }
         }
+        let quit = MenuItem::with_id(craft_quit::QUIT_MENU_ID, i18n::tr(language, "Quit CADCraft"), true, accel("Cmd+Q"));
+        let _ = app_menu.append(&quit);
         items.insert("cc-about".into(), ("ui.dialog.about".into(), "About CADCraft".into(), about));
         items.insert("cc-discord".into(), ("ui.discord".into(), "Join the ArtCraft Discord…".into(), discord));
         items.insert("cc-settings".into(), ("options".into(), "Settings...".into(), settings));
@@ -85,6 +89,7 @@ impl NativeMenu {
             items,
             submenus,
             predefined,
+            quit,
             language,
             last_refresh: f64::NEG_INFINITY,
             recent: app.ui.recent_files.clone(),
@@ -114,7 +119,9 @@ impl NativeMenu {
     /// Drain queued menu events into commands (Discord opens externally), rebuild Open Recent, retranslate on a language change and refresh enablement when 300 ms have elapsed.
     pub fn poll(&mut self, app: &mut CadApp, ctx: &egui::Context) {
         while let Ok(ev) = self.events.try_recv() {
-            if let Some((cmd, _, _)) = self.items.get(ev.id.as_ref()) {
+            if craft_quit::on_menu_event(ctx, ev.id.as_ref()) {
+                ctx.request_repaint();
+            } else if let Some((cmd, _, _)) = self.items.get(ev.id.as_ref()) {
                 if cmd == "ui.discord" {
                     ctx.open_url(egui::OpenUrl::new_tab("https://discord.gg/artcraft"));
                 } else {
@@ -133,6 +140,7 @@ impl NativeMenu {
             for (label, item) in &self.predefined {
                 item.set_text(i18n::tr(language, label));
             }
+            self.quit.set_text(i18n::tr(language, "Quit CADCraft"));
             for (label, submenu) in &self.submenus {
                 submenu.set_text(i18n::tr_menu(language, label));
             }
@@ -144,7 +152,12 @@ impl NativeMenu {
         self.last_refresh = now;
         let typing = menus::text_field_window(ctx).is_some();
         for (cmd, _, item) in self.items.values() {
-            let en = (typing && menus::edits_text(cmd)) || cadcraft_engine::find_command(cmd).is_none_or(|c| (c.enabled)(&app.session).is_ok());
+            // Open Recent rebuilds this item with the correct enabled state.
+            if cmd == menus::RECENT_CLEAR {
+                continue;
+            }
+            let en = (typing && menus::edits_text(cmd))
+                || cadcraft_engine::find_command(cmd).is_none_or(|c| cadcraft_ui_egui::clipboard::offered(&app.session, c));
             item.set_enabled(en);
         }
     }

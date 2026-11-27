@@ -13,6 +13,7 @@ mod fill;
 mod hatch;
 mod linetype;
 mod linetype_text;
+mod loops;
 mod mline;
 mod outline;
 pub mod paper;
@@ -100,6 +101,9 @@ struct Ctx<'a> {
     block_pstyle: Option<usize>,
     /// Transparency (percent) of the block reference being expanded, for `ByBlock`.
     block_transparency: u8,
+    /// The block whose contents are being drawn (`None` at the top level): a dimension in it whose
+    /// own block leads back to it is drawn from its definition points (see [`loops`]).
+    block: Option<&'a cadcraft_doc::Block>,
 }
 
 impl Ctx<'_> {
@@ -125,6 +129,18 @@ struct Builder<'a> {
     shared_budget: Option<&'a std::sync::atomic::AtomicUsize>,
     /// Transparency (percent) of the entity being drawn.
     transparency: u8,
+    /// Points (polyline vertices and triangle corners) the whole build has charged so far, shared
+    /// by every part of it: the parts built in parallel, XCLIP parts and viewport contents.
+    points: &'a std::sync::atomic::AtomicUsize,
+    /// The most points the build may hold: [`MAX_DISPLAY_POINTS`] (less in tests).
+    max_points: usize,
+    /// Dash pattern elements the whole build has laid out so far, shared like `points`.
+    dashes: &'a std::sync::atomic::AtomicUsize,
+    /// The most dash pattern elements the build may lay out: [`MAX_DASH_ELEMENTS`] (less in tests).
+    max_dashes: usize,
+    /// The loops of the drawing's block graph, worked out once for the whole build when a search
+    /// near a dimension's block does not settle whether it leads back (see [`loops`]).
+    loops: &'a std::sync::OnceLock<loops::BlockLoops>,
 }
 
 /// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy
@@ -132,6 +148,31 @@ struct Builder<'a> {
 /// references in a hostile file would otherwise expand exponentially (`MAX_BLOCK_DEPTH` only
 /// bounds the depth); past the limit the remaining block contents are not drawn.
 pub const MAX_BLOCK_EXPANSION: usize = 2_000_000;
+
+/// Upper bound on the points (polyline vertices plus triangle corners) one display list holds.
+/// [`MAX_BLOCK_EXPANSION`] counts objects, not their size: two million copies of one finely
+/// tessellated circle, or of a block of hatches and filled text, would otherwise build billions
+/// of points and end the process when memory runs out. Past the limit the remaining objects are
+/// not drawn and [`DisplayList::truncated`] is set. At 16 bytes a point this is 1 GiB, sixteen
+/// times the [`cadcraft_geom::MAX_TESSELLATED_POINTS`] one polyline may sample; a large real
+/// drawing (a million objects with tens of thousands of texts, drawn at screen detail or in full
+/// for a plot) is expected to hold a few tens of millions.
+pub const MAX_DISPLAY_POINTS: usize = 64_000_000;
+
+/// Upper bound on the dash pattern elements one dashed run (a line, an arc, a polyline segment or
+/// a PLINEGEN polyline) is laid out over: a longer pattern repeated more often is drawn
+/// continuous, and [`DisplayList::undashed`] counts it. A plot keeps the dashes of a run of any
+/// number of periods up to this (#1069).
+pub const MAX_RUN_DASH_ELEMENTS: usize = 2_000_000;
+
+/// Upper bound on the dash pattern elements one display list lays out over all its dashed runs.
+/// Each run may visit up to [`MAX_RUN_DASH_ELEMENTS`], and a pattern of mostly gaps visits many
+/// elements for each point it draws, so a small file of many long lines walked millions of
+/// elements per line with nothing to stop it, [`MAX_DISPLAY_POINTS`] included (#1923). The limit is
+/// as many elements as the list may hold points: a dash and its gap make about one point per
+/// element, so a drawing whose dashes fit the point budget keeps them. Past it later dashed runs
+/// are drawn continuous, and [`DisplayList::undashed`] counts them.
+pub const MAX_DASH_ELEMENTS: usize = 64_000_000;
 
 impl<'a> Builder<'a> {
     /// `color` and `lw` as the plot style table prints them.
@@ -152,7 +193,7 @@ impl<'a> Builder<'a> {
         }
     }
     fn polyline(&mut self, ctx: &Ctx, color: Ink, lw: f32, pts: &[Vec2]) {
-        if pts.len() < 2 {
+        if pts.len() < 2 || !self.charge(pts.len()) {
             return;
         }
         self.note_pen(color);
@@ -162,14 +203,15 @@ impl<'a> Builder<'a> {
     /// A one-pixel line in `color` as the plot style prints it, without the style's lineweight
     /// or pen: the centre line drawn on screen over a thin wide polyline.
     fn hairline(&mut self, ctx: &Ctx, color: Ink, pts: &[Vec2]) {
-        if pts.len() < 2 {
+        if pts.len() < 2 || !self.charge(pts.len()) {
             return;
         }
         let (color, _) = self.styled(color, 0.0);
         self.push_polyline(ctx, color, 0.0, pts);
     }
+    /// Push a polyline already charged to the point budget by the caller.
     fn push_polyline(&mut self, ctx: &Ctx, color: Ink, lw: f32, pts: &[Vec2]) {
-        let start = self.list.verts.len() as u32;
+        let (Ok(start), Ok(len)) = (u32::try_from(self.list.verts.len()), u32::try_from(pts.len())) else { return };
         for p in pts {
             let q = ctx.xf.apply(*p);
             self.list.bounds.add(q);
@@ -183,7 +225,7 @@ impl<'a> Builder<'a> {
             transparency: self.transparency,
             kind: Kind::Polyline,
             start,
-            len: pts.len() as u32,
+            len,
         });
     }
     /// The pixels of image `i` over its rectangle, cut to its clip boundary.
@@ -209,6 +251,9 @@ impl<'a> Builder<'a> {
             return;
         }
         let (Ok(index), Ok(start)) = (u32::try_from(self.list.images.len()), u32::try_from(self.list.verts.len())) else { return };
+        if !self.charge(corners.len()) {
+            return;
+        }
         for q in corners {
             self.list.bounds.add(q);
             self.list.verts.push(q);
@@ -232,9 +277,12 @@ impl<'a> Builder<'a> {
         if tris.len() < 3 {
             return;
         }
+        let (Ok(start), Ok(len)) = (u32::try_from(self.list.tris.len()), u32::try_from(tris.len())) else { return };
+        if !self.charge(tris.len()) {
+            return;
+        }
         self.note_pen(color);
         let (color, _) = self.styled(color, 0.0);
-        let start = self.list.tris.len() as u32;
         for p in tris {
             let q = xf.apply(*p);
             self.list.bounds.add(q);
@@ -248,7 +296,7 @@ impl<'a> Builder<'a> {
             transparency: self.transparency,
             kind: Kind::Tris,
             start,
-            len: tris.len() as u32,
+            len,
         });
     }
     /// Shaped text: strokes as polylines; TrueType glyphs filled (TEXTFILL) or outlined.
@@ -263,10 +311,20 @@ impl<'a> Builder<'a> {
         // Plots note which filled outlines are font glyphs (see `DisplayList::texts`).
         let mut text = sh.text.iter().peekable();
         let pixel = if self.plotting { 0.0 } else { self.opts.min_dash * 0.5 };
+        // On screen, glyphs outside the area being looked at are left out, as hatch patterns
+        // are: a text-heavy drawing zoomed in otherwise filled every glyph of every text at the
+        // detail of that zoom (tens of millions of triangles, drawn every frame), and the canvas
+        // builds again when the view leaves the area (#666).
+        let view = if self.plotting { None } else { self.opts.view };
         for (i, g) in sh.glyphs.iter().enumerate() {
             if fill {
                 while text.next_if(|t| t.outline < i).is_some() {}
                 let glyph = text.next_if(|t| t.outline == i);
+                if let (Some(t), Some(v)) = (glyph, view)
+                    && !crate::text::may_show(crate::text::placement(t, ctx.xf), cadcraft_fonts::ttf::glyph_bounds(&t.face, t.gid), &v)
+                {
+                    continue;
+                }
                 let at = self.list.prims.len();
                 let len = if let Some(t) = glyph {
                     let xf = crate::text::placement(t, ctx.xf);
@@ -295,10 +353,13 @@ impl<'a> Builder<'a> {
         }
     }
     fn point(&mut self, ctx: &Ctx, color: Ink, p: Vec2) {
+        let Ok(start) = u32::try_from(self.list.verts.len()) else { return };
+        if !self.charge(1) {
+            return;
+        }
         let (color, _) = self.styled(color, 0.0);
         let q = ctx.xf.apply(p);
         self.list.bounds.add(q);
-        let start = self.list.verts.len() as u32;
         self.list.verts.push(q);
         self.list.prims.push(DPrim {
             handle: ctx.top,
@@ -312,8 +373,11 @@ impl<'a> Builder<'a> {
         });
     }
     fn infinite(&mut self, ctx: &Ctx, color: Ink, base: Vec2, dir: Vec2, ray: bool) {
+        let Ok(start) = u32::try_from(self.list.verts.len()) else { return };
+        if !self.charge(2) {
+            return;
+        }
         let (color, _) = self.styled(color, 0.0);
-        let start = self.list.verts.len() as u32;
         self.list.verts.push(ctx.xf.apply(base));
         self.list.verts.push(ctx.xf.apply_vec(dir).normalized());
         self.list.prims.push(DPrim {
@@ -340,19 +404,62 @@ impl<'a> Builder<'a> {
             named: self.named,
             shared_budget: self.shared_budget,
             transparency: self.transparency,
+            points: self.points,
+            max_points: self.max_points,
+            dashes: self.dashes,
+            max_dashes: self.max_dashes,
+            loops: self.loops,
         }
     }
-    /// Take one unit of the block-expansion budget; false once it is spent.
+    /// Whether block `to` leads back to block `from` in `d`, the drawing being built (see
+    /// [`loops`]).
+    fn leads_back(&self, d: &Drawing, from: &cadcraft_doc::Block, to: &cadcraft_doc::Block) -> bool {
+        loops::leads_back(d, self.loops, from, to)
+    }
+    /// Take one unit of the block-expansion budget; false once it is spent, or once the build
+    /// holds all the points it may ([`MAX_DISPLAY_POINTS`]), so block copies stop being visited.
     fn expand(&mut self) -> bool {
         self.list.expanded = self.list.expanded.saturating_add(1);
-        let ok = match self.shared_budget {
-            Some(spent) => spent.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < MAX_BLOCK_EXPANSION,
-            None => self.list.expanded <= MAX_BLOCK_EXPANSION,
-        };
+        let ok = !self.points_spent()
+            && match self.shared_budget {
+                Some(spent) => spent.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < MAX_BLOCK_EXPANSION,
+                None => self.list.expanded <= MAX_BLOCK_EXPANSION,
+            };
         if !ok {
             self.list.truncated = true;
         }
         ok
+    }
+    /// Whether the build holds all the points it may: nothing more is drawn.
+    fn points_spent(&self) -> bool {
+        self.points.load(std::sync::atomic::Ordering::Relaxed) >= self.max_points
+    }
+    /// Charge `n` points to the build's [`MAX_DISPLAY_POINTS`] budget before they are pushed;
+    /// false (and the list marked truncated) when they don't fit, and nothing is pushed. Once the
+    /// budget is spent nothing more is added to the count, so it stays within the limit plus one
+    /// primitive per thread building in parallel.
+    fn charge(&mut self, n: usize) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        let ok = !self.points_spent() && self.points.fetch_add(n, Relaxed).saturating_add(n) <= self.max_points;
+        if !ok {
+            self.list.truncated = true;
+        }
+        ok
+    }
+}
+
+/// The build's dash budget ([`MAX_DASH_ELEMENTS`]), charged as [`Builder::charge`] charges
+/// points: once a run does not fit, the count is past the limit and every later run is drawn
+/// continuous. The runs laid out never pass the limit; the count itself passes it by at most one
+/// run per thread building in parallel.
+impl linetype::Budget for Builder<'_> {
+    fn take(&mut self, visits: usize) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.dashes.load(Relaxed) < self.max_dashes && self.dashes.fetch_add(visits, Relaxed).saturating_add(visits) <= self.max_dashes
+    }
+    fn refused(&mut self) {
+        self.list.undashed = self.list.undashed.saturating_add(1);
+        self.list.truncated = true;
     }
 }
 
@@ -390,7 +497,7 @@ pub use display::{DImage, DPrim, DisplayList, Kind, MAX_TRANSPARENCY, NO_LAYER, 
 pub use pipeline::{Options, build, build_entities, build_plot};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;
-pub use text_entity::{layout_mtext_entity, place_text_entity, style_font, text_align};
+pub use text_entity::{fitted_text_entity, layout_mtext_entity, place_text_entity, style_font, text_align};
 use viewports::{Clip, append_clipped_keep};
 pub use viewports::{clip_list, viewport_clip, viewport_content};
 

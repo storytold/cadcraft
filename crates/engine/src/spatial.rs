@@ -53,7 +53,8 @@ impl ChunkIx {
                 if matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_)) {
                     infinite.push(u32::try_from(i).unwrap_or(u32::MAX));
                 }
-                entity_bounds_cached(d, e, 0, &mut cache)
+                let b = entity_bounds_cached(d, e, 0, &mut cache);
+                crate::select::pick_bounds(d, e, b)
             })
             .collect();
         let serial = NEXT_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -160,8 +161,8 @@ impl SpatialIndex {
         let infinite = chunks.iter().flat_map(|(off, c)| c.infinite.iter().map(move |i| off + i)).collect();
         SpatialIndex {
             store: store.clone(),
-            blocks: d.blocks.clone(),
-            dim_styles: d.dim_styles.clone(),
+            blocks: (*d.blocks).clone(),
+            dim_styles: d.dim_styles.to_vec(),
             dimscale: d.header.f64("DIMSCALE", 1.0),
             anno: anno_key(d),
             hidden_layers: hidden_layers(d).map(str::to_owned).collect(),
@@ -177,7 +178,7 @@ impl SpatialIndex {
         self.blocks.len() == d.blocks.len()
             && self.blocks.iter().zip(&d.blocks).all(|((ka, a), (kb, b))| ka == kb && Arc::ptr_eq(a, b))
             && self.dimscale.to_bits() == d.header.f64("DIMSCALE", 1.0).to_bits()
-            && self.dim_styles == d.dim_styles
+            && self.dim_styles == *d.dim_styles
             && self.anno == anno_key(d)
             && self.hidden_layers.iter().map(String::as_str).eq(hidden_layers(d))
     }
@@ -424,8 +425,8 @@ mod tests {
             for k in 0..400 {
                 let p = Vec2::new(r.r(-5.0, 105.0), r.r(-5.0, 105.0));
                 let ap = [0.05, 0.3, 1.5][k % 3];
-                let a = select::pick_with(&d, &Space::Model, &ix, p, ap);
-                let b = select::pick_with(&d, &Space::Model, &None, p, ap);
+                let a = select::pick_with(&d, &Space::Model, &ix, &[], p, ap);
+                let b = select::pick_with(&d, &Space::Model, &None, &[], p, ap);
                 assert_eq!(a, b, "seed {seed} p {p:?} ap {ap}");
                 hits += usize::from(a.is_some());
             }
@@ -444,12 +445,15 @@ mod tests {
                 let b = a + Vec2::new(r.r(-40.0, 40.0), r.r(-40.0, 40.0));
                 let bx = Bounds2::new(a, b);
                 for crossing in [false, true] {
-                    let x = select::select_window_with(&d, &Space::Model, &ix, bx, crossing);
-                    let y = select::select_window_with(&d, &Space::Model, &None, bx, crossing);
+                    let x = select::select_window_with(&d, &Space::Model, &ix, &[], bx, crossing);
+                    let y = select::select_window_with(&d, &Space::Model, &None, &[], bx, crossing);
                     assert_eq!(x, y, "seed {seed} box {bx:?} crossing {crossing}");
                 }
                 let fence: Vec<Vec2> = (0..(2 + k % 3)).map(|_| Vec2::new(r.r(0.0, 100.0), r.r(0.0, 100.0))).collect();
-                assert_eq!(select::select_fence_with(&d, &Space::Model, &ix, &fence), select::select_fence_with(&d, &Space::Model, &None, &fence));
+                assert_eq!(
+                    select::select_fence_with(&d, &Space::Model, &ix, &[], &fence),
+                    select::select_fence_with(&d, &Space::Model, &None, &[], &fence)
+                );
             }
         }
     }
@@ -484,10 +488,13 @@ mod tests {
         for (p, ap) in
             [(Vec2::new(f64::NAN, 1.0), 1.0), (Vec2::new(1.0, 1.0), f64::NAN), (Vec2::new(f64::INFINITY, 0.0), 1.0), (Vec2::new(50.0, 50.0), 1e300)]
         {
-            assert_eq!(select::pick_with(&d, &Space::Model, &ix, p, ap), select::pick_with(&d, &Space::Model, &None, p, ap));
+            assert_eq!(select::pick_with(&d, &Space::Model, &ix, &[], p, ap), select::pick_with(&d, &Space::Model, &None, &[], p, ap));
         }
         let bx = Bounds2 { min: Vec2::new(f64::NEG_INFINITY, 0.0), max: Vec2::new(f64::INFINITY, 50.0) };
-        assert_eq!(select::select_window_with(&d, &Space::Model, &ix, bx, true), select::select_window_with(&d, &Space::Model, &None, bx, true));
+        assert_eq!(
+            select::select_window_with(&d, &Space::Model, &ix, &[], bx, true),
+            select::select_window_with(&d, &Space::Model, &None, &[], bx, true)
+        );
     }
 
     #[test]

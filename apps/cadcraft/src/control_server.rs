@@ -4,8 +4,9 @@
 //! The server only reads requests: a line that is not a JSON object with a string `method` (an
 //! HTTP request line, a stray `nc`, binary data) gets one error reply and the connection is
 //! closed, so nothing sent after it runs. Every resource a client can hold is bounded
-//! ([`Limits`]): simultaneous connections, request line length, queued requests, and how long a
-//! socket may sit idle or blocked on a write.
+//! ([`Limits`]): simultaneous connections, request line length (shorter until a request on the
+//! connection has carried the token), queued requests, and how long a socket may sit idle or
+//! blocked on a write.
 
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
@@ -24,6 +25,9 @@ struct Limits {
     max_clients: usize,
     /// Longest request line in bytes (newline excluded); a longer one closes the connection.
     max_line: usize,
+    /// Longest request line until a request on the connection has carried the right token; a
+    /// longer one closes the connection (#1925).
+    preauth_line: usize,
     /// Request-line bytes buffered at once across all connections; a request that would pass it
     /// is refused with an error reply.
     total_bytes: usize,
@@ -43,6 +47,7 @@ impl Default for Limits {
             max_clients: 16,
             // Generous, so requests that carry whole drawings or images as base64 still fit.
             max_line: 256 * 1024 * 1024,
+            preauth_line: cadcraft_mcp::control_token::MAX_UNAUTHENTICATED_LINE,
             // Room for one maximal request plus smaller ones, not `max_clients` maximal ones.
             total_bytes: 512 * 1024 * 1024,
             queue: 64,
@@ -221,12 +226,17 @@ fn read_bounded_line(reader: &mut impl BufRead, buf: &mut Vec<u8>, max: usize, h
     }
 }
 
+/// Longest request `id` (it is copied into the reply).
+const MAX_ID_BYTES: usize = 4096;
+
 /// One request line, parsed.
-enum Line {
+enum Line<'a> {
     Request {
         id: Value,
         method: String,
-        params: Value,
+        /// Left as text until the token is checked: decoding it first would let an unauthenticated
+        /// peer turn a flat array into many owned JSON values.
+        params: Option<&'a serde_json::value::RawValue>,
         token: Option<String>,
     },
     Blank,
@@ -235,7 +245,7 @@ enum Line {
 }
 
 /// Parse a UTF-8 JSON request and its optional token, distinguishing blank lines from rejected input.
-fn parse_line(bytes: &[u8]) -> Line {
+fn parse_line(bytes: &[u8]) -> Line<'_> {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return Line::Reject("not a control request (invalid UTF-8); closing the connection".into());
     };
@@ -246,21 +256,78 @@ fn parse_line(bytes: &[u8]) -> Line {
     if is_http_request_line(text) {
         return Line::Reject("HTTP is not served here: this port takes JSON lines; closing the connection".into());
     }
-    let msg = match serde_json::from_str::<Value>(text) {
-        Ok(v) => v,
-        Err(e) => return Line::Reject(format!("bad JSON ({e}); expected one JSON request object per line; closing the connection")),
-    };
-    let Some(obj) = msg.as_object() else {
+    // Checked without building values; then only the object's own keys are read, each value kept as text.
+    if let Err(e) = serde_json::from_str::<&serde_json::value::RawValue>(text) {
+        return Line::Reject(format!("bad JSON ({e}); expected one JSON request object per line; closing the connection"));
+    }
+    let Ok(obj) = serde_json::from_str::<Fields<'_>>(text) else {
         return Line::Reject("not a control request (expected a JSON object); closing the connection".into());
     };
-    let Some(method) = obj.get("method").and_then(Value::as_str) else {
+    // `method` and `token` are decoded as strings only (anything else is no string); `id` is echoed back
+    // in replies, so it is decoded but bounded.
+    let string = |v: Option<&serde_json::value::RawValue>| v.and_then(|r| serde_json::from_str::<String>(r.get()).ok());
+    let Some(method) = string(obj.method) else {
         return Line::Reject("not a control request (missing string `method`); closing the connection".into());
     };
-    Line::Request {
-        id: obj.get("id").cloned().unwrap_or(Value::Null),
-        method: method.to_string(),
-        params: obj.get("params").cloned().unwrap_or(json!({})),
-        token: obj.get("token").and_then(Value::as_str).map(str::to_string),
+    let id = match obj.id {
+        None => Value::Null,
+        Some(r) if r.get().len() <= MAX_ID_BYTES => match serde_json::from_str(r.get()) {
+            Ok(v) => v,
+            Err(e) => return Line::Reject(format!("bad `id` ({e}); closing the connection")),
+        },
+        Some(_) => return Line::Reject(format!("`id` is longer than {MAX_ID_BYTES} bytes; closing the connection")),
+    };
+    Line::Request { id, method, params: obj.params, token: string(obj.token) }
+}
+
+/// The request object's own keys, each value kept as JSON text. Other keys are skipped without
+/// being stored: collecting them (in a map) would let an unauthenticated peer turn a line of many
+/// short distinct keys into many owned strings and map nodes. A repeated key takes the last value.
+#[derive(Default)]
+struct Fields<'a> {
+    id: Option<&'a serde_json::value::RawValue>,
+    method: Option<&'a serde_json::value::RawValue>,
+    params: Option<&'a serde_json::value::RawValue>,
+    token: Option<&'a serde_json::value::RawValue>,
+}
+
+impl<'de> serde::Deserialize<'de> for Fields<'de> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        #[serde(field_identifier, rename_all = "lowercase")]
+        enum Key {
+            Id,
+            Method,
+            Params,
+            Token,
+            #[serde(other)]
+            Other,
+        }
+        struct Object;
+        impl<'de> serde::de::Visitor<'de> for Object {
+            type Value = Fields<'de>;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a JSON object")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut fields = Fields::default();
+                while let Some(key) = map.next_key::<Key>()? {
+                    let slot = match key {
+                        Key::Id => &mut fields.id,
+                        Key::Method => &mut fields.method,
+                        Key::Params => &mut fields.params,
+                        Key::Token => &mut fields.token,
+                        Key::Other => {
+                            map.next_value::<serde::de::IgnoredAny>()?;
+                            continue;
+                        }
+                    };
+                    *slot = Some(map.next_value()?);
+                }
+                Ok(fields)
+            }
+        }
+        d.deserialize_map(Object)
     }
 }
 
@@ -282,12 +349,21 @@ fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context
     let mut reader = BufReader::new(read);
     let mut buf = Vec::new();
     let mut held = Held::new(budget);
+    // The token is checked only after the whole line is read, so until a request here has carried
+    // it a line is kept short: a peer without it can't make the app buffer `max_line` (#1925).
+    let mut authenticated = false;
     loop {
-        let reject = match read_bounded_line(&mut reader, &mut buf, limits.max_line, &mut held) {
+        let max = if authenticated { limits.max_line } else { limits.preauth_line.min(limits.max_line) };
+        let reject = match read_bounded_line(&mut reader, &mut buf, max, &mut held) {
             Ok(false) => break,
             // Nothing of a line arrived (idle timeout, or the peer is gone): close without a word.
             // A line nobody asked for would be read as the reply to the client's next request.
             Err(_) if buf.is_empty() => break,
+            // Only an overlong line leaves more than `max` bytes buffered.
+            Err(_) if !authenticated && buf.len() > max => format!(
+                "request line longer than {max} bytes before a request with the control token on this connection; \
+                 send a short request with the token (such as `ping`) first; closing the connection"
+            ),
             Err(e) => e,
             Ok(true) => match parse_line(&buf) {
                 Line::Blank => continue,
@@ -304,6 +380,17 @@ fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context
                         let _ = writeln!(out, "{r}");
                         break;
                     }
+                    authenticated = true;
+                    // Absent `params` is `{}`; ones that cannot be decoded (an unpaired surrogate escape) are an
+                    // error, not a request run with defaults.
+                    let params = match params.map(|r| serde_json::from_str::<Value>(r.get())) {
+                        None => json!({}),
+                        Some(Ok(v)) => v,
+                        Some(Err(e)) => {
+                            let _ = writeln!(out, "{}", json!({"ok": false, "error": format!("bad params ({e}); closing the connection"), "id": id}));
+                            break;
+                        }
+                    };
                     let (req, pending) = ControlRequest::new(method, params);
                     let mut r = match tx.try_send(req) {
                         Ok(()) => {
@@ -371,6 +458,36 @@ mod tests {
         assert_eq!(input.len(), 100 - 11, "the rest of the line is left unread");
     }
 
+    /// The parameters stay text until the token is checked, and a request decodes as before.
+    #[test]
+    fn params_are_decoded_only_as_text_by_the_parser() {
+        let line = br#"{"id":7,"method":"m","token":"t","params":[1,2,{"a":[3]}],"extra":null}"#;
+        let Line::Request { id, method, params, token } = parse_line(line) else { panic!("a request") };
+        assert_eq!((id, method.as_str(), token.as_deref()), (json!(7), "m", Some("t")));
+        assert_eq!(params.map(|p| p.get()), Some(r#"[1,2,{"a":[3]}]"#));
+        assert!(matches!(parse_line(b"[1,2,3]"), Line::Reject(e) if e.contains("expected a JSON object")));
+        assert!(matches!(parse_line(b"{\"method\":"), Line::Reject(e) if e.contains("bad JSON")));
+        assert!(matches!(parse_line(br#"{"id":[1],"method":5}"#), Line::Reject(e) if e.contains("missing string `method`")));
+        let long_id = format!(r#"{{"id":"{}","method":"m"}}"#, "x".repeat(MAX_ID_BYTES));
+        assert!(matches!(parse_line(long_id.as_bytes()), Line::Reject(e) if e.contains("`id` is longer")));
+        assert!(matches!(parse_line(br#"{"id":"\ud800","method":"m"}"#), Line::Reject(e) if e.contains("bad `id`")));
+        assert!(matches!(parse_line(br#"{"id":1}"#), Line::Reject(e) if e.contains("missing string `method`")));
+    }
+
+    /// Keys other than the request's own are skipped, not kept, however many there are; a repeated
+    /// key still takes the last value, and an escaped key name is the same key.
+    #[test]
+    fn unknown_keys_are_skipped_and_the_last_repeated_key_wins() {
+        let mut line = String::from(r#"{"method":"first","#);
+        for i in 0..100_000 {
+            line.push_str(&format!(r#""k{i}":{i},"#));
+        }
+        line.push_str(r#""method":"m","params":{"a":1},"params":[2],"token":"t"}"#);
+        let Line::Request { id, method, params, token } = parse_line(line.as_bytes()) else { panic!("a request") };
+        assert_eq!((id, method.as_str(), token.as_deref()), (Value::Null, "m", Some("t")));
+        assert_eq!(params.map(|p| p.get()), Some("[2]"));
+    }
+
     fn held() -> Held {
         Held::new(Budget::new(usize::MAX))
     }
@@ -397,7 +514,12 @@ mod tests {
 
     /// The control server on a loopback port, with a stand-in UI that echoes each method.
     fn serve_echo() -> std::net::SocketAddr {
-        let (addr, rx) = serve_with(Limits::default());
+        serve_echo_with(Limits::default())
+    }
+
+    /// [`serve_echo`] under `limits`.
+    fn serve_echo_with(limits: Limits) -> std::net::SocketAddr {
+        let (addr, rx) = serve_with(limits);
         std::thread::spawn(move || {
             for req in rx {
                 let _ = req.reply.send(json!({"ok": true, "method": req.method}));
@@ -508,6 +630,60 @@ mod tests {
         assert_eq!(v["ok"], json!(false));
         assert!(v["error"].as_str().unwrap_or("").contains("too many large requests"), "{line}");
         drop(first);
+    }
+
+    /// Small bounds for the pre-authentication tests: lines up to 1000 bytes until the connection
+    /// has shown the token, up to 100 000 after.
+    fn preauth() -> Limits {
+        Limits { max_line: 100_000, preauth_line: 1000, idle_timeout: Duration::from_secs(5), ..short() }
+    }
+
+    /// A request line carrying the test token whose parameters make it `len` bytes or longer.
+    fn long_req_line(id: i64, len: usize) -> String {
+        json!({"id": id, "method": "long", "params": {"text": "x".repeat(len)}, "token": TEST_TOKEN}).to_string() + "\n"
+    }
+
+    /// A peer without the token is refused once its line passes the pre-authentication bound,
+    /// while it is still sending: the app doesn't buffer the rest of the line to find the token
+    /// at its end (#1925).
+    #[test]
+    fn an_unauthenticated_long_line_is_refused_at_the_preauth_bound() {
+        let (addr, rx) = serve_with(preauth());
+        let mut c = TcpStream::connect(addr).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        // Well under `max_line`, and unfinished: without the pre-authentication bound the server
+        // keeps reading and waiting for the rest of it. One write, so it all reaches the server's
+        // buffer at once and the close after the refusal leaves nothing unread to reset the reply.
+        let unfinished = format!(r#"{{"id":1,"method":"m","params":"{}"#, "x".repeat(5000));
+        c.write_all(unfinished.as_bytes()).unwrap();
+        let mut line = String::new();
+        BufReader::new(&mut c).read_line(&mut line).unwrap();
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["ok"], json!(false));
+        assert!(v["error"].as_str().unwrap_or("").contains("longer than 1000 bytes before a request with the control token"), "{line}");
+        assert!(rx.try_recv().is_err(), "nothing was dispatched");
+    }
+
+    /// A long request with the token is taken once a shorter request with the token has been
+    /// answered on the same connection; as a connection's first line it is refused, since its
+    /// token comes only at the end.
+    #[test]
+    fn a_long_request_is_taken_once_the_connection_has_shown_the_token() {
+        let addr = serve_echo_with(preauth());
+        let long = long_req_line(2, 5000);
+        let first = exchange(addr, long.as_bytes());
+        assert_eq!(first.len(), 1, "{first:?}");
+        assert!(first[0]["error"].as_str().unwrap_or("").contains("before a request with the control token"), "{first:?}");
+        let mut c = TcpStream::connect(addr).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        c.write_all(format!("{}{long}", req_line(1, "ping")).as_bytes()).unwrap();
+        let mut r = BufReader::new(c);
+        for (id, method) in [(1, "ping"), (2, "long")] {
+            let mut line = String::new();
+            r.read_line(&mut line).unwrap();
+            let v: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!((v["id"].as_i64(), v["ok"].as_bool(), v["method"].as_str()), (Some(id), Some(true), Some(method)), "{line}");
+        }
     }
 
     #[test]

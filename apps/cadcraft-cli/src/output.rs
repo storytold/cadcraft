@@ -145,14 +145,21 @@ pub(crate) fn export(s: &Session, out: &Path, io: &mut Streams) -> Result {
 
 pub(crate) fn export_framed(s: &Session, out: &Path, window: Option<Bounds2>, io: &mut Streams) -> Result {
     let d = s.doc()?;
-    let bytes = cadcraft_io::write_framed(d, out, window)?;
+    let (bytes, notes) = cadcraft_io::write_framed_noted(d, out, window)?;
     let folder = write_atomic(out, &bytes)?;
     report_new_folder(folder, io);
     io.errln(format_args!("wrote {} ({} bytes)", out.display(), bytes.len()));
+    // What the image draws short of the drawing (dashed runs past a dash limit drawn continuous).
+    for note in notes {
+        io.errln(format_args!("{}: {note}", out.display()));
+    }
     if cadcraft_engine::cmd::file::drops_unknown(out) {
         let lost = cadcraft_engine::cmd::file::not_saved(d);
         if let Some(m) = cadcraft_engine::cmd::file::not_saved_message(&lost) {
             io.errln(format_args!("{m}"));
+        }
+        for note in cadcraft_engine::cmd::file::dwg_notes(d) {
+            io.errln(format_args!("{note}"));
         }
     }
     Ok(())
@@ -162,19 +169,35 @@ pub(crate) fn export_framed(s: &Session, out: &Path, window: Option<Bounds2>, io
 /// as unknown objects, `Proxy` in `info`), or `None` when there are none.
 pub(crate) fn undrawn_message(d: &cadcraft_engine::doc::Drawing, path: &str) -> Option<String> {
     let mut types: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut ole = 0usize;
     for e in d.model.iter() {
+        // An OLE2FRAME's frame outline is drawn, so it isn't an undrawn entity; its content is
+        // not, which gets a note of its own.
         if let cadcraft_engine::doc::EntityKind::Unknown(u) = &e.kind {
+            if u.is_ole_frame() && cadcraft_engine::doc::ole_frame(&u.tags).is_some() {
+                ole = ole.saturating_add(1);
+                continue;
+            }
+            // One with proxy graphics draws them (#2697, #3438).
+            if !u.graphics.is_empty() {
+                continue;
+            }
             let n = types.entry(u.dxf_type.as_str()).or_insert(0);
             *n = n.saturating_add(1);
         }
     }
     let n = types.values().fold(0usize, |a, n| a.saturating_add(*n));
-    if n == 0 {
-        return None;
+    let mut lines = Vec::new();
+    if n > 0 {
+        let list: Vec<String> = types.iter().map(|(t, n)| format!("{t}: {n}")).collect();
+        let entities = if n == 1 { "entity" } else { "entities" };
+        lines.push(format!("{path}: {n} {entities} not drawn ({})", list.join(", ")));
     }
-    let list: Vec<String> = types.iter().map(|(t, n)| format!("{t}: {n}")).collect();
-    let entities = if n == 1 { "entity" } else { "entities" };
-    Some(format!("{path}: {n} {entities} not drawn ({})", list.join(", ")))
+    if ole > 0 {
+        let objects = if ole == 1 { "object" } else { "objects" };
+        lines.push(format!("{path}: {ole} OLE {objects} shown as the frame only (the OLE content is not drawn)"));
+    }
+    if lines.is_empty() { None } else { Some(lines.join("\n")) }
 }
 
 /// The reader's notes on what it left out of `path` (a damaged DWG's unreadable object records,

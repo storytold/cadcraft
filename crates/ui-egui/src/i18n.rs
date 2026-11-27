@@ -19,6 +19,8 @@ pub enum Preference {
     Greek,
     #[serde(rename = "uk")]
     Ukrainian,
+    #[serde(rename = "pl")]
+    Polish,
     #[serde(rename = "pt-BR")]
     BrazilianPortuguese,
     #[serde(rename = "de")]
@@ -53,14 +55,16 @@ pub enum Preference {
     Vietnamese,
     #[serde(rename = "th")]
     Thai,
+    #[serde(rename = "ta")]
+    Tamil,
 }
-
 impl Preference {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 23] = [
         Self::Auto,
         Self::English,
         Self::Greek,
         Self::Ukrainian,
+        Self::Polish,
         Self::BrazilianPortuguese,
         Self::German,
         Self::Spanish,
@@ -78,14 +82,15 @@ impl Preference {
         Self::Bosnian,
         Self::Vietnamese,
         Self::Thai,
+        Self::Tamil,
     ];
 
     /// Every preference in the order the Interface Language dialog lists them: Auto, then English
     /// (the source language), then the rest by the language's own name with accents folded, so
     /// Čeština sits under C and Magyar under M. Names in other scripts follow the Latin ones in
-    /// code point order: Greek, Cyrillic, Arabic, Thai, then the CJK languages. The order follows the
-    /// registry's native name even where the dialog shows an English label instead (Korean
-    /// without a Hangul face), so the list does not reorder when a font appears.
+    /// code point order: Greek, Cyrillic, Arabic, Tamil, Thai, Georgian, then the CJK languages. The
+    /// order follows the registry's native name even where the dialog shows an English label
+    /// instead (Korean without a Hangul face), so the list does not reorder when a font appears.
     pub fn for_picker() -> Vec<Self> {
         let mut rest: Vec<Self> = Self::ALL.into_iter().filter(|p| !matches!(p, Self::Auto | Self::English)).collect();
         rest.sort_by_cached_key(|p| name_sort_key(p.native_name()));
@@ -113,6 +118,7 @@ impl Preference {
             Self::English => "en",
             Self::Greek => "el",
             Self::Ukrainian => "uk",
+            Self::Polish => "pl",
             Self::BrazilianPortuguese => "pt-BR",
             Self::German => "de",
             Self::Spanish => "es",
@@ -130,6 +136,7 @@ impl Preference {
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
             Self::Thai => "th",
+            Self::Tamil => "ta",
         }
     }
 
@@ -141,6 +148,7 @@ impl Preference {
             Self::English => "English",
             Self::Greek => "Ελληνικά",
             Self::Ukrainian => "Українська",
+            Self::Polish => "Polski",
             Self::BrazilianPortuguese => "Português (Brasil)",
             Self::German => "Deutsch",
             Self::Spanish => "Español",
@@ -198,6 +206,15 @@ impl Preference {
                     "Thai"
                 }
             }
+            // Its letters need a Tamil font, loaded only in the Tamil interface
+            // ([`crate::theme::shows_tamil`]); elsewhere the picker reads the English name.
+            Self::Tamil => {
+                if crate::theme::shows_tamil(CURRENT.with(Cell::get)) {
+                    "தமிழ்"
+                } else {
+                    "Tamil"
+                }
+            }
         }
     }
 
@@ -217,6 +234,7 @@ impl Preference {
             Self::English => "en",
             Self::Greek => "el",
             Self::Ukrainian => "uk",
+            Self::Polish => "pl",
             Self::BrazilianPortuguese => "pt-BR",
             Self::German => "de",
             Self::Spanish => "es",
@@ -234,6 +252,7 @@ impl Preference {
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
             Self::Thai => "th",
+            Self::Tamil => "ta",
             Self::Auto => locales.iter().find_map(|s| locale_language(s)).unwrap_or("en"),
         }
     }
@@ -250,8 +269,9 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 20] = [
+pub static LANGUAGES: [Language; 22] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
+    Language { code: "pl", name: "Polski", source: include_str!("i18n/pl.tsv"), plural: plural_pl, plural_forms: 3, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
     Language {
         code: "el", name: "Ελληνικά", source: include_str!("i18n/el.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new()
@@ -314,6 +334,11 @@ pub static LANGUAGES: [Language; 20] = [
     // the Noto Sans Thai face embedded from craft-fonts covers them; without one the interface
     // stays English.
     Language { code: "th", name: "ไทย", source: include_str!("i18n/th.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
+    // தமிழ் (Tamil) plurals follow the English rule: one (1), other. Its letters come from an
+    // installed Tamil font or the craft-fonts `Taml` face (`theme::can_show`).
+    Language {
+        code: "ta", name: "தமிழ்", source: include_str!("i18n/ta.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new()
+    },
 ];
 
 /// BCP 47 and POSIX locale tags, including `uk-UA`, `uk_UA.UTF-8` and `pt_BR.UTF-8`.
@@ -408,6 +433,17 @@ pub fn format(source: &str, values: &[(&str, String)]) -> String {
     }
     result.push_str(rest);
     result
+}
+
+/// Polish plurals: one (1), few (2–4, 22–24), many (0, 5–21, 25–31).
+pub fn plural_pl(n: u64) -> usize {
+    if n == 1 {
+        0
+    } else if (2..=4).contains(&(n % 10)) && !(12..=14).contains(&(n % 100)) {
+        1
+    } else {
+        2
+    }
 }
 
 /// Ukrainian integer plurals: one (1, 21), few (2–4, 22–24), many (0, 5–20, 25…).
@@ -520,6 +556,7 @@ mod picker_order_tests {
         assert!(pos(Preference::Bosnian) < pos(Preference::Czech), "Bosanski sorts under B");
         assert!(pos(Preference::Swedish) < pos(Preference::Vietnamese), "Tiếng Việt sorts under T");
         assert!(pos(Preference::Vietnamese) < pos(Preference::Turkish), "Tiếng comes before Türkçe");
+        assert!(pos(Preference::Arabic) < pos(Preference::Tamil) && pos(Preference::Tamil) < pos(Preference::Georgian), "தமிழ் sorts by code point");
         assert_eq!(name_sort_key("Türkçe"), "turkce");
     }
 }

@@ -175,7 +175,7 @@ fn spline_interpolates_fit_points() {
         assert!(d < 0.05, "fit point {f:?} missed by {d}");
     }
     assert!(s.eval(0.0).near(fit[0], 1e-9));
-    assert!(s.eval(1.0).near(fit[4], 1e-9));
+    assert!(s.eval(s.domain().1).near(fit[4], 1e-9));
 }
 
 #[test]
@@ -202,6 +202,62 @@ fn closed_spline_is_smooth_at_the_seam() {
 }
 
 #[test]
+fn periodic_means_the_same_derivative_where_it_closes() {
+    // AutoCAD 2024 sets group 70 bit 2 from the curve: its closed fit spline through (0,0)
+    // (4,0) (6,3) (1,4), made again without fit data, keeps it with clamped knots; with the
+    // second control point moved along the first leg (the same direction, twice as long), or
+    // across it by a fraction of its length, it drops it (accoreconsole, `entmake` + `entget`;
+    // AutoCAD drops it from 1e-11).
+    let control = vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(0.9768273968569969, -0.9075163990404586),
+        Vec2::new(4.110440110427768, -0.7122257786209955),
+        Vec2::new(7.696509078097733, 3.854015801004462),
+        Vec2::new(0.3665121443407813, 5.739691001923484),
+        Vec2::new(-1.006890633809635, 0.9354464925559993),
+        Vec2::new(0.0, 0.0),
+    ];
+    let knots = vec![
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        4.0,
+        7.605551275463989,
+        12.70457078905677,
+        16.82767641467443,
+        16.82767641467443,
+        16.82767641467443,
+        16.82767641467443,
+    ];
+    let s = Spline { degree: 3, knots, control, closed: true, ..Spline::default() };
+    assert!(s.is_valid() && s.is_periodic() && !s.wraps());
+    let leg = s.control[1] - s.control[0];
+    let moved = |to: Vec2| {
+        let mut m = s.clone();
+        m.control[1] = to;
+        m
+    };
+    assert!(!moved(s.control[0] + leg * 2.0).is_periodic(), "the same direction is not enough");
+    let across = Vec2::new(-leg.y, leg.x) * 1e-7;
+    assert!(!moved(s.control[1] + across).is_periodic());
+    // The last two control points moved together: the same derivative, but the ends apart.
+    let mut apart = s.clone();
+    for c in &mut apart.control[5..] {
+        *c += Vec2::new(0.0, 1e-3);
+    }
+    assert!(!apart.is_periodic(), "the ends must meet");
+    assert!(!Spline { closed: false, ..s.clone() }.is_periodic(), "an open spline is not periodic");
+    // Control points that wrap round (unclamped knots) are periodic too.
+    let w = Spline::fit_with(
+        &[Vec2::ZERO, Vec2::new(4.0, 0.0), Vec2::new(2.0, 3.0)],
+        true,
+        crate::FitOptions { knots: crate::KnotParam::SqrtChord, ..Default::default() },
+    );
+    assert!(w.wraps() && w.is_periodic());
+}
+
+#[test]
 fn ellipse_points() {
     let e = Ellipse::full(Vec2::ZERO, Vec2::new(4.0, 0.0), 0.5);
     assert!(e.at_param(PI / 2.0).near(Vec2::new(0.0, 2.0), 1e-9));
@@ -214,18 +270,30 @@ fn segment_offset() {
     let s = Segment::Arc { arc: Arc::new(Vec2::ZERO, 5.0, 0.0, PI), ccw: true };
     let o = s.offset(1.0).unwrap();
     if let Segment::Arc { arc, .. } = o {
-        assert!(close(arc.radius, 4.0))
+        assert!(close(arc.radius, 4.0));
     } else {
         panic!()
     }
     assert!(s.offset(6.0).is_none());
 }
 
+/// A polyline of many fine arcs samples at most the point budget, then draws chords.
+#[test]
+fn polyline_tessellation_is_bounded() {
+    let vertices: Vec<PolyVertex> = (0..3000).map(|i| PolyVertex { bulge: 1.0, ..PolyVertex::new(Vec2::new(f64::from(i) * 1e6, 0.0)) }).collect();
+    let pl = Polyline { vertices, closed: false };
+    let pts = pl.tessellate(1e-9);
+    assert!(pts.len() <= MAX_TESSELLATED_POINTS + 2 * 3000 + 4096, "{}", pts.len());
+    assert!(pts.len() > 3000);
+    let mut budget = 10;
+    assert!(pl.tessellate_within(1e-9, &mut budget).len() <= 4096 + 2 * 3000);
+}
+
 #[test]
 fn arc_segments_bounded() {
     assert_eq!(arc_segments(0.0, 1.0, 0.1), 1);
     assert!(arc_segments(1e9, TAU, 1e-12) <= 4096);
-    assert!(arc_segments(f64::NAN, TAU, 0.1) == 1);
+    assert_eq!(arc_segments(f64::NAN, TAU, 0.1), 1);
 }
 
 #[test]
@@ -329,8 +397,8 @@ fn polyline_area_is_stable_far_from_the_origin() {
 fn shoelace_preserves_small_polygon_area_at_large_coordinates() {
     let o = 1.0e12;
     let corners = [Vec2::new(o, o), Vec2::new(o + 10.0, o), Vec2::new(o + 10.0, o + 10.0), Vec2::new(o, o + 10.0)];
-    assert_eq!(shoelace(&corners), 100.0);
-    assert_eq!(shoelace(&corners.iter().rev().copied().collect::<Vec<_>>()), -100.0);
+    assert_eq!(shoelace(&corners).to_bits(), 100.0_f64.to_bits());
+    assert_eq!(shoelace(&corners.iter().rev().copied().collect::<Vec<_>>()).to_bits(), (-100.0_f64).to_bits());
 }
 
 #[test]

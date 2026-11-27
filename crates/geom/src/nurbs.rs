@@ -8,7 +8,7 @@
 
 use std::f64::consts::FRAC_PI_2;
 
-use crate::spline::{basis, find_span};
+use crate::spline::{MAX_STACK_DEGREE, basis, find_span};
 use crate::{EPS, Ellipse, Spline, TAU, Vec2};
 
 /// Highest degree the editing operations work with.
@@ -44,8 +44,9 @@ const GAUSS: [(f64, f64); 5] = [
     (0.906_179_845_938_664, 0.236_926_885_056_189_1),
 ];
 
+#[expect(clippy::many_single_char_names, reason = "Gauss–Legendre quadrature uses conventional a/b/f/m/h/x/w notation.")]
 fn gauss(a: f64, b: f64, f: impl Fn(f64) -> f64) -> f64 {
-    let (m, h) = ((a + b) / 2.0, (b - a) / 2.0);
+    let (m, h) = (f64::midpoint(a, b), (b - a) / 2.0);
     GAUSS.iter().map(|(x, w)| w * f(m + h * x)).sum::<f64>() * h
 }
 
@@ -55,8 +56,12 @@ const MAX_GAUSS_DEPTH: usize = 10;
 
 /// `gauss` over [a, b], halving until the two halves agree with the whole: a fixed panel count
 /// is far off on a tight bend, and the arc-length inverse must agree with the measure.
+#[expect(
+    clippy::many_single_char_names,
+    reason = "Adaptive quadrature keeps the panel endpoints, midpoint and left/right integrals in mathematical notation."
+)]
 fn adaptive_gauss(a: f64, b: f64, whole: f64, f: &impl Fn(f64) -> f64, depth: usize) -> f64 {
-    let m = (a + b) / 2.0;
+    let m = f64::midpoint(a, b);
     let (l, r) = (gauss(a, m, f), gauss(m, b, f));
     if depth == 0 || !(l + r).is_finite() || (l + r - whole).abs() <= 1e-10 * (l + r).abs() {
         return l + r;
@@ -76,6 +81,7 @@ fn bezier_knots(breaks: &[f64], p: usize) -> Vec<f64> {
 }
 
 /// One degree elevation of a homogeneous Bézier piece.
+#[expect(clippy::cast_precision_loss, reason = "Bézier pieces are bounded by MAX_EDIT_DEGREE, so their control indices are exact as f64.")]
 fn elevate_bezier(p: &[H]) -> Vec<H> {
     let n = p.len();
     let zero = (Vec2::ZERO, 0.0);
@@ -86,6 +92,49 @@ fn elevate_bezier(p: &[H]) -> Vec<H> {
             hlerp(cur, prev, i as f64 / n as f64)
         })
         .collect()
+}
+
+/// A closed spline's fit points in the other direction, still from the seam: the first point
+/// (with its repeats, a kink) stays first and the rest turn round, as AutoCAD 2024's REVERSE
+/// leaves them; a repeated closing point stays last.
+fn reversed_loop(fit: &[Vec2]) -> Vec<Vec2> {
+    let Some(seam) = fit.first().copied() else { return Vec::new() };
+    let at_seam = |q: &&Vec2| q.near(seam, 1e-12);
+    let lead = fit.iter().take_while(at_seam).count();
+    let trail = fit.iter().skip(lead).rev().take_while(at_seam).count();
+    let middle = fit.get(lead..fit.len() - trail).unwrap_or(&[]);
+    let mut out = fit.get(..lead).unwrap_or(&[]).to_vec();
+    out.extend(middle.iter().rev());
+    out.extend(fit.get(fit.len() - trail..).unwrap_or(&[]));
+    out
+}
+
+/// Basis functions of degree `p` in `n[..=p]` and of degree `p - 1` in `lower[..p]` for `p >= 1`,
+/// in one Cox-de Boor sweep: the degree `p - 1` values are the state just before the last step,
+/// so they match [`basis`] exactly. `left` and `right` are scratch of `p + 1` values; the outputs
+/// stay untouched when a slice is too short.
+#[allow(clippy::too_many_arguments)]
+fn basis_pair_into(span: usize, u: f64, p: usize, knots: &[f64], n: &mut [f64], lower: &mut [f64], left: &mut [f64], right: &mut [f64]) {
+    if p == 0 || n.len() <= p || lower.len() < p || left.len() <= p || right.len() <= p {
+        return;
+    }
+    n[0] = 1.0;
+    for j in 1..=p {
+        let k = |i: isize| knots.get(i.max(0) as usize).copied().unwrap_or(0.0);
+        left[j] = u - k(span as isize + 1 - j as isize);
+        right[j] = k(span as isize + j as isize) - u;
+        if j == p {
+            lower[..p].copy_from_slice(&n[..p]);
+        }
+        let mut saved = 0.0;
+        for r in 0..j {
+            let den = right[r + 1] + left[j - r];
+            let tmp = if den.abs() > 1e-300 { n[r] / den } else { 0.0 };
+            n[r] = saved + right[r + 1] * tmp;
+            saved = left[j - r] * tmp;
+        }
+        n[j] = saved;
+    }
 }
 
 impl Spline {
@@ -130,20 +179,36 @@ impl Spline {
     /// First derivative without re-validating the spline. The caller must have confirmed
     /// [`Spline::is_valid`] already; integration calls this once per sample, and re-running the
     /// O(knots) validity scan each time would make measuring a valid spline quadratic (CWE-407).
+    /// Up to degree [`MAX_STACK_DEGREE`] both bases come from one stack-only sweep; higher degrees
+    /// compute them on the heap.
     fn derivative_unchecked(&self, t: f64) -> Vec2 {
         let d = self.velocity(t);
         if d.is_finite() { d } else { Vec2::ZERO }
     }
 
     /// [`Spline::derivative_unchecked`] before a value past f64's range is read as zero.
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::many_single_char_names,
+        reason = "The NURBS derivative keeps its standard equation notation, and MAX_DEGREE makes p exact as f64."
+    )]
     fn velocity(&self, t: f64) -> Vec2 {
         let p = self.degree;
         let Some(n) = self.control.len().checked_sub(1) else { return Vec2::ZERO };
         let (lo, hi) = self.domain();
         let t = if t.is_finite() { t.clamp(lo, hi) } else { lo };
         let span = find_span(n, p, t, &self.knots);
-        let nb = basis(span, t, p, &self.knots);
-        let nd = basis(span, t, p - 1, &self.knots);
+        let (mut sb, mut sd, mut sl, mut sr) =
+            ([0.0; MAX_STACK_DEGREE + 1], [0.0; MAX_STACK_DEGREE + 1], [0.0; MAX_STACK_DEGREE + 1], [0.0; MAX_STACK_DEGREE + 1]);
+        let (hb, hd);
+        let (nb, nd): (&[f64], &[f64]) = if (1..=MAX_STACK_DEGREE).contains(&p) {
+            basis_pair_into(span, t, p, &self.knots, &mut sb, &mut sd, &mut sl, &mut sr);
+            (&sb, &sd)
+        } else {
+            hb = basis(span, t, p, &self.knots);
+            hd = basis(span, t, p - 1, &self.knots);
+            (&hb, &hd)
+        };
         let k = |i: usize| self.knots.get(i).copied().unwrap_or(0.0);
         let ratio = |num: Option<&f64>, den: f64| if den.abs() > 1e-300 { num.copied().unwrap_or(0.0) / den } else { 0.0 };
         let (mut a, mut w, mut da, mut dw) = (Vec2::ZERO, 0.0, Vec2::ZERO, 0.0);
@@ -181,6 +246,7 @@ impl Spline {
 
     /// Insert knot `t` once (Boehm's algorithm, in homogeneous coordinates). The result has no
     /// fit data and is open.
+    #[expect(clippy::many_single_char_names, reason = "Boehm knot insertion keeps the standard p/n/k/i/h/a equation notation.")]
     pub fn insert_knot(&self, t: f64) -> Option<Spline> {
         if !self.is_valid() || !t.is_finite() || self.control.len() >= MAX_EDIT_CONTROL {
             return None;
@@ -282,7 +348,7 @@ impl Spline {
         let (lo, hi) = self.domain();
         let mut s = self.clone();
         s.fit.clear();
-        s.fit_opts = Default::default();
+        s.fit_opts = crate::FitOptions::default();
         if !s.knots.get(..=p).is_some_and(|k| k.iter().all(|x| (*x - lo).abs() < 1e-12)) {
             s = s.split_raw(lo)?.1;
         }
@@ -295,7 +361,7 @@ impl Spline {
     }
 
     /// Reversed direction: control points, weights, fit points and knots (and the fit end
-    /// tangents swap ends and turn round).
+    /// tangents swap ends and turn round). A closed spline still starts at its first fit point.
     pub fn reversed(&self) -> Spline {
         let (lo, hi) = (self.knots.first().copied().unwrap_or(0.0), self.knots.last().copied().unwrap_or(1.0));
         Spline {
@@ -303,7 +369,7 @@ impl Spline {
             knots: self.knots.iter().rev().map(|k| lo + hi - k).collect(),
             control: self.control.iter().rev().copied().collect(),
             weights: self.weights.iter().rev().copied().collect(),
-            fit: self.fit.iter().rev().copied().collect(),
+            fit: if self.closed { reversed_loop(&self.fit) } else { self.fit.iter().rev().copied().collect() },
             closed: self.closed,
             fit_opts: crate::FitOptions {
                 start_tangent: self.fit_opts.end_tangent.map(|t| -t),
@@ -373,6 +439,10 @@ impl Spline {
     /// point becomes their midpoint). Degrees are matched by elevation, weights rescaled so the
     /// junction carries one weight, and `other`'s parameters follow on at a similar speed. The
     /// junction is a knot of multiplicity `degree`, so the curve passes through it exactly.
+    #[expect(
+        clippy::many_single_char_names,
+        reason = "Spline joining keeps the two curves, homogeneous points and knot spans in standard short notation."
+    )]
     pub fn joined(&self, other: &Spline) -> Option<Spline> {
         let deg = self.degree.max(other.degree);
         let a = self.elevated(deg)?;
@@ -401,6 +471,7 @@ impl Spline {
 
     /// A straight line from `a` to `b` as a clamped spline of `degree` (evenly spaced control
     /// points, parameter = distance).
+    #[expect(clippy::cast_precision_loss, reason = "The degree is clamped by MAX_EDIT_DEGREE (25), so every control index is exact as f64.")]
     pub fn from_line(a: Vec2, b: Vec2, degree: usize) -> Spline {
         let p = degree.clamp(1, MAX_EDIT_DEGREE);
         let control = (0..=p).map(|i| a.lerp(b, i as f64 / p as f64)).collect();
@@ -414,6 +485,13 @@ impl Spline {
     /// The elliptical arc `center + u·cos θ + v·sin θ` for θ from `start` over `sweep` (negative
     /// runs clockwise) as an exact rational quadratic spline, in pieces of at most a quarter
     /// turn. Circular arcs are the case `|u| = |v|`, `u ⟂ v`.
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::many_single_char_names,
+        reason = "Conic decomposition uses one to four pieces and standard parametric notation, so all piece indices are exact as f64."
+    )]
     pub fn from_conic_arc(center: Vec2, u: Vec2, v: Vec2, start: f64, sweep: f64) -> Option<Spline> {
         if !(start.is_finite() && sweep.is_finite() && center.is_finite() && u.is_finite() && v.is_finite())
             || sweep.abs() < 1e-12
@@ -476,7 +554,7 @@ impl Spline {
         for w in cuts.windows(2) {
             let (Some(&x0), Some(&x1)) = (w.first(), w.get(1)) else { continue };
             for i in 0..4 {
-                out.push((x0 + (x1 - x0) * i as f64 / 4.0, x0 + (x1 - x0) * (i + 1) as f64 / 4.0));
+                out.push((x0 + (x1 - x0) * f64::from(i) / 4.0, x0 + (x1 - x0) * f64::from(i + 1) / 4.0));
             }
         }
         out
@@ -548,7 +626,7 @@ impl Spline {
                 let (near, far) = if len > 0.0 { (x0, x1) } else { (x1, x0) };
                 let (mut s0, mut s1) = (near, far);
                 for _ in 0..60 {
-                    let m = (s0 + s1) / 2.0;
+                    let m = f64::midpoint(s0, s1);
                     let lm = self.panel_length(near.min(m), near.max(m), Spline::derivative_unchecked);
                     if lm < rest {
                         s0 = m;
@@ -556,7 +634,7 @@ impl Spline {
                         s1 = m;
                     }
                 }
-                return (s0 + s1) / 2.0;
+                return f64::midpoint(s0, s1);
             }
             acc += l;
         }
@@ -571,6 +649,12 @@ impl Ellipse {
     }
 
     /// Arc length from parameter `t0` counter-clockwise over `sweep` (radians, >= 0).
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "The quadrature panel count is clamped to 1..=512, so panel indices are nonnegative and exact as f64."
+    )]
     pub fn arc_length_from(&self, t0: f64, sweep: f64) -> f64 {
         if !(t0.is_finite() && sweep.is_finite()) || sweep <= 0.0 {
             return 0.0;
@@ -604,14 +688,14 @@ impl Ellipse {
         let along = |s: f64| if len >= 0.0 { self.arc_length_from(t0, s) } else { self.arc_length_from(t0 - s, s) };
         let (mut a, mut b) = (0.0, TAU);
         for _ in 0..80 {
-            let m = (a + b) / 2.0;
+            let m = f64::midpoint(a, b);
             if along(m) < target {
                 a = m;
             } else {
                 b = m;
             }
         }
-        let s = (a + b) / 2.0;
+        let s = f64::midpoint(a, b);
         Some(if len >= 0.0 { t0 + s } else { t0 - s })
     }
 }
@@ -624,13 +708,139 @@ mod tests {
         Spline::from_control(vec![Vec2::new(0.0, 0.0), Vec2::new(3.0, 3.0), Vec2::new(6.0, -3.0), Vec2::new(9.0, 0.0), Vec2::new(12.0, 2.0)], 3)
     }
 
+    /// The previous implementation (two heap-allocated bases), kept as the oracle for the
+    /// allocation-free `derivative_unchecked`.
+    impl Spline {
+        fn derivative_unchecked_old(&self, t: f64) -> Vec2 {
+            let p = self.degree;
+            let Some(n) = self.control.len().checked_sub(1) else { return Vec2::ZERO };
+            let (lo, hi) = self.domain();
+            let t = if t.is_finite() { t.clamp(lo, hi) } else { lo };
+            let span = find_span(n, p, t, &self.knots);
+            let nb = basis(span, t, p, &self.knots);
+            let nd = basis(span, t, p - 1, &self.knots);
+            let k = |i: usize| self.knots.get(i).copied().unwrap_or(0.0);
+            let ratio = |num: Option<&f64>, den: f64| if den.abs() > 1e-300 { num.copied().unwrap_or(0.0) / den } else { 0.0 };
+            let (mut a, mut w, mut da, mut dw) = (Vec2::ZERO, 0.0, Vec2::ZERO, 0.0);
+            for j in 0..=p {
+                let Some(i) = (span + j).checked_sub(p) else { continue };
+                let Some(c) = self.control.get(i) else { continue };
+                let wi = self.weight(i);
+                let n0 = nb.get(j).copied().unwrap_or(0.0);
+                // N'_{i,p} = p (N_{i,p-1} / (u_{i+p} - u_i) - N_{i+1,p-1} / (u_{i+p+1} - u_{i+1})).
+                let left = if j >= 1 { ratio(nd.get(j - 1), k(i + p) - k(i)) } else { 0.0 };
+                let right = if j < p { ratio(nd.get(j), k(i + p + 1) - k(i + 1)) } else { 0.0 };
+                let dn = p as f64 * (left - right);
+                a += *c * (n0 * wi);
+                w += n0 * wi;
+                da += *c * (dn * wi);
+                dw += dn * wi;
+            }
+            if w.abs() < 1e-300 {
+                return Vec2::ZERO;
+            }
+            let d = (da - a / w * dw) / w;
+            if d.is_finite() { d } else { Vec2::ZERO }
+        }
+    }
+
+    struct XorShift(u64);
+    impl XorShift {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn unit(&mut self) -> f64 {
+            (self.next() >> 11) as f64 / (1u64 << 53) as f64
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+    }
+
+    /// A valid random spline of degree `p`: clamped or unclamped knots, repeated interior knots,
+    /// and non-rational, rational or zero/negative weights.
+    fn random_spline(r: &mut XorShift, p: usize) -> Spline {
+        let n = p + 1 + r.below(8);
+        let control = (0..n).map(|_| Vec2::new(r.unit() * 100.0 - 50.0, r.unit() * 100.0 - 50.0)).collect();
+        let total = n + p + 1;
+        let mut knots: Vec<f64> =
+            (0..total).map(|_| (r.unit() * 8.0).floor() * if r.below(3) == 0 { 0.5 } else { 1.0 } + r.unit() * f64::from(r.below(2) == 0)).collect();
+        knots.sort_by(f64::total_cmp);
+        if r.below(2) == 0 {
+            // Clamp both ends.
+            let (lo, hi) = (knots[p], knots[n]);
+            knots[..=p].fill(lo);
+            knots[n..].fill(hi);
+        }
+        let weights = match r.below(4) {
+            0 => Vec::new(),
+            1 => (0..n).map(|_| 0.2 + r.unit() * 4.0).collect(),
+            2 => (0..n).map(|_| if r.below(5) == 0 { 0.0 } else { r.unit() * 2.0 - 0.5 }).collect(),
+            _ => (0..n).map(|_| 1.0 + r.unit() * 1e-9).collect(),
+        };
+        Spline { degree: p, knots, control, weights, ..Spline::default() }
+    }
+
+    fn bits(v: Vec2) -> (u64, u64) {
+        (v.x.to_bits(), v.y.to_bits())
+    }
+
+    #[test]
+    fn derivative_is_bit_identical_to_the_heap_implementation() {
+        let mut r = XorShift(0x9E37_79B9_7F4A_7C15);
+        let mut zero_results = 0usize;
+        for p in 1..=12usize {
+            let mut compared = 0usize;
+            for _ in 0..400 {
+                let s = random_spline(&mut r, p);
+                if !s.is_valid() {
+                    continue;
+                }
+                let (lo, hi) = s.domain();
+                let mut ts = vec![lo, hi, 0.5 * (lo + hi), lo - 1.0, hi + 1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
+                ts.extend(s.knots.iter().copied());
+                ts.extend(s.knots.iter().map(|k| k.next_up()));
+                ts.extend(s.knots.iter().map(|k| k.next_down()));
+                ts.extend((0..8).map(|_| lo + (hi - lo) * r.unit()));
+                for t in ts {
+                    let (new, old) = (s.derivative_unchecked(t), s.derivative_unchecked_old(t));
+                    assert_eq!(bits(new), bits(old), "degree {p}, t = {t}, knots {:?}, weights {:?}", s.knots, s.weights);
+                    compared += 1;
+                    zero_results += usize::from(old == Vec2::ZERO);
+                }
+            }
+            assert!(compared > 1000, "degree {p}: only {compared} comparisons ran");
+        }
+        // The zero-vector exits (vanishing weight sum, non-finite result) are exercised too.
+        assert!(zero_results > 0);
+    }
+
+    #[test]
+    fn derivative_dispatch_around_the_stack_limit_does_not_change_results() {
+        // The last stack degree and the first heap degree both match the oracle on a clamped
+        // uniform spline (the heap degree runs the unchanged old path; this checks the dispatch).
+        for p in [MAX_STACK_DEGREE, MAX_STACK_DEGREE + 1] {
+            let ctrl: Vec<Vec2> = (0..p + 4).map(|i| Vec2::new(i as f64, (i * i % 7) as f64)).collect();
+            let s = Spline::from_control(ctrl, p);
+            assert_eq!(s.degree, p);
+            let (lo, hi) = s.domain();
+            for i in 0..=50 {
+                let t = lo + (hi - lo) * f64::from(i) / 50.0;
+                assert_eq!(bits(s.derivative_unchecked(t)), bits(s.derivative_unchecked_old(t)), "degree {p}, t = {t}");
+            }
+        }
+    }
+
     #[test]
     fn derivative_matches_finite_differences() {
         let mut s = cubic();
         s.weights = vec![1.0, 2.0, 0.5, 1.0, 1.5];
         let (lo, hi) = s.domain();
         for i in 1..20 {
-            let t = lo + (hi - lo) * i as f64 / 20.0;
+            let t = lo + (hi - lo) * f64::from(i) / 20.0;
             let h = 1e-6;
             let fd = (s.eval(t + h) - s.eval(t - h)) / (2.0 * h);
             assert!(s.derivative(t).near(fd, 1e-4), "{t}: {:?} vs {fd:?}", s.derivative(t));
@@ -652,15 +862,27 @@ mod tests {
     }
 
     #[test]
+    fn a_closed_fit_list_reverses_from_its_seam() {
+        let (a, b, c, d) = (Vec2::ZERO, Vec2::new(4.0, 0.0), Vec2::new(6.0, 3.0), Vec2::new(1.0, 4.0));
+        assert_eq!(reversed_loop(&[a, b, c, d]), [a, d, c, b]);
+        // A kink at the seam stays first, a repeated closing point last.
+        assert_eq!(reversed_loop(&[a, a, b, c, d]), [a, a, d, c, b]);
+        assert_eq!(reversed_loop(&[a, b, c, d, a]), [a, d, c, b, a]);
+        assert_eq!(reversed_loop(&[a, a]), [a, a]);
+        assert!(reversed_loop(&[]).is_empty());
+    }
+
+    #[test]
     fn periodic_spline_clamps_to_the_same_curve() {
         let fit = [Vec2::new(0.0, 0.0), Vec2::new(4.0, 1.0), Vec2::new(5.0, 4.0), Vec2::new(1.0, 5.0)];
-        let p = Spline::from_fit(&fit, true);
-        assert!(p.is_periodic());
+        // Uniform parameters: the control points wrap round (a chord-length fit is clamped).
+        let p = Spline::fit_with(&fit, true, crate::FitOptions { knots: crate::KnotParam::Uniform, ..Default::default() });
+        assert!(p.wraps() && p.is_periodic());
         let c = p.clamped().unwrap();
-        assert!(!c.is_periodic());
+        assert!(!c.wraps() && c.is_periodic(), "the same smooth closed curve");
         let ((plo, phi), (clo, chi)) = (p.domain(), c.domain());
         for i in 0..=20 {
-            let f = i as f64 / 20.0;
+            let f = f64::from(i) / 20.0;
             assert!(p.eval(plo + (phi - plo) * f).near(c.eval(clo + (chi - clo) * f), 1e-9));
         }
         assert!(c.control.first().unwrap().near(p.eval(plo), 1e-9));
@@ -672,7 +894,7 @@ mod tests {
         let e = s.elevated(5).unwrap();
         assert_eq!(e.degree, 5);
         for i in 0..=20 {
-            let t = i as f64 / 20.0;
+            let t = f64::from(i) / 20.0;
             assert!(e.eval(t).near(s.eval(t), 1e-9), "{t}");
         }
         // A rational quarter circle elevated to a cubic stays on the circle.
@@ -680,12 +902,13 @@ mod tests {
         let q3 = q.elevated(3).unwrap();
         let (lo, hi) = q3.domain();
         for i in 0..=20 {
-            assert!((q3.eval(lo + (hi - lo) * i as f64 / 20.0).len() - 2.0).abs() < 1e-9);
+            assert!((q3.eval(lo + (hi - lo) * f64::from(i) / 20.0).len() - 2.0).abs() < 1e-9);
         }
         assert!(s.elevated(2).is_none() && s.elevated(1000).is_none());
     }
 
     #[test]
+    #[expect(clippy::many_single_char_names, reason = "The ellipse equation check keeps conventional center/axis/point notation.")]
     fn conic_arcs_are_exact() {
         let e = Ellipse { center: Vec2::new(1.0, 2.0), major: Vec2::new(4.0, 3.0), ratio: 0.5, start: 0.3, end: 5.5 };
         let s = Spline::from_ellipse(&e).unwrap();
@@ -695,7 +918,7 @@ mod tests {
         let (a, b) = (e.major.len(), e.major.len() * e.ratio);
         let ux = e.major.normalized();
         for i in 0..=40 {
-            let p = s.eval(lo + (hi - lo) * i as f64 / 40.0) - e.center;
+            let p = s.eval(lo + (hi - lo) * f64::from(i) / 40.0) - e.center;
             let (x, y) = (p.dot(ux), p.dot(ux.perp()));
             assert!(((x / a).powi(2) + (y / b).powi(2) - 1.0).abs() < 1e-9);
         }
@@ -716,8 +939,8 @@ mod tests {
         assert!(j.eval(lo).near(Vec2::new(-5.0, 0.0), 1e-12) && j.eval(hi).near(Vec2::new(12.0, 2.0), 1e-12));
         // The line part is straight (parameter = distance), the spline part unchanged.
         for i in 0..=10 {
-            assert!(j.eval(lo + 0.5 * i as f64).near(Vec2::new(-5.0 + 0.5 * i as f64, 0.0), 1e-12));
-            let f = i as f64 / 10.0;
+            assert!(j.eval(lo + 0.5 * f64::from(i)).near(Vec2::new(-5.0 + 0.5 * f64::from(i), 0.0), 1e-12));
+            let f = f64::from(i) / 10.0;
             assert!(j.eval(5.0 + (hi - 5.0) * f).near(s.eval(f), 1e-9));
         }
         assert!((j.length() - (5.0 + s.length())).abs() < 1e-6);
@@ -752,7 +975,7 @@ mod tests {
         assert!(q.eval(t).near(Vec2::new(0.0, 2.0), 1e-6));
         let t = q.param_at_length(hi, -std::f64::consts::PI / 2.0);
         assert!(q.eval(t).near(Vec2::new(-2f64.sqrt(), 2f64.sqrt()), 1e-6));
-        assert_eq!(q.param_at_length(lo, 1e9), hi);
+        assert_eq!(q.param_at_length(lo, 1e9).to_bits(), hi.to_bits());
     }
 
     #[test]
@@ -801,12 +1024,13 @@ mod tests {
         nan.knots[nan.degree] = f64::NAN;
         assert!(!nan.is_valid() && nan.domain().0.is_nan());
         for s in [reversed, nan] {
-            assert_eq!(s.param_at_length(0.5, 1.0), 0.5);
-            assert_eq!(s.param_at_length(0.5, -1.0), 0.5);
+            assert_eq!(s.param_at_length(0.5, 1.0).to_bits(), 0.5_f64.to_bits());
+            assert_eq!(s.param_at_length(0.5, -1.0).to_bits(), 0.5_f64.to_bits());
         }
     }
 
     #[test]
+    #[expect(clippy::many_single_char_names, reason = "The ellipse arc-length reference uses conventional a/b/h/t notation.")]
     fn ellipse_arc_length() {
         let c = Ellipse::full(Vec2::ZERO, Vec2::new(3.0, 0.0), 1.0);
         assert!((c.length() - TAU * 3.0).abs() < 1e-9);
