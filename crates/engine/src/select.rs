@@ -201,9 +201,11 @@ fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
         // the text there, not the text the dimension's own geometry would place.
         EntityKind::Dimension(dm) => match dm.block.as_ref().and_then(|n| d.block(n)) {
             // The block draws translated by the insertion point (group 12): test there (#2634).
+            // A text the block does not draw, on a layer frozen for the drawing or turned off, is
+            // not there to pick (#3218).
             Some(blk) => {
                 let p = p - dm.insertion_point.xy();
-                blk.entities.iter().any(|be| match &be.kind {
+                blk.entities.iter().filter(|be| block_object_drawn(d, e, be)).any(|be| match &be.kind {
                     EntityKind::MText(t) => in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p),
                     EntityKind::Text(_) => entity_bounds(d, be, 0).contains(p),
                     _ => false,
@@ -219,6 +221,18 @@ fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether a block's object `be` is drawn on its layer: its own visibility and its layer's, layer
+/// "0" inside a block taking the layer of the reference `e` that draws it, as the renderer resolves
+/// them (`crates/render/src/props.rs`). A layer frozen for the whole drawing, or turned off, draws
+/// nothing there, so nothing there is picked.
+fn block_object_drawn(d: &Drawing, e: &Entity, be: &Entity) -> bool {
+    if !be.common.visible {
+        return false;
+    }
+    let layer = if be.common.layer == "0" { e.common.layer.as_str() } else { be.common.layer.as_str() };
+    d.layer(layer).is_none_or(cadcraft_doc::Layer::visible)
 }
 
 /// Whether `p` is inside the box around `pts` turned by `angle` (the box of text set at `angle`).
