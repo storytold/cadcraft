@@ -43,6 +43,14 @@ pub struct DocState {
     pub block_edit: Option<blockedit::BlockEdit>,
     /// The user was told that the current UCS is tilted ([`Session::note_tilted_ucs`]).
     pub ucs_tilted_noted: bool,
+    /// Whether this drawing is opened read-only (e.g. write-protected or locked by another session).
+    pub read_only: bool,
+    /// Human-readable description of the lock holder or lock error when opened read-only.
+    pub lock_info: Option<String>,
+    /// Parsed lock metadata when the drawing was already locked on open.
+    pub lock_holder: Option<crate::drawing_lock::LockInfo>,
+    /// Active drawing lock guard (`.dwl` / `.dwl2`).
+    pub lock: Option<std::sync::Arc<crate::drawing_lock::DrawingLockGuard>>,
     /// What the last erase removed, for OOPS.
     pub(crate) erased: crate::cmd::Erased,
     /// The fonts missing on Windows that a save last named: the next save names them again only
@@ -75,6 +83,10 @@ impl DocState {
             binary_dxf: false,
             block_edit: None,
             ucs_tilted_noted: false,
+            read_only: false,
+            lock_info: None,
+            lock_holder: None,
+            lock: None,
             erased: Default::default(),
             fonts_noted: String::new(),
         }

@@ -266,6 +266,136 @@ pub fn prompt(app: &mut CadApp, ctx: &egui::Context) {
     }
 }
 
+/// A prompt shown when a drawing was opened that is already locked by another session/user.
+#[derive(Clone, Debug)]
+pub struct LockPrompt {
+    pub doc_uid: u64,
+    pub title: String,
+    pub user: String,
+    pub machine: String,
+    pub date_time: String,
+    pub raw_info: String,
+    pub needs_focus: bool,
+}
+
+impl LockPrompt {
+    /// Formatted localized description of who holds the lock or the raw error.
+    pub fn description(&self) -> String {
+        if !self.user.is_empty() {
+            if !self.machine.is_empty() {
+                crate::tf!("in use by {user} on {machine} ({time})", user = self.user, machine = self.machine, time = self.date_time)
+            } else {
+                crate::tf!("in use by {user} ({time})", user = self.user, time = self.date_time)
+            }
+        } else {
+            self.raw_info.clone()
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LockChoice {
+    ReadOnly,
+    TakeOver,
+    Cancel,
+}
+
+impl CadApp {
+    fn answer_lock_prompt(&mut self, choice: LockChoice) {
+        let Some(prompt) = self.lock_prompts.pop_front() else { return };
+        match choice {
+            LockChoice::ReadOnly => {}
+            LockChoice::Cancel => {
+                if let Some(i) = self.doc_index(prompt.doc_uid) {
+                    let _ = self.run("close", json!({ "index": i }));
+                }
+            }
+            LockChoice::TakeOver => {
+                if let Some(i) = self.doc_index(prompt.doc_uid) {
+                    let lang = self.language();
+                    crate::i18n::with_language(lang, || match self.session.take_over_lock(i) {
+                        Ok(()) => {
+                            let msg = crate::tf!("Lock taken over for '{name}'. Drawing is now writable.", name = prompt.title);
+                            self.session.echo(msg.clone());
+                            self.set_status(msg);
+                        }
+                        Err(e) => {
+                            let msg = crate::tf!("Could not take over lock for '{name}': {err}", name = prompt.title, err = e);
+                            self.session.echo(msg.clone());
+                            self.set_status(msg);
+                        }
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// The "Drawing File is Write-Protected" modal while a locked drawing prompt waits for an answer.
+pub fn lock_prompt(app: &mut CadApp, ctx: &egui::Context) {
+    while let Some(front) = app.lock_prompts.front() {
+        if app.doc_index(front.doc_uid).is_some() {
+            break;
+        }
+        app.lock_prompts.pop_front();
+    }
+    let Some(prompt) = app.lock_prompts.front().cloned() else { return };
+    let t = Tokens::get();
+    let mut choice = None;
+    let holder_desc = prompt.description();
+    let modal_id = egui::Id::unique("cc_lock_prompt");
+    let already_measured = egui::AreaState::load(ctx, modal_id).is_some();
+    let has_holder = !prompt.user.is_empty();
+    crate::modal::instant(ctx, modal_id).show(ctx, |ui| {
+        ui.set_width(480.0);
+        ui.label(RichText::new(crate::tl!("Drawing File is Write-Protected")).strong());
+        ui.add_space(4.0);
+        if has_holder {
+            ui.label(crate::tf!("The drawing file '{name}' is currently in use by:", name = prompt.title));
+        } else {
+            ui.label(crate::tf!("The drawing file '{name}' could not be locked:", name = prompt.title));
+        }
+        ui.add_space(2.0);
+        ui.label(RichText::new(&holder_desc).color(t.text_dim));
+        ui.add_space(4.0);
+        let hint = if has_holder {
+            crate::tl!("Open read-only to avoid overwriting another session, or take over the lock if the previous session crashed.")
+        } else {
+            crate::tl!("The drawing will be opened in read-only mode. Changes cannot be saved to the original file.")
+        };
+        ui.label(RichText::new(hint).color(t.text_dim));
+        ui.add_space(12.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let primary =
+                ui.add(egui::Button::new(RichText::new(crate::tl!("Open (Read-Only)")).color(t.text)).fill(t.accent).min_size(vec2(130.0, 24.0)));
+            if prompt.needs_focus {
+                primary.request_focus();
+                if (already_measured || ctx.current_pass_index() > 0)
+                    && let Some(front) = app.lock_prompts.front_mut()
+                {
+                    front.needs_focus = false;
+                }
+            }
+            if primary.clicked() {
+                choice = Some(LockChoice::ReadOnly);
+            }
+            if has_holder && ui.add(egui::Button::new(crate::tl!("Take Over Lock")).min_size(vec2(120.0, 24.0))).clicked() {
+                choice = Some(LockChoice::TakeOver);
+            }
+            if ui.add(egui::Button::new(crate::tl!("Cancel")).min_size(vec2(84.0, 24.0))).clicked() {
+                choice = Some(LockChoice::Cancel);
+            }
+        });
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            choice = Some(LockChoice::Cancel);
+        }
+    });
+    if let Some(c) = choice {
+        app.answer_lock_prompt(c);
+        ctx.request_repaint();
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -515,5 +645,50 @@ mod tests {
         assert!(app.closing.is_none());
         assert_eq!(titles(&app), ["A", "B"]);
         assert!(app.session.docs[1].is_dirty());
+    }
+
+    #[test]
+    fn multiple_locked_drawings_queue_prompts_in_order() {
+        let mut app = app_with(&["A.dwg", "B.dwg"]);
+        let uid_a = app.session.docs[0].uid;
+        let uid_b = app.session.docs[1].uid;
+        app.session.docs[0].read_only = true;
+        app.session.docs[1].read_only = true;
+
+        app.lock_prompts.push_back(super::LockPrompt {
+            doc_uid: uid_a,
+            title: "A.dwg".into(),
+            user: "alice".into(),
+            machine: "PC-1".into(),
+            date_time: "2026-11-25 10:00:00 UTC".into(),
+            raw_info: String::new(),
+            needs_focus: true,
+        });
+        app.lock_prompts.push_back(super::LockPrompt {
+            doc_uid: uid_b,
+            title: "B.dwg".into(),
+            user: "bob".into(),
+            machine: "PC-2".into(),
+            date_time: "2026-11-25 10:05:00 UTC".into(),
+            raw_info: String::new(),
+            needs_focus: true,
+        });
+
+        assert!(app.shows_modal());
+        assert_eq!(app.lock_prompts.len(), 2);
+        assert_eq!(app.lock_prompts.front().unwrap().title, "A.dwg");
+
+        // Answering A with ReadOnly advances to B without dropping B.
+        app.answer_lock_prompt(super::LockChoice::ReadOnly);
+        assert!(app.shows_modal());
+        assert_eq!(app.lock_prompts.len(), 1);
+        assert_eq!(app.lock_prompts.front().unwrap().title, "B.dwg");
+        assert!(app.session.docs[0].read_only);
+
+        // Answering B with TakeOver upgrades B to writable and empties the queue.
+        app.answer_lock_prompt(super::LockChoice::TakeOver);
+        assert!(!app.shows_modal());
+        assert!(app.lock_prompts.is_empty());
+        assert!(!app.session.docs[1].read_only);
     }
 }
