@@ -285,15 +285,16 @@ fn blank_mtext_frame(d: &Drawing, e: &Entity) -> Option<(Vec2, f64, [f64; 4])> {
     if !is_blank_mtext(text) {
         return None;
     }
-    let f = match d.anno_draw(e) {
-        cadcraft_doc::AnnoDraw::Plain => 1.0,
-        cadcraft_doc::AnnoDraw::Scaled(f) if f.is_finite() && f > 0.0 => f,
-        cadcraft_doc::AnnoDraw::Scaled(_) => 1.0,
+    // As it is drawn: at the current scale, where that scale places it.
+    let (f, by) = match d.anno_draw(e) {
+        cadcraft_doc::AnnoDraw::Plain => (1.0, Vec2::ZERO),
+        cadcraft_doc::AnnoDraw::Scaled { factor, by } if factor.is_finite() && factor > 0.0 => (factor, by),
+        cadcraft_doc::AnnoDraw::Scaled { .. } => (1.0, Vec2::ZERO),
         cadcraft_doc::AnnoDraw::Hidden => return None,
     };
     let scaled;
-    let e = if f != 1.0 {
-        scaled = cadcraft_doc::anno_scaled(e, f);
+    let e = if f != 1.0 || by != Vec2::ZERO {
+        scaled = cadcraft_doc::anno_placed(e, f, by);
         &scaled
     } else {
         e

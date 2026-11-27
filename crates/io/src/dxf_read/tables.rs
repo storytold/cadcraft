@@ -1,8 +1,8 @@
 use super::common::T;
 use super::objects::MAX_OBJECTS;
 use super::{
-    Color, DashElement, DimStyle, Drawing, HVal, HashMap, Layer, Linetype, Lineweight, NamedView, Rgb, Rx, Tag, TextStyle, Ucs, Vec2, Vec3,
-    VportConfig, VportTile, record_slices,
+    BlockProps, Color, DashElement, DimStyle, Drawing, HVal, HashMap, Layer, Linetype, Lineweight, NamedView, Rgb, Rx, Tag, TextStyle, Ucs, Vec2,
+    Vec3, VportConfig, VportTile, record_slices,
 };
 use cadcraft_fonts::windows::windows_font;
 use craft_dxf::lin_pat::MAX_LINETYPE_ELEMENTS;
@@ -326,7 +326,13 @@ fn index_table_handles(recs: &[(String, &[Tag])], rx: &mut Rx) {
             }
             "BLOCK_RECORD" => {
                 let units = table.i(70).and_then(|units| u8::try_from(units).ok()).unwrap_or(0);
-                rx.block_props.insert(name.to_ascii_uppercase(), (units, table.i(280).unwrap_or(1) != 0));
+                let props = BlockProps {
+                    units,
+                    explodable: table.i(280).unwrap_or(1) != 0,
+                    scale_uniformly: table.i(281).unwrap_or(0) != 0,
+                    annotative: annotative(tags),
+                };
+                rx.block_props.insert(name.to_ascii_uppercase(), props);
                 if let Some(array) = crate::dxf_ext::read_array(tags) {
                     rx.block_arrays.insert(name.to_ascii_uppercase(), array);
                 }
