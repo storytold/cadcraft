@@ -1010,6 +1010,31 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
         return;
     }
     crate::clipboard::pump(app, ctx);
+    // On macOS the Close shortcut dismisses the dialog before closing a drawing, even when
+    // a field inside the dialog has keyboard focus. File › Close and typed CLOSE still act on the drawing.
+    if cfg!(target_os = "macos")
+        && app.ui.dialog.is_some()
+        && ctx.input_mut(|input| {
+            let count = input.events.len();
+            input.events.retain(|event| {
+                let egui::Event::Key { key, pressed: true, modifiers, .. } = event else { return true };
+                // egui also matches extra Shift or Alt, so only intercept the same winning
+                // shortcut the specificity-ordered table would dispatch.
+                pairs
+                    .iter()
+                    .find(|(shortcut, _)| shortcut.logical_key == *key && modifiers.matches_logically(shortcut.modifiers))
+                    .is_none_or(|(_, id)| id != "close")
+            });
+            input.events.len() != count
+        })
+    {
+        if app.ui.dialog.as_deref() == Some("preview") {
+            crate::exchange::close_preview(app, ctx, false);
+        } else {
+            run_transparent(app, "ui.dialog.close");
+        }
+        return;
+    }
     // A palette toggle is global even while its expression field owns keyboard focus.
     let quickcalc = KeyboardShortcut::new(Modifiers::COMMAND, Key::Num8);
     if pairs.iter().any(|(s, id)| *s == quickcalc && id == "ui.toggle.quickcalc") && ctx.input_mut(|i| i.consume_shortcut(&quickcalc)) {
@@ -1114,6 +1139,59 @@ mod tests {
             }
         }
         Some(egui::KeyboardShortcut::new(m, egui::Key::from_name(key)?))
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn command_w_dismisses_an_open_dialog_before_closing_the_drawing() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.session.execute("line", &json!({"points": [[0, 0], [10, 5]]})).unwrap();
+        app.run("ui.dialog.about", Value::Null).unwrap();
+        let uid = app.session.state().unwrap().uid;
+        let ctx = egui::Context::default();
+        let close = |app: &mut CadApp| {
+            let modifiers = egui::Modifiers::COMMAND;
+            for pressed in [true, false] {
+                let event = egui::Event::Key { key: egui::Key::W, physical_key: None, pressed, repeat: false, modifiers };
+                let input = egui::RawInput { events: vec![egui::Event::ModifiersChanged(modifiers), event], ..Default::default() };
+                ctx.run_ui(input, |_| super::shortcuts(app, &ctx)).textures_delta.clear();
+            }
+        };
+        close(&mut app);
+        assert!(app.ui.dialog.is_none());
+        assert_eq!(app.session.state().unwrap().uid, uid);
+        assert!(app.close_prompt().is_none(), "dismissing About does not ask to save the drawing");
+
+        close(&mut app);
+        assert_eq!(app.session.state().unwrap().uid, uid);
+        assert!(app.close_prompt().is_some(), "with no dialog, closing a dirty drawing still asks to save it");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_more_specific_command_shift_w_shortcut_does_not_dismiss_the_dialog() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.ui.shortcuts.insert("ui.toggle.history".to_string(), "Cmd+Shift+W".to_string());
+        app.run("ui.dialog.about", Value::Null).unwrap();
+        let ctx = egui::Context::default();
+        let modifiers = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+        let event = egui::Event::Key { key: egui::Key::W, physical_key: None, pressed: true, repeat: false, modifiers };
+        let input = egui::RawInput { events: vec![egui::Event::ModifiersChanged(modifiers), event], ..Default::default() };
+
+        ctx.run_ui(input, |_| super::shortcuts(&mut app, &ctx)).textures_delta.clear();
+
+        assert!(app.cmd.expanded, "the user binding wins over Close");
+        assert_eq!(app.ui.dialog.as_deref(), Some("about"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn choosing_native_file_close_still_asks_to_save_with_a_dialog_open() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.session.execute("line", &json!({"points": [[0, 0], [10, 5]]})).unwrap();
+        app.run("ui.dialog.about", Value::Null).unwrap();
+        super::activate_native(&mut app, &egui::Context::default(), "close");
+        assert!(app.close_prompt().is_some());
     }
 
     #[test]
