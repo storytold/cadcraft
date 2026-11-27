@@ -1023,7 +1023,8 @@ mod justify_tests {
         let font = TextFont::Outline(face);
         let (sh, start) = placed(&font, "gjpqy", Align::Left, VAlign::Bottom);
         assert!((start.y - ratio * H).abs() < 1e-9, "{name}: {start:?}");
-        if name == "Arial" {
+        // Only the real Arial file: with Liberation Sans installed and Arial not, "Arial" resolves to it (#1669).
+        if name == "Arial" && ttf::installed_font_path("Arial").is_some() {
             assert!((ratio - 0.296).abs() < 0.01, "Arial's descent over cap height: {ratio}");
             // The descenders reach the alignment point's line: h/3 left them 0.1 above it.
             let (lo, _) = ink_y(&sh);
