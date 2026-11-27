@@ -6,6 +6,7 @@ mod cells;
 pub(crate) mod formula;
 mod paste;
 
+pub use cells::cell_under;
 pub(crate) use cells::{recalc, tablestyle_cell_style};
 pub use paste::{MAX_PASTE_CELLS, is_tsv_table, parse_tsv};
 
