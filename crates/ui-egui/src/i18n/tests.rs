@@ -252,8 +252,11 @@ fn assert_primary_locale_aliases() {
 }
 
 fn assert_portuguese_and_spanish_aliases() {
-    for tag in ["pt", "pt-BR", "pt_BR.UTF-8", "PT-br", "pt-PT"] {
+    for tag in ["pt", "pt-BR", "pt_BR.UTF-8", "PT-br"] {
         assert_eq!(locale_language(tag), Some("pt-BR"), "{tag}");
+    }
+    for tag in ["pt-PT", "pt_PT.UTF-8", "PT-pt", "pt-Latn-PT"] {
+        assert_eq!(locale_language(tag), Some("pt-PT"), "{tag}");
     }
 
     for tag in ["es", "es-ES", "es_MX.UTF-8", "ES-ar"] {
@@ -274,6 +277,7 @@ fn assert_additional_locale_aliases() {
         ("el", &["el", "el-GR", "el_GR.UTF-8", "EL-cy"]),
         ("ka", &["ka", "ka-GE", "ka_GE.UTF-8", "KA-ge", " ka-GE "]),
         ("ta", &["ta", "ta-IN", "ta_IN.UTF-8", "TA-in", " ta-LK ", "ta-SG", "ta_MY.UTF-8"]),
+        ("nl", &["nl", "nl-NL", "nl_NL.UTF-8", "NL-nl", " nl-BE ", "nl_BE.UTF-8"]),
         ("zh", &["zh", "zh-CN"]),
     ] {
         for tag in tags {
@@ -284,7 +288,7 @@ fn assert_additional_locale_aliases() {
 
 fn assert_unrecognized_locale_tags() {
     // Look-alike codes, three-letter codes and endonyms pick nothing: `se` is Northern Sami.
-    let look_alikes = ["ua", "ukulele", "nl-NL", "", "garbage", "💙", "ptolemy", "cz", "csharp", "csomething", "italic"];
+    let look_alikes = ["ua", "ukulele", "fi-FI", "", "garbage", "💙", "ptolemy", "cz", "csharp", "csomething", "italic"];
     let others = ["kr", "korean", "kotlin", "se", "swe", "svenska", "hun", "magyar", "tur", "türkçe", "elvish", "kat", "geo", "kab", "kartuli"];
     let tamil = ["tam", "tamil", "தமிழ்"];
     for tag in look_alikes.into_iter().chain(others).chain(tamil) {
@@ -293,11 +297,11 @@ fn assert_unrecognized_locale_tags() {
 }
 
 fn assert_auto_locale_precedence() {
-    assert_eq!(Preference::Auto.resolve(&["nl-NL".into(), "pt-BR".into()]), "pt-BR");
+    assert_eq!(Preference::Auto.resolve(&["fi-FI".into(), "pt-BR".into()]), "pt-BR");
     assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), "pt-BR".into()]), "pl");
     assert_eq!(Preference::Auto.resolve(&["fr-FR".into(), "pt-BR".into()]), "fr");
     assert_eq!(Preference::Auto.resolve(&["es-ES".into(), "pt-BR".into()]), "es");
-    let locales = vec!["nl-NL".into(), "uk-UA".into(), "en-US".into()];
+    let locales = vec!["fi-FI".into(), "uk-UA".into(), "en-US".into()];
     assert_eq!(Preference::Auto.resolve(&locales), "uk");
     assert_eq!(Preference::English.resolve(&locales), "en");
     assert_eq!(Preference::Auto.resolve(&["en-US".into(), "uk-UA".into()]), "en");
@@ -320,7 +324,7 @@ fn assert_preference_resolution(preference: Preference) {
     // A chosen language wins over the system's; Auto takes the first system language there is.
     assert_eq!(preference.resolve(&["uk-UA".into()]), preference.code());
     if preference != Preference::English {
-        assert_eq!(Preference::Auto.resolve(&["nl-NL".into(), preference.code().into(), "en-US".into()]), preference.code());
+        assert_eq!(Preference::Auto.resolve(&["fi-FI".into(), preference.code().into(), "en-US".into()]), preference.code());
     }
 }
 
@@ -792,4 +796,15 @@ fn arabic_tells_stretch_trim_and_point_from_their_neighbours() {
     ] {
         assert!(tr("ar", prompt).contains(verb), "{prompt}");
     }
+}
+
+#[test]
+fn dutch_and_european_portuguese_registration_and_plurals() {
+    assert_eq!(Preference::parse("nl"), Some(Preference::Dutch));
+    assert_eq!(Preference::parse("pt-PT"), Some(Preference::Portuguese));
+    assert_eq!(Preference::Dutch.native_name(), "Nederlands");
+    assert_eq!(Preference::Portuguese.native_name(), "Português (Portugal)");
+    // pt-PT uses plural for 0 (`plural_en`), whereas pt-BR uses singular for 0 (`plural_pt`).
+    assert_eq!(plural_en(0), 1);
+    assert_eq!(plural_pt(0), 0);
 }

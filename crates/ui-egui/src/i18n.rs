@@ -55,9 +55,13 @@ pub enum Preference {
     Vietnamese,
     #[serde(rename = "ta")]
     Tamil,
+    #[serde(rename = "nl")]
+    Dutch,
+    #[serde(rename = "pt-PT")]
+    Portuguese,
 }
 impl Preference {
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 24] = [
         Self::Auto,
         Self::English,
         Self::Greek,
@@ -80,6 +84,8 @@ impl Preference {
         Self::Bosnian,
         Self::Vietnamese,
         Self::Tamil,
+        Self::Dutch,
+        Self::Portuguese,
     ];
 
     /// Every preference in the order the Interface Language dialog lists them: Auto, then English
@@ -132,6 +138,8 @@ impl Preference {
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
             Self::Tamil => "ta",
+            Self::Dutch => "nl",
+            Self::Portuguese => "pt-PT",
         }
     }
 
@@ -188,6 +196,8 @@ impl Preference {
                     "Tamil"
                 }
             }
+            Self::Dutch => "Nederlands",
+            Self::Portuguese => "Português (Portugal)",
         }
     }
 
@@ -223,6 +233,8 @@ impl Preference {
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
             Self::Tamil => "ta",
+            Self::Dutch => "nl",
+            Self::Portuguese => "pt-PT",
             Self::Auto => locales.iter().find_map(|s| locale_language(s)).unwrap_or("en"),
         }
     }
@@ -239,7 +251,7 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 21] = [
+pub static LANGUAGES: [Language; 23] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     Language { code: "pl", name: "Polski", source: include_str!("i18n/pl.tsv"), plural: plural_pl, plural_forms: 3, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
@@ -304,12 +316,33 @@ pub static LANGUAGES: [Language; 21] = [
     Language {
         code: "ta", name: "தமிழ்", source: include_str!("i18n/ta.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new()
     },
+    // Dutch integer plurals follow the English rule: one (1), other.
+    Language { code: "nl", name: "Nederlands", source: include_str!("i18n/nl.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
+    // European Portuguese integer plurals (CLDR `pt-PT`): one (1), other.
+    Language {
+        code: "pt-PT",
+        name: "Português (Portugal)",
+        source: include_str!("i18n/pt_pt.tsv"),
+        plural: plural_en,
+        plural_forms: 2,
+        catalog: OnceLock::new(),
+    },
 ];
 
-/// BCP 47 and POSIX locale tags, including `uk-UA`, `uk_UA.UTF-8` and `pt_BR.UTF-8`.
-/// A catalog is chosen by the tag's primary language, so any `pt-*` tag selects `pt-BR`.
+/// BCP 47 and POSIX locale tags, including `uk-UA`, `uk_UA.UTF-8`, `pt_BR.UTF-8` and `pt-PT`.
+/// An exact `<language>-<region>` catalog (e.g. `pt-PT`) wins over the primary-language fallback (`pt-BR`).
 pub fn locale_language(tag: &str) -> Option<&'static str> {
-    let primary = tag.trim().split(['-', '_', '.', '@']).next()?;
+    let base = tag.trim().split(['.', '@']).next()?;
+    let mut parts = base.split(['-', '_']);
+    let primary = parts.next()?;
+    for subtag in parts {
+        if let Some(exact) = LANGUAGES
+            .iter()
+            .find(|l| l.code.split_once('-').is_some_and(|(p, reg)| p.eq_ignore_ascii_case(primary) && reg.eq_ignore_ascii_case(subtag)))
+        {
+            return Some(exact.code);
+        }
+    }
     LANGUAGES.iter().find(|l| l.code.split('-').next().is_some_and(|p| p.eq_ignore_ascii_case(primary))).map(|l| l.code)
 }
 
