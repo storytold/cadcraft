@@ -1523,7 +1523,7 @@ fn rotated_and_reversed_copies_of_a_curved_loop_fill_once() {
     assert_eq!(loops_of(&h).len(), 2);
 }
 
-// ---------- point budget (#1922) ----------
+// ---------- point and primitive budgets (#1922, #1603) ----------
 
 fn circle() -> EntityKind {
     EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::ZERO, radius: 100.0 })
@@ -1551,7 +1551,7 @@ fn block_copies_stop_at_the_point_budget_and_say_so() {
     let d = arrayed_circles();
     let full = build(&d, &Space::Model, &Options::default());
     assert!(!full.truncated && points(&full) > 100_000, "{}", points(&full));
-    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, 10_000);
+    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, 10_000, crate::MAX_DISPLAY_PRIMS);
     assert!(l.truncated);
     assert!(points(&l) > 0 && points(&l) <= 10_000, "{}", points(&l));
     assert!(l.prims.iter().all(|p| p.start as usize + p.len as usize <= l.verts.len()));
@@ -1564,7 +1564,106 @@ fn objects_built_on_all_cores_stop_at_the_point_budget_and_say_so() {
     for _ in 0..600 {
         d.add(&Space::Model, Common::default(), circle()).unwrap();
     }
-    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, 10_000);
+    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, 10_000, crate::MAX_DISPLAY_PRIMS);
     assert!(l.truncated);
     assert!(points(&l) > 0 && points(&l) <= 10_000, "{}", points(&l));
+}
+
+fn point_at(x: f64) -> EntityKind {
+    EntityKind::Point(cadcraft_doc::Point { p: Vec3::new(x, 0.0, 0.0), angle: 0.0 })
+}
+
+/// A block of one point referenced as 1,000 copies in place: every copy is one primitive of one
+/// point, so the point budget holds far more of them than a 32-bit target's primitive vector
+/// (#1603).
+fn arrayed_points() -> Drawing {
+    let mut d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("B");
+    blk.entities.push(block_entity(1, Common::default(), point_at(0.0)));
+    d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("B") else { panic!("an insert") };
+    ins.cols = 1000;
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    d
+}
+
+#[test]
+fn one_point_primitives_stop_at_the_primitive_budget_and_say_so() {
+    let d = arrayed_points();
+    let full = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, 10_000, MAX_DISPLAY_PRIMS);
+    assert!(!full.truncated && full.prims.len() >= 1000, "{}", full.prims.len());
+    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, 10_000, 100);
+    assert!(l.truncated);
+    assert!(!l.prims.is_empty() && l.prims.len() <= 100, "{}", l.prims.len());
+    // And the copies past it are not visited.
+    assert!(l.expanded < full.expanded / 2, "{} of {}", l.expanded, full.expanded);
+}
+
+#[test]
+fn primitives_built_on_all_cores_stop_at_the_primitive_budget_and_say_so() {
+    // Enough references of a one-point block for the parallel build: the parts share one
+    // primitive count, and stop visiting their blocks once it is spent.
+    let mut d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("B");
+    blk.entities.push(block_entity(1, Common::default(), point_at(0.0)));
+    d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+    for i in 0..600 {
+        let EntityKind::Insert(mut ins) = insert_of("B") else { panic!("an insert") };
+        ins.insert = Vec3::new(f64::from(i), 0.0, 0.0);
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    }
+    let full = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, 10_000, MAX_DISPLAY_PRIMS);
+    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, 10_000, 100);
+    assert!(l.truncated);
+    assert!(!l.prims.is_empty() && l.prims.len() <= 100, "{}", l.prims.len());
+    assert!(l.expanded < full.expanded / 2, "{} of {}", l.expanded, full.expanded);
+}
+
+/// A polyline of 200 points zigzagging across y = 1 between x = 1.5 and 8.5: a clip whose edge
+/// is y = 1 cuts it into about 100 pieces of three points each.
+fn zigzag() -> EntityKind {
+    let vertices = (0..200).map(|i| PolyVertex::new(Vec2::new(1.5 + 7.0 * f64::from(i) / 199.0, if i % 2 == 0 { 0.0 } else { 2.0 }))).collect();
+    EntityKind::LwPolyline(cadcraft_doc::LwPolyline { vertices, closed: false, const_width: 0.0, elevation: 0.0, plinegen: false })
+}
+
+#[test]
+fn pieces_cut_by_a_clip_stop_at_the_list_limits_and_say_so() {
+    // Seen through a viewport whose model window starts at y = 1, the zigzag and then a point
+    // inside the window. Each drawing ends with a point the budgets alone would still take after
+    // the pieces: a full list stops the build.
+    let mut through_viewport = Drawing::new_imperial();
+    through_viewport.add(&Space::Model, Common::default(), zigzag()).unwrap();
+    through_viewport
+        .add(&Space::Model, Common::default(), EntityKind::Point(cadcraft_doc::Point { p: Vec3::new(5.0, 5.0, 0.0), angle: 0.0 }))
+        .unwrap();
+    let paper = Space::Paper("Layout1".into());
+    through_viewport.add(&paper, Common::default(), EntityKind::Viewport(vp(Vec2::new(5.0, 4.0), 4.0, 4.0, Vec2::new(5.0, 5.0), 8.0, 2))).unwrap();
+    through_viewport.add(&paper, Common::default(), point_at(5.0)).unwrap();
+    // In a block reference clipped (XCLIP) to a rectangle from y = 1 up, without its frame.
+    let mut xclipped = Drawing::new_imperial();
+    xclipped.header.set_i64("XCLIPFRAME", 0);
+    let mut blk = cadcraft_doc::Block::new("Z");
+    blk.entities.push(block_entity(1, Common::default(), zigzag()));
+    blk.entities.push(block_entity(2, Common::default(), EntityKind::Point(cadcraft_doc::Point { p: Vec3::new(5.0, 5.0, 0.0), angle: 0.0 })));
+    xclipped.blocks.insert("Z".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("Z") else { panic!("an insert") };
+    ins.clip = Some(cadcraft_doc::ClipBoundary::new(vec![Vec2::new(0.0, 1.0), Vec2::new(10.0, 10.0)]));
+    xclipped.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    xclipped.add(&Space::Model, Common::default(), point_at(5.0)).unwrap();
+    for (d, space) in [(&through_viewport, &paper), (&xclipped, &Space::Model)] {
+        let build = |max_points, max_prims| crate::pipeline::build_space_within(d, space, &Options::default(), false, max_points, max_prims);
+        // The one polyline the build charges becomes many pieces with more points.
+        let full = build(MAX_DISPLAY_POINTS, MAX_DISPLAY_PRIMS);
+        assert!(!full.truncated && full.prims.len() > 50 && points(&full) > 250, "{space:?}: {} prims, {} points", full.prims.len(), points(&full));
+        let l = build(10_000, 20);
+        assert!(l.truncated && !l.prims.is_empty() && l.prims.len() <= 20, "{space:?}: {}", l.prims.len());
+        // The pieces stop at the first that doesn't fit: neither point comes after them.
+        let l = build(220, MAX_DISPLAY_PRIMS);
+        assert!(l.truncated && points(&l) > 0 && points(&l) <= 220, "{space:?}: {}", points(&l));
+        assert!(full.prims.iter().any(|p| p.kind == Kind::Point) && l.prims.iter().all(|p| p.kind != Kind::Point), "{space:?}");
+        // Pieces that fill the list exactly leave no room for the last point.
+        for l in [build(MAX_DISPLAY_POINTS, full.prims.len() - 1), build(points(&full) - 1, MAX_DISPLAY_PRIMS)] {
+            assert!(l.truncated && l.prims.len() == full.prims.len() - 1, "{space:?}: {} of {}", l.prims.len(), full.prims.len());
+        }
+    }
 }

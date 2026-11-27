@@ -22,8 +22,9 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     if ctx.d.is_hidden_object(e.handle) || b.opts.cancelled() {
         return;
     }
-    // Once the build holds all the points it may, nothing more is drawn (or computed).
-    if b.points_spent() {
+    // Once the build holds all the points or primitives it may, nothing more is drawn (or
+    // computed).
+    if b.spent() {
         b.list.truncated = true;
         return;
     }

@@ -107,8 +107,9 @@ pub struct DisplayList {
     pub sheet: Option<Sheet>,
     /// Block contents expanded while building (see [`MAX_BLOCK_EXPANSION`]).
     pub expanded: usize,
-    /// The block-expansion budget or the point budget ([`crate::MAX_DISPLAY_POINTS`]) was spent:
-    /// block contents or objects past it are not in the list. The screen,
+    /// The block-expansion budget, the point budget ([`crate::MAX_DISPLAY_POINTS`]) or the
+    /// primitive budget ([`crate::MAX_DISPLAY_PRIMS`]) was spent: block contents or objects past it
+    /// are not in the list. The screen,
     /// plots and exports draw what is here; the CLI and the control channel report this, so an
     /// output that leaves contents out is never silent (#1070).
     pub truncated: bool,
