@@ -3,7 +3,7 @@
 //! time or by replacing a string in all of them. Attribute tags match in any case, as in AutoCAD.
 
 use cadcraft_doc::color::Color;
-use cadcraft_doc::{AttribProps, Common, EntityKind, Handle};
+use cadcraft_doc::{AttribProps, Common, EntityKind, HAlign, Handle, Text, VAlign};
 use cadcraft_geom::Vec3;
 use serde_json::{Map, Value, json};
 
@@ -68,7 +68,7 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
         if let EntityKind::Insert(i) = &mut e.kind {
             for a in &mut i.attribs {
                 if let Some(v) = value_for(&vals, &a.tag) {
-                    a.text.value = v;
+                    set_value(&mut a.text, v);
                     n += 1;
                 }
             }
@@ -131,11 +131,68 @@ fn edit(s: &mut Session, (h, k): (Handle, usize), f: impl FnOnce(&str) -> Option
             && let Some(a) = ins.attribs.get_mut(k)
             && let Some(v) = f(&a.text.value).filter(|v| *v != a.text.value)
         {
-            a.text.value = v;
+            set_value(&mut a.text, v);
             changed = true;
         }
     })?;
     Ok(changed)
+}
+
+/// Refresh the derived baseline after a value change, even one within the writer's
+/// imported-font tolerance. Equal XY points request recomputation on export; retain
+/// both elevations and the independent endpoints used by Aligned/Fit text.
+fn set_value(text: &mut Text, value: String) {
+    if text.value == value {
+        return;
+    }
+    text.value = value;
+    if !matches!((text.halign, text.valign), (HAlign::Left, VAlign::Baseline) | (HAlign::Aligned | HAlign::Fit, _))
+        && let Some(anchor) = text.align_pt
+    {
+        text.insert.x = anchor.x;
+        text.insert.y = anchor.y;
+    }
+}
+
+/// Move `text` so the point it is placed by lands on `to`: the alignment point of justified text,
+/// else the insertion point. Both points move by the same offset, so aligned and fit text keep the
+/// baseline between them.
+fn move_text(text: &mut Text, to: cadcraft_geom::Vec2) {
+    let anchor = match text.align_pt {
+        Some(ap) if !matches!((text.halign, text.valign), (HAlign::Left, VAlign::Baseline) | (HAlign::Aligned | HAlign::Fit, _)) => ap,
+        _ => text.insert,
+    };
+    let d = Vec3::new(to.x - anchor.x, to.y - anchor.y, 0.0);
+    text.insert = text.insert + d;
+    text.align_pt = text.align_pt.map(|ap| ap + d);
+}
+
+/// Move attribute `a` so the point it is placed by lands on `to`. A multiline attribute is drawn
+/// as its multiline text: that text's insertion point lands on `to`, and the single-line text
+/// moves with it.
+fn move_attrib(a: &mut cadcraft_doc::Attrib, to: cadcraft_geom::Vec2) {
+    match &mut a.multiline {
+        Some(m) => {
+            let d = Vec3::new(to.x - m.mtext.insert.x, to.y - m.mtext.insert.y, 0.0);
+            m.mtext.insert = m.mtext.insert + d;
+            a.text.insert = a.text.insert + d;
+            a.text.align_pt = a.text.align_pt.map(|ap| ap + d);
+        }
+        None => move_text(&mut a.text, to),
+    }
+}
+
+/// Turn `text` to angle `ang` (radians). Aligned and fit text is drawn along its baseline from
+/// the insertion point to the alignment point, so that baseline turns about the insertion point,
+/// its length kept.
+fn turn_text(text: &mut Text, ang: f64) {
+    text.rotation = ang;
+    if matches!(text.halign, HAlign::Aligned | HAlign::Fit)
+        && let Some(ap) = text.align_pt
+    {
+        let to = text.insert.xy() + cadcraft_geom::Vec2::from_angle(ang) * ap.xy().dist(text.insert.xy());
+        text.align_pt = Some(to.to3(ap.z));
+    }
 }
 
 /// Change the properties set on attribute `k` of block reference `h`.
@@ -177,12 +234,30 @@ fn current_props(s: &Session, (h, k): (Handle, usize)) -> Option<(String, Color)
     Some((layer, c.color))
 }
 
-/// The current text properties of attribute `k` of block reference `h`.
+/// The current text properties of attribute `k` of block reference `h`: a multiline attribute's
+/// height, rotation and style are its multiline text's, which is what is drawn.
 fn current_text(s: &Session, (h, k): (Handle, usize)) -> Option<cadcraft_doc::Text> {
     let d = s.doc().ok()?;
     let e = d.entity(h)?;
     let EntityKind::Insert(ins) = &e.kind else { return None };
-    ins.attribs.get(k).map(|a| a.text.clone())
+    let a = ins.attribs.get(k)?;
+    let mut t = a.text.clone();
+    if let Some(m) = &a.multiline {
+        t.height = m.mtext.height;
+        t.rotation = m.mtext.rotation;
+        t.style.clone_from(&m.mtext.style);
+    }
+    Some(t)
+}
+
+/// The point attribute `k` of block reference `h` is placed by, which a picked height or angle is
+/// measured from: a multiline attribute's multiline text insertion point, else the text's
+/// alignment point when justified, else its insertion point.
+fn placement_point(s: &Session, (h, k): (Handle, usize)) -> Option<cadcraft_geom::Vec2> {
+    let d = s.doc().ok()?;
+    let EntityKind::Insert(ins) = &d.entity(h)?.kind else { return None };
+    let a = ins.attribs.get(k)?;
+    Some(a.multiline.as_ref().map_or_else(|| a.text.justify_point(), |m| m.mtext.insert.xy()))
 }
 
 /// Replace every `find` in `value` with `with`, unless the result would be too long.
@@ -526,19 +601,14 @@ impl Interactive for DashAtteditM {
                     _ => return Ok(Step::Continue),
                 };
                 if let Some(it) = self.items.get(self.cur).copied() {
-                    modify_attrib(s, it, |a| {
-                        a.text.insert = Vec3::new(p.x, p.y, a.text.insert.z);
-                        if a.text.align_pt.is_some() {
-                            a.text.align_pt = Some(Vec3::new(p.x, p.y, a.text.insert.z));
-                        }
-                    })?;
+                    modify_attrib(s, it, |a| move_attrib(a, p))?;
                 }
                 self.stage = Stage::Option;
             }
             Stage::Height => {
                 let h = match &i {
                     Input::Point(p) => {
-                        let cur_pt = self.items.get(self.cur).and_then(|it| current_text(s, *it)).map(|t| t.insert.xy());
+                        let cur_pt = self.items.get(self.cur).and_then(|it| placement_point(s, *it));
                         match cur_pt {
                             Some(base) => base.dist(*p).max(1e-9),
                             None => p.len().max(1e-9),
@@ -556,6 +626,9 @@ impl Interactive for DashAtteditM {
                 if let Some(it) = self.items.get(self.cur).copied() {
                     modify_attrib(s, it, |a| {
                         a.text.height = h;
+                        if let Some(m) = &mut a.multiline {
+                            m.mtext.height = h;
+                        }
                     })?;
                 }
                 self.stage = Stage::Option;
@@ -563,7 +636,7 @@ impl Interactive for DashAtteditM {
             Stage::Angle => {
                 let ang = match &i {
                     Input::Point(p) => {
-                        let cur_pt = self.items.get(self.cur).and_then(|it| current_text(s, *it)).map(|t| t.insert.xy());
+                        let cur_pt = self.items.get(self.cur).and_then(|it| placement_point(s, *it));
                         match cur_pt {
                             Some(base) => base.angle_to(*p),
                             None => p.y.atan2(p.x),
@@ -580,7 +653,10 @@ impl Interactive for DashAtteditM {
                 };
                 if let Some(it) = self.items.get(self.cur).copied() {
                     modify_attrib(s, it, |a| {
-                        a.text.rotation = ang;
+                        turn_text(&mut a.text, ang);
+                        if let Some(m) = &mut a.multiline {
+                            m.mtext.rotation = ang;
+                        }
                     })?;
                 }
                 self.stage = Stage::Option;
@@ -593,6 +669,9 @@ impl Interactive for DashAtteditM {
                         s.doc()?.text_style(t).map(|st| st.name.clone()).ok_or_else(|| EngineError::Other(format!("Cannot find style \"{t}\".")))?;
                     if let Some(it) = self.items.get(self.cur).copied() {
                         modify_attrib(s, it, |a| {
+                            if let Some(m) = &mut a.multiline {
+                                m.mtext.style.clone_from(&st);
+                            }
                             a.text.style = st;
                         })?;
                     }

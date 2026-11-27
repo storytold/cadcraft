@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 
 use super::super::find_command;
 use super::super::qselect::wildcard;
+use super::state_prompts;
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 const OPTIONS: &[&str] = &[
@@ -34,9 +35,9 @@ const OPTIONS: &[&str] = &[
 ];
 
 /// Keyword-only: spaces separate inputs.
-const KW: Accept = Accept { point: false, number: false, text: false, select: false, enter: true };
+pub(super) const KW: Accept = Accept { point: false, number: false, text: false, select: false, enter: true };
 /// A name or value: Space ends the input, as it does in AutoCAD scripts.
-const NAME: Accept = Accept { number: true, ..Accept::TEXT };
+pub(super) const NAME: Accept = Accept { number: true, ..Accept::TEXT };
 
 /// A per-layer change applied to a list of layer names.
 #[derive(Clone, Debug)]
@@ -108,15 +109,11 @@ enum Stage {
     Transparency,
     Plot,
     Description,
-    State,
-    StateSave,
-    StateRestore,
-    StateDelete,
-    StateRenameFrom,
-    StateRenameTo(String),
     Layers(Change),
     /// Turning the current layer off asks first.
     ConfirmOff(Vec<String>),
+    /// stAte and its options.
+    State(state_prompts::Stage),
 }
 
 #[derive(Default)]
@@ -129,19 +126,19 @@ fn current_layer(s: &Session) -> String {
 }
 
 /// Run a layer command's body directly: the running command records the single undo step.
-fn call(s: &mut Session, id: &str, p: &Value) -> Result<Value> {
+pub(super) fn call(s: &mut Session, id: &str, p: &Value) -> Result<Value> {
     let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
     (spec.run)(s, p)
 }
 
-fn message(e: &EngineError) -> String {
+pub(super) fn message(e: &EngineError) -> String {
     match e {
         EngineError::BadParams { msg, .. } => msg.clone(),
         other => other.to_string(),
     }
 }
 
-fn retry(msg: impl Into<String>) -> EngineError {
+pub(super) fn retry(msg: impl Into<String>) -> EngineError {
     EngineError::Other(msg.into())
 }
 
@@ -194,7 +191,7 @@ impl LayerM {
             "LOck" => Stage::Layers(Change::Lock),
             "Unlock" => Stage::Layers(Change::Unlock),
             "Description" => Stage::Description,
-            "stAte" => Stage::State,
+            "stAte" => Stage::State(state_prompts::Stage::Option),
             other => {
                 // MATerial, rEconcile: report and stay at the option prompt.
                 s.echo(format!("-LAYER {other} is not available yet."));
@@ -269,7 +266,7 @@ impl LayerM {
             Ok(Step::Continue)
         };
         match stage {
-            Stage::Option => Ok(Step::Continue),
+            Stage::Option | Stage::State(_) => Ok(Step::Continue),
             Stage::List => {
                 self.list(s, text.as_deref().unwrap_or("*"));
                 Ok(Step::Continue)
@@ -397,72 +394,6 @@ impl LayerM {
                 }
             },
             Stage::Description => back(self, Stage::Layers(Change::Description(text.unwrap_or_default()))),
-            Stage::State => match &i {
-                Input::Keyword(k) => match k.as_str() {
-                    "?" => {
-                        let names: Vec<String> = s.doc()?.layer_states.iter().map(|st| st.name.clone()).collect();
-                        s.echo(if names.is_empty() { "No saved layer states.".to_string() } else { format!("Layer states: {}", names.join(", ")) });
-                        back(self, Stage::State)
-                    }
-                    "Save" => back(self, Stage::StateSave),
-                    "Restore" => back(self, Stage::StateRestore),
-                    "Delete" => back(self, Stage::StateDelete),
-                    "Name" | "Rename" => back(self, Stage::StateRenameFrom),
-                    "Edit" => {
-                        s.echo("Layer state editing is not available yet.");
-                        back(self, Stage::State)
-                    }
-                    _ => Ok(Step::Continue),
-                },
-                Input::Enter => Ok(Step::Continue),
-                _ => {
-                    self.stage = Stage::State;
-                    Err(retry("Invalid option keyword."))
-                }
-            },
-            Stage::StateSave => {
-                if let Some(n) = text
-                    && let Err(e) = call(s, "layerstate.save", &json!({ "name": n }))
-                {
-                    s.echo(message(&e));
-                }
-                Ok(Step::Continue)
-            }
-            Stage::StateRestore => {
-                if let Some(n) = text
-                    && let Err(e) = call(s, "layerstate.restore", &json!({ "name": n }))
-                {
-                    s.echo(message(&e));
-                }
-                Ok(Step::Continue)
-            }
-            Stage::StateDelete => {
-                if let Some(n) = text
-                    && let Err(e) = call(s, "layerstate.delete", &json!({ "name": n }))
-                {
-                    s.echo(message(&e));
-                }
-                Ok(Step::Continue)
-            }
-            Stage::StateRenameFrom => match text {
-                None => Ok(Step::Continue),
-                Some(n) => {
-                    if s.doc()?.layer_states.iter().any(|st| st.name == n) {
-                        back(self, Stage::StateRenameTo(n))
-                    } else {
-                        s.echo(format!("No layer state named \"{n}\"."));
-                        Ok(Step::Continue)
-                    }
-                }
-            },
-            Stage::StateRenameTo(old) => {
-                if let Some(to) = text
-                    && let Err(e) = call(s, "layerstate.rename", &json!({ "from": old, "to": to }))
-                {
-                    s.echo(message(&e));
-                }
-                Ok(Step::Continue)
-            }
             Stage::Layers(change) => self.layers(s, change, text.as_deref()),
             Stage::ConfirmOff(names) => {
                 let cur = current_layer(s);
@@ -501,21 +432,24 @@ impl Interactive for LayerM {
             Stage::Transparency => Prompt::new("Enter transparency value (0-90)", NAME).default("0"),
             Stage::Plot => Prompt::new("Enter a plotting preference", KW).kw(&["Plot", "No"]).default("Plot"),
             Stage::Description => Prompt::new("Enter layer description", Accept::TEXT),
-            Stage::State => Prompt::new("Enter an option", KW).kw(&["?", "Save", "Restore", "Edit", "Name", "Delete"]),
-            Stage::StateSave => Prompt::new("Enter name of layer state to save", NAME),
-            Stage::StateRestore => Prompt::new("Enter name of layer state to restore", NAME),
-            Stage::StateDelete => Prompt::new("Enter name of layer state to delete", NAME),
-            Stage::StateRenameFrom => Prompt::new("Enter old layer state name", NAME),
-            Stage::StateRenameTo(_) => Prompt::new("Enter new layer state name", NAME),
             Stage::Layers(c) => {
                 let (msg, enter_is_current) = c.prompt();
                 let p = Prompt::new(msg, NAME);
                 if enter_is_current { p.default(cur) } else { p }
             }
             Stage::ConfirmOff(_) => Prompt::new(format!("Really want layer \"{cur}\" (the CURRENT layer) off?"), KW).kw(&["Yes", "No"]).default("N"),
+            Stage::State(st) => st.prompt(),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if let Stage::State(st) = &mut self.stage
+            && !matches!(i, Input::Cancel)
+        {
+            if !st.input(s, &i)? {
+                self.stage = Stage::Option;
+            }
+            return Ok(Step::Continue);
+        }
         match (&self.stage, &i) {
             (_, Input::Cancel) => Ok(Step::Cancel),
             (Stage::Option, Input::Enter) => Ok(Step::Done),

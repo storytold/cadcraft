@@ -60,14 +60,27 @@ fn dof_text(status: &str, dof: Option<usize>) -> Option<(String, Color32)> {
     }
 }
 
+/// The dimensional constraint whose expression is being edited inline on the canvas.
+#[derive(Clone)]
+struct InlineEdit {
+    /// Active drawing (`DocState::uid`) when editing started; switching drawings drops the edit.
+    uid: u64,
+    name: String,
+    original: String,
+    buf: String,
+    at: Pos2,
+}
+
 /// Per-drawing-revision cache of the constraint glyphs (inspect is not free on big drawings).
 #[derive(Default)]
 pub struct Cache {
     key: Option<(u64, u64, usize)>,
     glyphs: Vec<Glyph>,
     dof: Dof,
-    /// The dimensional constraint whose expression is being edited: (name, buffer, screen pos).
-    editing: Option<(String, String, Pos2)>,
+    editing: Option<InlineEdit>,
+    /// True on the frame the inline editor rendered, so `cmdline::keyboard` later in the same frame
+    /// does not also consume the Enter or Escape that just closed it (repeating `last_command`, e.g. Undo).
+    took_keyboard: bool,
 }
 
 fn doc_key(app: &CadApp) -> Option<(u64, u64, usize)> {
@@ -259,18 +272,23 @@ enum Act {
 }
 
 /// Draw constraint bars and dynamic constraints. `xf` maps model space to the screen.
-pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter, xf: &Xf) {
-    refresh(app);
-    let Ok(d) = app.session.doc() else { return };
-    if d.constraints.is_empty() {
-        app.canvas.param.editing = None;
-        return;
-    }
-    let t = Tokens::get();
-    let set = &d.parametric.settings;
-    let mut act: Option<Act> = None;
-    let glyphs = &app.canvas.param.glyphs;
-    let (lu, lp) = (d.header.i64("LUNITS", 2), d.header.i64("LUPREC", 4));
+struct DimensionalContext<'a> {
+    doc: &'a Drawing,
+    settings: &'a cadcraft_doc::ParametricSettings,
+    glyphs: &'a [Glyph],
+    xf: &'a Xf,
+    painter: &'a egui::Painter,
+    ui: &'a mut egui::Ui,
+    tokens: Tokens,
+    units: (i64, i64),
+    /// Clickable only when idle (no active command or LISP prompt, and no selection window open),
+    /// so picks during a prompt still reach the drawing (matches `viewcube::ucs_icon`).
+    interactive: bool,
+}
+
+fn draw_dimensional_constraints(frame: DimensionalContext<'_>) -> Option<Act> {
+    let DimensionalContext { doc: d, settings: set, glyphs, xf, painter, ui, tokens: t, units: (lu, lp), interactive } = frame;
+    let mut act = None;
     // ----- dynamic (dimensional) constraints -----
     let dim_c = Color32::from_rgb(0x9f, 0xb6, 0xd6);
     let off_px: f32 = 26.0;
@@ -392,9 +410,15 @@ pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
         painter.rect_filled(r, 2.0, t.canvas.gamma_multiply(0.85));
         lock(painter, Rect::from_min_size(r.min + vec2(3.0, (r.height() - 13.0) / 2.0), vec2(13.0, 13.0)), col);
         painter.galley(r.min + vec2(19.0, 2.0), galley, col);
-        let resp = ui.interact(r, ui.scope_id().with(("dimcon", c.id)), Sense::click());
-        if resp.double_clicked() {
-            act = Some(Act::Edit(c.name.clone(), c.expr.clone(), r.left_center()));
+        // Sense drag as well as click so the canvas underneath (which uses `click_and_drag`) does
+        // not stay hovered over the label, start selection windows on click, or steal double-clicks.
+        let sense = if interactive { Sense::click_and_drag() } else { Sense::hover() };
+        let mut resp = ui.interact(r, ui.scope_id().with(("dimcon", c.id)), sense);
+        if interactive {
+            resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+            if resp.double_clicked() {
+                act = Some(Act::Edit(c.name.clone(), c.expr.clone(), r.left_center()));
+            }
         }
         resp.on_hover_text(crate::tf!(
             "{kind} constraint {name} = {expression}  (double-click to edit)",
@@ -403,6 +427,13 @@ pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
             expression = c.expr
         ));
     }
+    act
+}
+
+fn draw_geometric_constraints(app: &CadApp, ui: &mut egui::Ui, painter: &egui::Painter, xf: &Xf, t: Tokens) {
+    let Ok(d) = app.session.doc() else { return };
+    let set = &d.parametric.settings;
+    let glyphs = &app.canvas.param.glyphs;
     // ----- geometric constraint bars -----
     let mut bars: Vec<(Handle, Vec2, Vec<(&str, u32)>)> = Vec::new();
     let mut dots: Vec<Vec2> = Vec::new();
@@ -488,41 +519,90 @@ pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
         painter.rect_filled(r, 2.0, t.canvas.gamma_multiply(0.85));
         painter.galley(at + vec2(4.0, 2.0), galley, col);
     }
+}
+
+pub fn take_keyboard(app: &mut CadApp) -> bool {
+    std::mem::take(&mut app.canvas.param.took_keyboard)
+}
+
+pub fn dismiss_inline(app: &mut CadApp, ctx: &egui::Context) {
+    if app.canvas.param.editing.take().is_some() {
+        ctx.data_mut(|d| d.remove::<egui::text_edit::TextEditState>(egui::Id::unique("dimcon_edit_te")));
+    }
+    app.canvas.param.took_keyboard = false;
+}
+
+pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter, xf: &Xf) {
+    app.canvas.param.took_keyboard = false;
+    refresh(app);
+    let Ok(d) = app.session.doc() else { return };
+    if d.constraints.is_empty() {
+        if app.canvas.param.editing.take().is_some() {
+            ui.ctx().data_mut(|d| d.remove::<egui::text_edit::TextEditState>(egui::Id::unique("dimcon_edit_te")));
+        }
+        return;
+    }
+    let t = Tokens::get();
+    let set = &d.parametric.settings;
+    let glyphs = &app.canvas.param.glyphs;
+    let (lu, lp) = (d.header.i64("LUNITS", 2), d.header.i64("LUPREC", 4));
+    let interactive = !app.session.prompting() && app.session.pending_window.is_none();
+    let act =
+        draw_dimensional_constraints(DimensionalContext { doc: d, settings: set, glyphs, xf, painter, ui, tokens: t, units: (lu, lp), interactive });
+    draw_geometric_constraints(app, ui, painter, xf, t);
     let _ = act_take(app, act, ui);
 }
 
 fn act_take(app: &mut CadApp, act: Option<Act>, ui: &mut egui::Ui) -> Option<()> {
+    let te_id = egui::Id::unique("dimcon_edit_te");
+    let uid = app.session.state().ok()?.uid;
     if let Some(Act::Edit(name, expr, at)) = act {
-        app.canvas.param.editing = Some((name, expr, at));
+        ui.ctx().data_mut(|d| d.remove::<egui::text_edit::TextEditState>(te_id));
+        app.canvas.param.editing = Some(InlineEdit { uid, name, original: expr.clone(), buf: expr, at });
     }
     // The inline expression editor.
-    let (name, mut buf, at) = app.canvas.param.editing.clone()?;
+    let mut edit = app.canvas.param.editing.clone()?;
+    if edit.uid != uid {
+        ui.ctx().data_mut(|d| d.remove::<egui::text_edit::TextEditState>(te_id));
+        app.canvas.param.editing = None;
+        return None;
+    }
+    app.canvas.param.took_keyboard = true;
     let mut done: Option<bool> = None;
-    egui::Area::new(egui::Id::unique("dimcon_edit")).order(egui::Order::Foreground).fixed_pos(at - vec2(0.0, 12.0)).show(ui.ctx(), |ui| {
+    egui::Area::new(egui::Id::unique("dimcon_edit")).order(egui::Order::Foreground).fixed_pos(edit.at - vec2(0.0, 12.0)).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.horizontal(|ui| {
-                let label = ui.label(format!("{name} ="));
-                let r =
-                    ui.add(egui::TextEdit::singleline(&mut buf).desired_width(140.0).id(egui::Id::unique("dimcon_edit_te"))).labelled_by(label.id);
-                if !r.has_focus() && !r.lost_focus() {
+                let label = ui.label(format!("{} =", edit.name));
+                let opening = egui::TextEdit::load_state(ui.ctx(), te_id).is_none();
+                let r = ui.add(egui::TextEdit::singleline(&mut edit.buf).desired_width(140.0).id(te_id)).labelled_by(label.id);
+                if opening {
                     r.request_focus();
-                }
-                if r.lost_focus() {
-                    done = Some(ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                    if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), te_id) {
+                        let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(edit.buf.chars().count()));
+                        state.cursor.set_char_range(Some(all));
+                        state.store(ui.ctx(), te_id);
+                    }
                 }
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     done = Some(false);
+                } else if r.lost_focus() {
+                    let trimmed = edit.buf.trim();
+                    done = Some(!trimmed.is_empty() && trimmed != edit.original.trim());
                 }
             });
         });
     });
     match done {
         Some(true) => {
+            ui.ctx().data_mut(|d| d.remove::<egui::text_edit::TextEditState>(te_id));
             app.canvas.param.editing = None;
-            let _ = app.run("parameters", json!({ "name": name, "expr": buf.trim() }));
+            let _ = app.run("parameters", json!({ "name": edit.name, "expr": edit.buf.trim() }));
         }
-        Some(false) => app.canvas.param.editing = None,
-        None => app.canvas.param.editing = Some((name, buf, at)),
+        Some(false) => {
+            ui.ctx().data_mut(|d| d.remove::<egui::text_edit::TextEditState>(te_id));
+            app.canvas.param.editing = None;
+        }
+        None => app.canvas.param.editing = Some(edit),
     }
     Some(())
 }

@@ -18,6 +18,7 @@ fn viewport(id: u32, frozen_layers: Vec<String>, layer_colors: Vec<(String, Colo
         layer_colors,
         clip: None,
         on: true,
+        twist: 0.0,
     })
 }
 

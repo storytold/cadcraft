@@ -7,7 +7,8 @@ use serde_json::{Value, json};
 
 use super::super::helpers::support_text;
 use super::super::qselect::wildcard;
-use super::*;
+use super::{Result, Session, bad, bool_or, str_param};
+
 use crate::{Accept, Input, Interactive, Prompt, Step};
 
 /// Names no file may define: they are not linetype definitions.
@@ -58,7 +59,7 @@ fn put(d: &mut Drawing, lt: Linetype, reload: bool, out: &mut Loaded) {
             break;
         }
     }
-    match d.linetypes.iter_mut().find(|l| l.name.eq_ignore_ascii_case(&lt.name)) {
+    match d.linetypes.by_name_mut(&lt.name) {
         Some(old) if reload => {
             out.reloaded.push(old.name.clone());
             // The drawing keeps the name as it had it (objects refer to it).

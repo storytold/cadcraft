@@ -115,6 +115,39 @@ pub(super) fn forget_in_viewports(d: &mut Drawing, set: &HashSet<String>) {
     }
 }
 
+/// Point every layout viewport's frozen list and colour overrides at a renamed layer.
+pub(super) fn rename_in_viewports(d: &mut Drawing, old: &str, new: &str) {
+    for layout in &mut d.layouts {
+        let hs: Vec<Handle> = layout
+            .entities
+            .iter()
+            .filter(|e| match &e.kind {
+                EntityKind::Viewport(v) => {
+                    v.frozen_layers.iter().any(|l| l.eq_ignore_ascii_case(old)) || v.layer_colors.iter().any(|(l, _)| l.eq_ignore_ascii_case(old))
+                }
+                _ => false,
+            })
+            .map(|e| e.handle)
+            .collect();
+        for h in hs {
+            layout.entities.modify(h, |e| {
+                if let EntityKind::Viewport(v) = &mut e.kind {
+                    for l in &mut v.frozen_layers {
+                        if l.eq_ignore_ascii_case(old) {
+                            *l = new.to_string();
+                        }
+                    }
+                    for (l, _) in &mut v.layer_colors {
+                        if l.eq_ignore_ascii_case(old) {
+                            *l = new.to_string();
+                        }
+                    }
+                }
+            });
+        }
+    }
+}
+
 fn lower_set(names: &[String]) -> HashSet<String> {
     names.iter().map(|n| n.to_ascii_lowercase()).collect()
 }
@@ -142,6 +175,10 @@ pub(super) fn run_laymrg(s: &mut Session, p: &Value) -> Result<Value> {
         hs.len()
     });
     forget_in_viewports(d, &set);
+    // Proxy graphics drawn on a merged layer move to the target, as its objects do.
+    for source in &sources {
+        d.rename_proxy_layer(source, &target);
+    }
     d.layers.retain(|l| !set.contains(&l.name.to_ascii_lowercase()));
     let mut msg = format!("Merged {} into \"{target}\": {} moved.", quoted(&sources), plural(moved, "object"));
     if set.contains(&d.header.str("CLAYER", "0").to_ascii_lowercase()) {
@@ -169,6 +206,11 @@ pub(super) fn run_laydel(s: &mut Session, p: &Value) -> Result<Value> {
         hs.len()
     });
     forget_in_viewports(d, &set);
+    // A proxy isn't deleted for drawing on a deleted layer (its parts can't be); they fall back
+    // to layer 0, the proxy's own layer.
+    for source in &sources {
+        d.rename_proxy_layer(source, "0");
+    }
     d.layers.retain(|l| !set.contains(&l.name.to_ascii_lowercase()));
     s.set_selection(Vec::new());
     let msg = format!("Deleted {} and {}.", quoted(&sources), plural(erased, "object"));

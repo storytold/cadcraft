@@ -59,7 +59,7 @@ pub const PATTERN_MM: f64 = 1.0;
 pub const MAX_PATTERN_CELLS: usize = 2_000_000;
 
 /// Miters longer than this many half widths are drawn bevelled (as PDF's default miter limit).
-const MITER_LIMIT: f64 = 10.0;
+pub(crate) const MITER_LIMIT: f64 = 10.0;
 
 /// Segments of a half circle (round ends and joins).
 const ROUND_STEPS: usize = 12;

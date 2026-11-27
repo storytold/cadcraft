@@ -9,7 +9,8 @@ use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Insert, MAX_BLOCK_DEPTH,
 use cadcraft_geom::{Mat3, Vec2};
 use serde_json::{Value, json};
 
-use super::super::*;
+use super::super::{bad, bool_or, point_req, str_param, targets};
+
 use super::SelfCheck;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
@@ -61,8 +62,7 @@ impl Scope {
             Some(_) => {
                 let name = given.unwrap_or_default();
                 let d = s.doc()?;
-                let l =
-                    d.layouts.iter().find(|l| l.name.eq_ignore_ascii_case(&name)).ok_or_else(|| bad(cmd, format!("no layout named \"{name}\"")))?;
+                let l = d.layout(&name).ok_or_else(|| bad(cmd, format!("no layout named \"{name}\"")))?;
                 Ok(Scope::Space(Space::Paper(l.name.clone())))
             }
         }

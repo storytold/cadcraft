@@ -52,15 +52,11 @@ fn collect(d: &Drawing, handles: &[Handle]) -> Geo {
                     g.curves.push((GeomRef::whole(h), ga.center, a.radius));
                 }
             }
-            EntityKind::Circle(c) => {
-                if c.center.is_finite() && c.radius.is_finite() {
-                    g.curves.push((GeomRef::whole(h), c.center.xy(), c.radius));
-                }
+            EntityKind::Circle(c) if c.center.is_finite() && c.radius.is_finite() => {
+                g.curves.push((GeomRef::whole(h), c.center.xy(), c.radius));
             }
-            EntityKind::Point(p) => {
-                if p.p.is_finite() {
-                    g.points.push((GeomRef::whole(h), p.p.xy()));
-                }
+            EntityKind::Point(p) if p.p.is_finite() => {
+                g.points.push((GeomRef::whole(h), p.p.xy()));
             }
             EntityKind::LwPolyline(p) => {
                 let n = p.vertices.len();
@@ -236,6 +232,10 @@ pub fn infer_placed(d: &Drawing, placed: &[Handle], others: &[Handle], o: &Infer
     let mut extra = Vec::new();
     let mut on = Vec::new();
     for (rp, p) in g.points.iter().filter(|(r, _)| placed.contains(&r.handle)) {
+        // Nothing is added once the candidates are full, so the points left need no search.
+        if extra.len() + on.len() + out.len() >= MAX_CANDIDATES {
+            break;
+        }
         if out.iter().any(|c| c.kind == ConstraintKind::Coincident && c.refs.contains(rp)) {
             continue;
         }
@@ -271,20 +271,22 @@ pub fn infer_placed(d: &Drawing, placed: &[Handle], others: &[Handle], o: &Infer
     // Perpendicular lines meeting in a T (a perpendicular snap onto the middle of a line).
     let atol = if o.angle_tolerance.is_finite() { o.angle_tolerance.clamp(0.0, 45.0).to_radians() } else { 0.0 };
     let allow_per = o.types.is_empty() || o.types.iter().any(|t| t.eq_ignore_ascii_case(ConstraintKind::Perpendicular.name()));
-    for (r1, a1, b1) in g.lines.iter().filter(|(r, _, _)| placed.contains(&r.handle)) {
+    'per: for (r1, a1, b1) in g.lines.iter().filter(|(r, _, _)| allow_per && placed.contains(&r.handle)) {
         for (r2, a2, b2) in g.lines.iter().filter(|(r, _, _)| r.handle != r1.handle) {
+            // Full: nothing more can be added, so the pairs left need no geometry or duplicate search.
+            if out.len() + extra.len() + on.len() >= MAX_CANDIDATES {
+                break 'per;
+            }
             let (l1, l2) = (Line::new(*a1, *b1), Line::new(*a2, *b2));
             let touches = |l: &Line, p: Vec2| l.dist(p) <= tol && (0.0..=1.0).contains(&l.param_of(p));
             let tee = [*a1, *b1].iter().any(|p| touches(&l2, *p)) || [*a2, *b2].iter().any(|p| touches(&l1, *p));
             let ang = ang_between(*b1 - *a1, *b2 - *a2);
-            let dup = out.iter().any(|c| c.kind == ConstraintKind::Perpendicular && c.refs.contains(r1) && c.refs.contains(r2));
-            if allow_per
-                && tee
-                && !dup
+            // The duplicate search scans every candidate, so it comes after the cheap tests.
+            if tee
                 && (std::f64::consts::FRAC_PI_2 - ang).abs() <= atol
                 && l1.len() > tol
                 && l2.len() > tol
-                && out.len() < MAX_CANDIDATES
+                && !out.iter().any(|c| c.kind == ConstraintKind::Perpendicular && c.refs.contains(r1) && c.refs.contains(r2))
             {
                 out.push(Constraint { id: 0, kind: ConstraintKind::Perpendicular, refs: vec![*r1, *r2], name: String::new(), expr: String::new() });
             }

@@ -1,0 +1,248 @@
+use std::collections::BTreeMap;
+
+use cadcraft_doc::TagKey;
+
+use super::draw::entity;
+use super::props::{resolve, resolve_common, transparency};
+use super::text_entity::{mtext, place_text_entity};
+use super::{Builder, Clip, Color, Ctx, Entity, EntityKind, Ink, Lineweight, Mat3, Vec2, append_clipped_keep, clip};
+
+pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
+    let layer = if e.common.layer == "0" { ctx.block_layer.clone() } else { Some(e.common.layer.clone()) };
+    let color = match e.common.color {
+        Color::ByBlock => ctx.block_color,
+        Color::ByLayer => ctx.layer_color(layer.as_deref().unwrap_or("0")).unwrap_or(Color::Index(7)),
+        c => c,
+    };
+    let lw = match e.common.lineweight {
+        Lineweight::ByBlock => ctx.block_lw,
+        Lineweight::ByLayer => ctx.d.layer(layer.as_deref().unwrap_or("0")).map(|l| l.lineweight).unwrap_or(Lineweight::Default),
+        x => x,
+    };
+    let lt = match e.common.linetype.to_ascii_lowercase().as_str() {
+        "byblock" => ctx.block_ltype.clone(),
+        "bylayer" => ctx.d.layer(layer.as_deref().unwrap_or("0")).map(|l| l.linetype.clone()).unwrap_or_else(|| "Continuous".into()),
+        _ => e.common.linetype.clone(),
+    };
+    Ctx {
+        d: ctx.d,
+        xf: ctx.xf.then_before(m),
+        block_color: color,
+        block_layer: layer,
+        block_lw: lw,
+        block_ltype: lt,
+        depth: ctx.depth + 1,
+        top: ctx.top,
+        frozen: ctx.frozen,
+        vp_colors: ctx.vp_colors,
+        // The reference's own linetype scale (group 48) multiplies that of the objects inside,
+        // as LTSCALE does for the drawing (tests/block_ltscale.rs).
+        lt_factor: ctx.lt_factor * if e.common.ltscale.is_finite() && e.common.ltscale > 0.0 { e.common.ltscale } else { 1.0 },
+        block_pstyle: ctx.block_pstyle,
+        // The reference's own, set by the caller (`Builder::transparency` while it draws).
+        block_transparency: ctx.block_transparency,
+        // Proxy graphics are drawn as part of the block they are in; a block reference or a
+        // dimension sets its own block instead.
+        block: ctx.block,
+    }
+}
+
+/// A proxy entity draws its proxy graphics as AutoCAD does with PROXYSHOW 1, like block contents:
+/// layer 0 and ByBlock in the picture stand for the proxy's own layer and properties. Other
+/// unknown records draw nothing. `own` is the proxy's transparency without its locked-layer fade,
+/// as for a block reference.
+pub(crate) fn proxy(b: &mut Builder, ctx: &Ctx, e: &Entity, u: &cadcraft_doc::Unknown, own: u8) {
+    if u.graphics.is_empty() || ctx.depth >= cadcraft_doc::MAX_BLOCK_DEPTH {
+        return;
+    }
+    let sub = Ctx { block_pstyle: b.named, block_transparency: own, ..sub_ctx(ctx, e, Mat3::IDENTITY) };
+    for g in &u.graphics {
+        if !b.expand() {
+            break;
+        }
+        entity(b, &sub, g);
+    }
+}
+
+/// `own` is the reference's resolved transparency without its locked-layer fade: what ByBlock
+/// children inherit (a child fades only for its own layer).
+pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rgb: Ink, own: u8) {
+    if ctx.depth >= cadcraft_doc::MAX_BLOCK_DEPTH {
+        return;
+    }
+    if let Some(blk) = ctx.d.block(&ins.block) {
+        // ATTMODE (ATTDISP) for the block's constant attributes, as for its other attributes.
+        let attmode = ctx.d.header.i64("ATTMODE", 1);
+        // The reference's attributes by tag, gathered at the first constant definition that asks
+        // and kept for the others and every copy.
+        let mut carried = None;
+        let cols = ins.cols.clamp(1, 10_000);
+        let rows = ins.rows.clamp(1, 10_000);
+        'copies: for r in 0..rows {
+            for c in 0..cols {
+                if !b.expand() {
+                    break 'copies;
+                }
+                let off = Vec2::new(ins.col_spacing * f64::from(c), ins.row_spacing * f64::from(r)).rotate(ins.rotation);
+                let m = Mat3::translate(off).then_before(ins.transform(blk.base.xy()));
+                let sub = Ctx { block: Some(blk), block_pstyle: b.named, block_transparency: own, ..sub_ctx(ctx, e, m) };
+                // XCLIP: the copy is drawn on its own, then cut to the boundary.
+                let clip = xclip_region(ins, &sub.xf);
+                let mut part = clip.as_ref().map(|_| b.part());
+                let target = part.as_mut().unwrap_or(&mut *b);
+                let mut stop = false;
+                for be in blk.entities.iter() {
+                    // Every visit is charged, drawn or not, so a block of definitions can't make
+                    // the copies loop free.
+                    if !target.expand() {
+                        stop = true;
+                        break;
+                    }
+                    // Attribute definitions inside blocks are not drawn (the reference's attributes
+                    // are), except a constant one: its value draws with the block's geometry.
+                    if let EntityKind::AttDef(a) = &be.kind {
+                        if let Some(text) = constant_attribute(be, a, ins, attmode, &mut carried) {
+                            entity(target, &sub, &text);
+                        }
+                        continue;
+                    }
+                    entity(target, &sub, be);
+                }
+                if let (Some(part), Some((region, inverted))) = (part, &clip) {
+                    b.list.expanded = part.list.expanded;
+                    b.list.truncated |= part.list.truncated;
+                    b.list.undashed = b.list.undashed.saturating_add(part.list.undashed);
+                    append_clipped_keep(&mut b.list, &part.list, &if *inverted { Clip::Outside(region) } else { Clip::Poly(region) });
+                    xclip_frame(b, ctx, region, rgb);
+                }
+                if stop {
+                    break 'copies;
+                }
+            }
+        }
+    }
+    // Attributes are cut by the reference's clip too.
+    let attr_clip = ctx.d.block(&ins.block).and_then(|blk| xclip_region(ins, &ctx.xf.then_before(ins.transform(blk.base.xy()))));
+    let mut part = attr_clip.as_ref().map(|_| b.part());
+    attributes(part.as_mut().unwrap_or(&mut *b), ctx, e, ins, rgb, own);
+    if let (Some(part), Some((region, inverted))) = (part, &attr_clip) {
+        append_clipped_keep(&mut b.list, &part.list, &if *inverted { Clip::Outside(region) } else { Clip::Poly(region) });
+    }
+}
+
+/// A constant attribute definition `a` (`be`) of reference `ins`'s block as the text it draws:
+/// its value, with the definition's properties. A constant value isn't copied into the reference's
+/// attributes, so it is drawn from the definition. `None` for a variable definition (its attribute
+/// is drawn instead), one ATTMODE hides (0 hides all, 1 the invisible ones), and one the reference
+/// carries an attribute for (that attribute is drawn, not both). `carried`: the reference's
+/// attributes by tag, gathered here on first use so that each definition costs one lookup (#1923).
+fn constant_attribute<'i>(
+    be: &Entity,
+    a: &cadcraft_doc::Attrib,
+    ins: &'i cadcraft_doc::Insert,
+    attmode: i64,
+    carried: &mut Option<BTreeMap<TagKey<'i>, &'i cadcraft_doc::Attrib>>,
+) -> Option<Entity> {
+    if !a.constant
+        || attmode == 0
+        || (a.invisible && attmode != 2)
+        || carried.get_or_insert_with(|| ins.attribs_by_tag()).contains_key(&TagKey(&a.tag))
+    {
+        return None;
+    }
+    let kind = match a.multiline_text() {
+        Some(m) => EntityKind::MText(m),
+        None => EntityKind::Text(a.text.clone()),
+    };
+    Some(Entity { handle: be.handle, common: be.common.clone(), kind })
+}
+
+/// The XCLIP region of reference `ins` drawn through `xf` (block to drawing coordinates), and
+/// whether it is inverted. `None` when the reference isn't clipped (no boundary, clipping off, a
+/// degenerate outline).
+fn xclip_region(ins: &cadcraft_doc::Insert, xf: &Mat3) -> Option<(clip::PolyClip, bool)> {
+    let c = ins.clip.as_ref().filter(|c| c.active())?;
+    let world: Vec<Vec2> = c.polygon().into_iter().map(|p| xf.apply(p)).collect();
+    Some((clip::PolyClip::new(&world)?, c.inverted))
+}
+
+/// The clipping boundary's frame as XCLIPFRAME says: 0 hidden, 1 shown and plotted, 2 shown but
+/// not plotted (the default).
+fn xclip_frame(b: &mut Builder, ctx: &Ctx, region: &clip::PolyClip, rgb: Ink) {
+    let mode = ctx.d.header.i64("XCLIPFRAME", 2);
+    if mode == 0 || (b.plotting && mode != 1) {
+        return;
+    }
+    let mut frame = region.polygon().to_vec();
+    if let Some(first) = frame.first().copied() {
+        frame.push(first);
+    }
+    // The outline is in drawing coordinates already.
+    let top = Ctx { xf: Mat3::IDENTITY, ..ctx.clone() };
+    b.polyline(&top, rgb, 0.0, &frame);
+}
+
+/// The attributes of block reference `e` (`ins`).
+fn attributes(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rgb: Ink, own: u8) {
+    if b.opts.text {
+        // ATTMODE (ATTDISP): 0 shows no attributes, 1 the visible ones, 2 all of them.
+        let attmode = ctx.d.header.i64("ATTMODE", 1);
+        // The reference's transparency; each attribute draws with its own.
+        let reference = b.transparency;
+        // The block's first definition per tag (without case), built once for all the attributes.
+        let mut defs: std::collections::HashMap<String, &Entity> = std::collections::HashMap::new();
+        if !ins.attribs.is_empty()
+            && let Some(blk) = ctx.d.block(&ins.block)
+        {
+            for be in blk.entities.iter() {
+                if let EntityKind::AttDef(d) = &be.kind {
+                    defs.entry(d.tag.to_ascii_lowercase()).or_insert(be.as_ref());
+                }
+            }
+        }
+        for a in &ins.attribs {
+            if attmode == 0 || (a.invisible && attmode != 2) {
+                continue;
+            }
+            // A multiline attribute is drawn as its multiline text.
+            let multiline = a.multiline_text();
+            let sh = if multiline.is_none() { Some(place_text_entity(ctx.d, &a.text, &a.text.value).0) } else { None };
+            // Properties of the attribute's definition (as AutoCAD copies them to the attribute
+            // on insertion), except those set on the attribute itself: ByBlock = the reference's,
+            // layer 0 = the reference's layer.
+            let def = defs.get(&a.tag.to_ascii_lowercase()).copied();
+            let (ink, lw, shown, t) = match (def, a.props.is_empty()) {
+                (None, true) => (rgb, resolve(ctx, e, b.plotting).1, true, reference),
+                (def, _) => {
+                    let c = a.props.over(&def.map(|d| d.common.clone()).unwrap_or_else(by_block));
+                    let (ink, lw, _, _, shown, layer_t, fade) = resolve_common(&sub_ctx(ctx, e, Mat3::IDENTITY), &c, b.plotting);
+                    // ByBlock takes the reference's own transparency, not its locked-layer fade.
+                    let t = if b.opts.transparency { transparency(c.transparency, layer_t, own) } else { 0 };
+                    let t = if b.opts.on_screen { t.max(fade) } else { t };
+                    (ink, lw, shown, t)
+                }
+            };
+            if shown {
+                b.transparency = t;
+                let lw = if b.opts.lineweights { lw } else { 0.0 };
+                match (&multiline, &sh) {
+                    (Some(m), _) => mtext(b, ctx, m, ink, lw),
+                    (None, Some(sh)) => b.shaped(ctx, ink, lw, sh),
+                    (None, None) => {}
+                }
+            }
+        }
+        b.transparency = reference;
+    }
+}
+
+/// Properties that follow the block reference's (an attribute without a definition).
+fn by_block() -> cadcraft_doc::Common {
+    cadcraft_doc::Common {
+        color: Color::ByBlock,
+        linetype: "ByBlock".into(),
+        lineweight: Lineweight::ByBlock,
+        transparency: cadcraft_doc::Transparency::ByBlock,
+        ..cadcraft_doc::Common::default()
+    }
+}

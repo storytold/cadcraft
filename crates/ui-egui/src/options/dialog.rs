@@ -217,78 +217,101 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
 /// Files tab: save format and default version, new-drawing units, autosave interval and autosave file location; edits accumulate in `changes`.
 fn files(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     grid(ui, "options_files", |ui| {
-        ui.label(crate::tl!("Save new drawings as"));
-        ui.horizontal(|ui| {
-            for f in crate::SaveFormat::ALL {
-                let label = match f {
-                    crate::SaveFormat::Dxf => crate::tl!("DXF"),
-                    crate::SaveFormat::Dwg => crate::tl!("DWG"),
-                };
-                if ui.radio(app.ui.save_format == f, label).clicked() && app.ui.save_format != f {
-                    changes.insert("saveFormat".into(), json!(f.as_str()));
-                }
-            }
-        });
+        save_format_row(ui, app, changes);
         ui.end_row();
-
-        let version_caption = ui.label(crate::tl!("Default save version"));
-        let current = crate::SaveVersion::parse(&app.ui.save_version).unwrap_or_default();
-        let mut version = current;
-        let version_combo = egui::ComboBox::from_id_salt("options_save_version").selected_text(version.year()).show_ui(ui, |ui| {
-            for v in crate::SaveVersion::ALL {
-                ui.selectable_value(&mut version, v, v.year());
-            }
-        });
-        version_combo.response.labelled_by(version_caption.id);
-        if version != current {
-            changes.insert("saveVersion".into(), json!(version.year()));
-        }
+        save_version_row(ui, app, changes);
         ui.end_row();
-
-        ui.label(crate::tl!("Units of new drawings"));
-        ui.horizontal(|ui| {
-            let metric = app.session.settings.measureinit;
-            if ui.radio(!metric, crate::tl!("Imperial (inches)")).clicked() && metric {
-                changes.insert("MEASUREINIT".into(), json!(0));
-            }
-            if ui.radio(metric, crate::tl!("Metric (millimetres)")).clicked() && !metric {
-                changes.insert("MEASUREINIT".into(), json!(1));
-            }
-        });
+        units_row(ui, app, changes);
         ui.end_row();
-
-        let minutes_caption = ui.label(crate::tl!("Automatic save every"));
-        let mut minutes = cadcraft_engine::autosave::savetime();
-        let max = cadcraft_engine::autosave::MAX_SAVETIME;
-        if ui
-            .add(egui::DragValue::new(&mut minutes).range(0..=max).suffix(format!(" {}", crate::tl!("min"))))
-            .labelled_by(minutes_caption.id)
-            .changed()
-        {
-            changes.insert("SAVETIME".into(), json!(minutes));
-        }
+        autosave_row(ui, changes);
         ui.end_row();
-
-        let savefile_label = ui.label(crate::tl!("Automatic save file location"));
-        // Edited as text; the folder changes when the field loses focus.
-        let id = egui::Id::unique("cc_options_savefilepath");
-        let current = cadcraft_engine::autosave::savefilepath();
-        let mut path = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| current.clone());
-        let r = ui.add(egui::TextEdit::singleline(&mut path).desired_width(330.0)).labelled_by(savefile_label.id);
-        if r.changed() {
-            ui.data_mut(|d| d.insert_temp(id, path.clone()));
-        }
-        if r.lost_focus() {
-            ui.data_mut(|d| d.remove::<String>(id));
-            if path.trim() != current {
-                changes.insert("SAVEFILEPATH".into(), json!(path.trim()));
-            }
-        }
+        backup_row(ui, changes);
+        ui.end_row();
+        savefile_row(ui, changes);
         ui.end_row();
     });
     hint(ui, crate::tl!("New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE)."));
     hint(ui, crate::tl!("A drawing opened from a file keeps that file's format."));
     hint(ui, crate::tl!("Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off."));
+}
+
+fn save_format_row(ui: &mut egui::Ui, app: &CadApp, changes: &mut Map<String, Value>) {
+    ui.label(crate::tl!("Save new drawings as"));
+    ui.horizontal(|ui| {
+        for f in crate::SaveFormat::ALL {
+            let label = match f {
+                crate::SaveFormat::Dxf => crate::tl!("DXF"),
+                crate::SaveFormat::Dwg => crate::tl!("DWG"),
+            };
+            if ui.radio(app.ui.save_format == f, label).clicked() && app.ui.save_format != f {
+                changes.insert("saveFormat".into(), json!(f.as_str()));
+            }
+        }
+    });
+}
+
+fn save_version_row(ui: &mut egui::Ui, app: &CadApp, changes: &mut Map<String, Value>) {
+    let version_caption = ui.label(crate::tl!("Default save version"));
+    let current = crate::SaveVersion::parse(&app.ui.save_version).unwrap_or_default();
+    let mut version = current;
+    let version_combo = egui::ComboBox::from_id_salt("options_save_version").selected_text(version.year()).show_ui(ui, |ui| {
+        for v in crate::SaveVersion::ALL {
+            ui.selectable_value(&mut version, v, v.year());
+        }
+    });
+    version_combo.response.labelled_by(version_caption.id);
+    if version != current {
+        changes.insert("saveVersion".into(), json!(version.year()));
+    }
+}
+
+fn units_row(ui: &mut egui::Ui, app: &CadApp, changes: &mut Map<String, Value>) {
+    ui.label(crate::tl!("Units of new drawings"));
+    ui.horizontal(|ui| {
+        let metric = app.session.settings.measureinit;
+        if ui.radio(!metric, crate::tl!("Imperial (inches)")).clicked() && metric {
+            changes.insert("MEASUREINIT".into(), json!(0));
+        }
+        if ui.radio(metric, crate::tl!("Metric (millimetres)")).clicked() && !metric {
+            changes.insert("MEASUREINIT".into(), json!(1));
+        }
+    });
+}
+
+fn autosave_row(ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
+    let minutes_caption = ui.label(crate::tl!("Automatic save every"));
+    let mut minutes = cadcraft_engine::autosave::savetime();
+    let max = cadcraft_engine::autosave::MAX_SAVETIME;
+    if ui.add(egui::DragValue::new(&mut minutes).range(0..=max).suffix(format!(" {}", crate::tl!("min")))).labelled_by(minutes_caption.id).changed() {
+        changes.insert("SAVETIME".into(), json!(minutes));
+    }
+}
+
+/// ISAVEBAK: keep the previous file as `<name>.bak` when saving over a drawing.
+fn backup_row(ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
+    ui.label(crate::tl!("Backup copy"));
+    let mut bak = cadcraft_engine::autosave::isavebak();
+    if ui.checkbox(&mut bak, crate::tl!("Create backup copy with each save")).changed() {
+        changes.insert("ISAVEBAK".into(), json!(i32::from(bak)));
+    }
+}
+
+fn savefile_row(ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
+    let savefile_label = ui.label(crate::tl!("Automatic save file location"));
+    // Edited as text; the folder changes when the field loses focus.
+    let id = egui::Id::unique("cc_options_savefilepath");
+    let current = cadcraft_engine::autosave::savefilepath();
+    let mut path = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| current.clone());
+    let r = ui.add(egui::TextEdit::singleline(&mut path).desired_width(330.0)).labelled_by(savefile_label.id);
+    if r.changed() {
+        ui.data_mut(|d| d.insert_temp(id, path.clone()));
+    }
+    if r.lost_focus() {
+        ui.data_mut(|d| d.remove::<String>(id));
+        if path.trim() != current {
+            changes.insert("SAVEFILEPATH".into(), json!(path.trim()));
+        }
+    }
 }
 
 /// Drafting tab: object-snap marker size and aperture previews plus the Drafting Settings entry; edits accumulate in `changes` and the entry may request a command through `start`.
@@ -514,8 +537,9 @@ fn aci_row(ui: &mut egui::Ui, current: u8, key: &str, changes: &mut Map<String, 
     });
 }
 
-/// Preferences tab: interface language, largest-array limit and time-sensitive right-click; edits accumulate in `changes`.
+/// Preferences tab: interface language, largest-array limit, time-sensitive right-click and the Right-Click Customization window; edits accumulate in `changes`.
 fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
+    let mut right_click = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::unique(RIGHT_CLICK)).unwrap_or(false));
     grid(ui, "options_preferences", |ui| {
         let language_caption = ui.label(crate::tl!("Interface language"));
         let mut lang = app.ui.interface_language;
@@ -547,7 +571,116 @@ fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>
     if ui.checkbox(&mut timed, crate::tl!("Time-sensitive right-click: a quick click is Enter, holding opens the menu")).changed() {
         changes.insert("timeSensitiveRightClick".into(), json!(timed));
     }
-    hint(ui, crate::tl!("Turned off, a right-click while a command runs always opens the shortcut menu."));
+    hint(ui, crate::tl!("Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode."));
+    if ui.button(crate::tl!("Right-Click Customization...")).clicked() {
+        right_click = true;
+    }
+    if right_click {
+        right_click_window(&app.options, ui.ctx(), &mut right_click, changes);
+    }
+    // The web build is always the latest: there is nothing to check for there.
+    if !cfg!(target_arch = "wasm32") {
+        ui.add_space(6.0);
+        let mut check = app.options.check_updates_at_start;
+        if ui.checkbox(&mut check, crate::tl!("Check for updates when CADCraft starts")).changed() {
+            changes.insert("checkUpdatesAtStart".into(), json!(check));
+        }
+        hint(ui, crate::tl!("Turned off, CADCraft never offers an update on its own; Help ▸ Check for Updates… still looks."));
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(RIGHT_CLICK), right_click));
+}
+
+/// Whether the Right-Click Customization window is open (egui temp data).
+const RIGHT_CLICK: &str = "cc_options_right_click";
+
+/// Right-Click Customization (Options ▸ User Preferences): the time-sensitive right-click and its
+/// duration, and what a right-click does in Default, Edit and Command modes. Changes apply at
+/// once, as on the Options tabs.
+fn right_click_window(o: &super::UiOptions, ctx: &egui::Context, open: &mut bool, changes: &mut Map<String, Value>) {
+    use super::{CommandClick, IdleClick};
+    let mut close = false;
+    egui::Window::new(crate::tl!("Right-Click Customization"))
+        .id(egui::Id::unique("cc_right_click"))
+        .open(open)
+        .resizable(false)
+        .collapsible(false)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_pos(ctx.content_rect().center())
+        .show(ctx, |ui| {
+            ui.set_width(460.0);
+            let mut timed = o.time_sensitive_right_click;
+            if ui.checkbox(&mut timed, crate::tl!("Turn on time-sensitive right-click")).changed() {
+                changes.insert("timeSensitiveRightClick".into(), json!(timed));
+            }
+            ui.add_enabled_ui(o.time_sensitive_right_click, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add_space(20.0);
+                    let caption = ui.label(crate::tl!("Longer click duration:"));
+                    let mut ms = o.right_click_hold_ms;
+                    let range = super::RIGHT_CLICK_DURATIONS;
+                    if ui.add(egui::DragValue::new(&mut ms).range(range).speed(10.0)).labelled_by(caption.id).changed() {
+                        changes.insert("rightClickDuration".into(), json!(ms));
+                    }
+                    ui.label(crate::tl!("milliseconds"));
+                });
+                hint(ui, crate::tl!("While a command runs, a quick click is Enter and a longer click opens the shortcut menu."));
+                hint(ui, crate::tl!("With no command running, a quick click repeats the last command or runs what was typed."));
+            });
+            ui.add_space(6.0);
+            // Like Command mode, Default and Edit modes decide only with the time-sensitive
+            // right-click off: with it on, a quick click is Enter and a longer one the menu.
+            ui.add_enabled_ui(!o.time_sensitive_right_click, |ui| {
+                for (title, note, key, current) in [
+                    (
+                        crate::tl!("Default Mode"),
+                        crate::tl!("No objects selected and no command running:"),
+                        "rightClickDefault",
+                        o.right_click_default,
+                    ),
+                    (crate::tl!("Edit Mode"), crate::tl!("Objects selected and no command running:"), "rightClickEdit", o.right_click_edit),
+                ] {
+                    heading(ui, title);
+                    ui.group(|ui| {
+                        ui.set_width(ui.available_width());
+                        hint(ui, note);
+                        for (choice, label) in
+                            [(IdleClick::Repeat, crate::tl!("Repeat last command")), (IdleClick::Menu, crate::tl!("Shortcut Menu"))]
+                        {
+                            if ui.radio(current == choice, label).clicked() && current != choice {
+                                changes.insert(key.into(), json!(choice.as_str()));
+                            }
+                        }
+                    });
+                }
+            });
+            ui.add_enabled_ui(!o.time_sensitive_right_click, |ui| {
+                heading(ui, crate::tl!("Command Mode"));
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    hint(ui, crate::tl!("While a command runs:"));
+                    for (choice, label) in [
+                        (CommandClick::Enter, crate::tl!("ENTER")),
+                        (CommandClick::Menu, crate::tl!("Shortcut Menu: always enabled")),
+                        (CommandClick::MenuWithOptions, crate::tl!("Shortcut Menu: enabled when command options are present")),
+                    ] {
+                        if ui.radio(o.right_click_command == choice, label).clicked() && o.right_click_command != choice {
+                            changes.insert("rightClickCommand".into(), json!(choice.as_str()));
+                        }
+                    }
+                });
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(crate::tl!("Close")).clicked() {
+                        close = true;
+                    }
+                });
+            });
+        });
+    if close {
+        *open = false;
+    }
 }
 
 fn profiles(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {

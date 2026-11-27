@@ -314,7 +314,9 @@ pub fn mono() -> FontId {
 /// language: file, layout and layer names can be Japanese or Chinese whatever the interface
 /// shows (#513). In a Chinese interface (`language` "zh…") the Chinese font comes first, else a
 /// Japanese one, so names take their own glyph forms; in an Arabic interface an installed
-/// Arabic font follows. A font embedded from craft-fonts comes
+/// Arabic font follows, and in a Tamil one an installed Tamil font ([`tamil_font`]). The
+/// embedded Georgian face loads in every language, so the language picker can show ქართული. A
+/// font embedded from craft-fonts comes
 /// last, for systems without any (and the web build, which has no system fonts). A Korean
 /// interface adds a Hangul font only when the CJK font found doesn't cover Hangul
 /// ([`korean_font`]).
@@ -326,20 +328,12 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
     let chinese = language.starts_with("zh");
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let candidates: &[&str] = if cfg!(target_os = "macos") {
-            &["/System/Library/Fonts/SFNS.ttf", "/System/Library/Fonts/Helvetica.ttc", "/Library/Fonts/Arial.ttf"]
-        } else if cfg!(windows) {
-            &["C:\\Windows\\Fonts\\segoeui.ttf", "C:\\Windows\\Fonts\\arial.ttf"]
-        } else {
-            &[
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                "/usr/share/fonts/TTF/DejaVuSans.ttf",
-                "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-                "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-            ]
-        };
-        for path in candidates {
-            if let Ok(bytes) = std::fs::read(path) {
+        for path in installed(system_ui_candidates()) {
+            // A Vietnamese interface takes the first one with its letters.
+            if language == "vi" && vietnamese_font() != Some(path.as_path()) {
+                continue;
+            }
+            if let Some(bytes) = read_capped(&path, MAX_UI_FONT_BYTES) {
                 fonts.font_data.insert("system-ui".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
                 if let Some(f) = fonts.families.get_mut(&FontFamily::Proportional) {
                     f.insert(0, "system-ui".into());
@@ -371,6 +365,12 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
             && let Some(bytes) = arabic_font().and_then(|p| read_capped(p, MAX_UI_FONT_BYTES))
         {
             added.push(("system-arabic".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
+        }
+        // தமிழ்: likewise an installed Tamil face, for the Tamil interface.
+        if language == "ta"
+            && let Some(bytes) = tamil_font().and_then(|p| read_capped(p, MAX_UI_FONT_BYTES))
+        {
+            added.push(("system-tamil".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
         }
     }
     let embedded: Vec<_> = cadcraft_fonts::CRAFT_FONTS.iter().collect();
@@ -406,7 +406,83 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
     {
         f.push("Hack".into());
     }
-    ctx.set_fonts(fonts);
+    craft_ui::fonts::load(ctx, fonts);
+}
+
+/// The system interface fonts [`install_fonts`] looks for, in order; it loads the first installed
+/// one ahead of egui's bundled faces.
+#[cfg(not(target_arch = "wasm32"))]
+fn system_ui_candidates() -> &'static [&'static str] {
+    if cfg!(target_os = "macos") {
+        &["/System/Library/Fonts/SFNS.ttf", "/System/Library/Fonts/Helvetica.ttc", "/Library/Fonts/Arial.ttf"]
+    } else if cfg!(windows) {
+        &["C:\\Windows\\Fonts\\segoeui.ttf", "C:\\Windows\\Fonts\\arial.ttf"]
+    } else {
+        &[
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        ]
+    }
+}
+
+/// The first of the `installed` interface fonts (see [`installed`]: the candidates' own paths,
+/// then the same files found elsewhere) that, for the Vietnamese interface, has the Vietnamese
+/// letters: the system interface font [`install_fonts`] loads ahead of egui's faces.
+#[cfg(not(target_arch = "wasm32"))]
+fn ui_font_choice(
+    installed: impl IntoIterator<Item = std::path::PathBuf>,
+    vietnamese: bool,
+    has_vietnamese: impl Fn(&std::path::Path) -> bool,
+) -> Option<std::path::PathBuf> {
+    installed.into_iter().find(|p| !vietnamese || has_vietnamese(p))
+}
+
+/// Whether `face` has every letter Vietnamese adds to Latin: the tone-marked vowels of Latin
+/// Extended Additional (U+1EA0–U+1EF9), and ơ, ư, đ.
+#[cfg(not(target_arch = "wasm32"))]
+fn covers_vietnamese(face: &cadcraft_fonts::ttf::Face) -> bool {
+    ('\u{1ea0}'..='\u{1ef9}').chain(['ơ', 'Ơ', 'ư', 'Ư', 'đ', 'Đ']).all(|c| face.has_glyph(c))
+}
+
+/// The system interface font the Vietnamese interface takes: the first installed one of
+/// [`system_ui_candidates`] (where [`install_fonts`] looks, its usual path or elsewhere) whose first face (the one egui uses) has every Vietnamese letter.
+/// Segoe UI, Arial, SF, DejaVu Sans and Noto Sans do; egui's bundled faces stop at Latin
+/// Extended-A, so without one the interface stays English (as the web build does). Checked once.
+pub fn vietnamese_font() -> Option<&'static std::path::Path> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static FOUND: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+        FOUND
+            .get_or_init(|| {
+                let has_vietnamese = |p: &std::path::Path| {
+                    read_capped(p, MAX_UI_FONT_BYTES)
+                        .and_then(|bytes| cadcraft_fonts::ttf::faces(&std::sync::Arc::new(bytes)).into_iter().next())
+                        .is_some_and(|face| covers_vietnamese(&face))
+                };
+                ui_font_choice(installed(system_ui_candidates()), true, has_vietnamese)
+            })
+            .as_deref()
+    }
+    #[cfg(target_arch = "wasm32")]
+    None
+}
+
+/// Whether the interface in `language` shows the Vietnamese letters (Tiếng Việt in the language
+/// picker): the Vietnamese interface with [`vietnamese_font`], any other when the system interface
+/// font it loads is that one.
+pub fn shows_vietnamese(language: &str) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let loaded = || ui_font_choice(installed(system_ui_candidates()), false, |_| true);
+        vietnamese_font().is_some_and(|v| language == "vi" || loaded().is_some_and(|p| p == v))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = language;
+        false
+    }
 }
 
 /// The faces `build.rs` embedded from craft-fonts that the interface loads, in order: every CJK
@@ -414,7 +490,9 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
 /// shows (#513), with the interface's own face leading. A sans-serif face reads best, and a
 /// Chinese interface takes the face with its own glyphs ahead of a Japanese one — a Japanese face
 /// shares most ideographs but lacks the simplified-only ones (图 园 测), which would be tofu.
-/// العربية adds its Arabic face after those, egui's bundled faces carrying no Arabic glyphs.
+/// The Georgian face follows in every language (egui's bundled faces carry no Georgian glyphs, and
+/// the picker names the language ქართული); العربية adds its Arabic face after those, and தமிழ்
+/// its Tamil face.
 fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str) -> Vec<&'a cadcraft_fonts::CraftFont> {
     let cjk = |f: &&cadcraft_fonts::CraftFont| f.style == "Regular" && f.scripts.iter().any(|s| matches!(*s, "Jpan" | "Hans" | "Hant"));
     let mut out: Vec<_> = faces.iter().copied().filter(cjk).collect();
@@ -422,14 +500,32 @@ fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str
     if language.starts_with("zh") {
         out.sort_by_key(|f| !f.scripts.contains(&"Hans"));
     }
+    out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Geor")));
     if language == "ar" {
         out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Arab")));
+    }
+    if language == "ta" {
+        out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Taml")));
     }
     out
 }
 
 /// Largest interface font file read or embedded face copied (CJK collections are 15–60 MB).
 const MAX_UI_FONT_BYTES: u64 = 96 * 1024 * 1024;
+
+/// Whether `path` is a font file [`read_capped`] can take: it opens and holds 1 byte to
+/// [`MAX_UI_FONT_BYTES`]. The font finders keep the first candidate that passes, so an empty,
+/// oversized or unreadable one doesn't hide the readable ones after it.
+#[cfg(not(target_arch = "wasm32"))]
+fn openable(path: &std::path::Path) -> bool {
+    std::fs::File::open(path).and_then(|f| f.metadata()).is_ok_and(|m| m.is_file() && m.len() > 0 && m.len() <= MAX_UI_FONT_BYTES)
+}
+
+/// The first of `candidates` ([`installed`]) that is [`openable`].
+#[cfg(not(target_arch = "wasm32"))]
+fn first_font(candidates: &[&str]) -> Option<std::path::PathBuf> {
+    installed(candidates).find(|p| openable(p))
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn read_capped(path: &std::path::Path, max: u64) -> Option<Vec<u8>> {
@@ -443,6 +539,28 @@ fn read_capped(path: &std::path::Path, max: u64) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
     file.take(max.saturating_add(1)).read_to_end(&mut bytes).ok()?;
     (!bytes.is_empty() && bytes.len() as u64 <= max).then_some(bytes)
+}
+
+/// The files among `candidates` this system has: those at their absolute paths (where the OS or
+/// common packages put fonts), then the files with the same stems wherever the system keeps its
+/// fonts (NixOS, Guix and Flatpak keep them outside /usr/share/fonts; the fonts crate looks where
+/// fontconfig does, #674).
+#[cfg(not(target_arch = "wasm32"))]
+fn installed<'a>(candidates: &'a [&'a str]) -> impl Iterator<Item = std::path::PathBuf> + 'a {
+    // The usual places first: the font database is only asked when a caller needs more than they
+    // hold, because its first use walks every font directory on the machine.
+    let direct = candidates.iter().map(std::path::PathBuf::from).filter(|p| p.is_file());
+    let mut seen: Vec<std::path::PathBuf> = Vec::new();
+    let by_stem =
+        candidates.iter().filter_map(|c| std::path::Path::new(c).file_stem()?.to_str()).filter_map(cadcraft_fonts::ttf::installed_font_path).filter(
+            move |p| {
+                !candidates.iter().any(|c| std::path::Path::new(c) == p) && !seen.contains(p) && {
+                    seen.push(p.clone());
+                    true
+                }
+            },
+        );
+    direct.chain(by_stem)
 }
 
 /// An installed font with Chinese characters, for the Chinese interface; fonts are never bundled
@@ -470,7 +588,7 @@ pub fn cjk_font() -> Option<&'static std::path::Path> {
                         "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
                     ]
                 };
-                candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file())
+                first_font(candidates)
             })
             .as_deref()
     }
@@ -513,12 +631,89 @@ pub fn arabic_font() -> Option<&'static std::path::Path> {
                         "/usr/share/fonts/truetype/kacst/KacstOne.ttf",
                     ]
                 };
-                candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file())
+                first_font(candidates)
             })
             .as_deref()
     }
     #[cfg(target_arch = "wasm32")]
     None
+}
+
+/// The Tamil letters the Tamil interface shows: its catalog and its own name.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn tamil_letters() -> &'static std::collections::BTreeSet<char> {
+    static LETTERS: std::sync::OnceLock<std::collections::BTreeSet<char>> = std::sync::OnceLock::new();
+    LETTERS.get_or_init(|| {
+        include_str!("i18n/ta.tsv")
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .filter_map(|line| line.split('\t').nth(2))
+            .flat_map(str::chars)
+            .chain("தமிழ்".chars())
+            .filter(|c| ('\u{0b80}'..='\u{0bff}').contains(c))
+            .collect()
+    })
+}
+
+/// Whether `face` has every Tamil letter the Tamil interface shows (rejects malformed fonts and
+/// faces without Tamil).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn covers_tamil(face: &cadcraft_fonts::ttf::Face) -> bool {
+    tamil_letters().iter().all(|c| face.has_glyph(*c))
+}
+
+/// An installed font with the Tamil letters, for the தமிழ் interface; fonts are never bundled
+/// (only looked for where the OS or common packages put them). The file's first face, the one
+/// egui uses, must have every Tamil letter the interface shows. Checked once.
+pub fn tamil_font() -> Option<&'static std::path::Path> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static FOUND: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+        FOUND
+            .get_or_init(|| {
+                let candidates: &[&str] = if cfg!(target_os = "macos") {
+                    &[
+                        "/System/Library/Fonts/Supplemental/Tamil Sangam MN.ttc",
+                        "/System/Library/Fonts/Tamil Sangam MN.ttc",
+                        "/System/Library/Fonts/Supplemental/Tamil MN.ttc",
+                        "/System/Library/Fonts/Supplemental/InaiMathi-MN.ttc",
+                    ]
+                } else if cfg!(windows) {
+                    &[
+                        "C:\\Windows\\Fonts\\Nirmala.ttc",
+                        "C:\\Windows\\Fonts\\Nirmala.ttf",
+                        "C:\\Windows\\Fonts\\latha.ttf",
+                        "C:\\Windows\\Fonts\\vijaya.ttf",
+                    ]
+                } else {
+                    &[
+                        "/usr/share/fonts/truetype/noto/NotoSansTamil-Regular.ttf",
+                        "/usr/share/fonts/noto/NotoSansTamil-Regular.ttf",
+                        "/usr/share/fonts/google-noto/NotoSansTamil-Regular.ttf",
+                        "/usr/share/fonts/google-noto-vf/NotoSansTamil[wght].ttf",
+                        "/usr/share/fonts/truetype/noto/NotoSansTamilUI-Regular.ttf",
+                        "/usr/share/fonts/truetype/lohit-tamil/Lohit-Tamil.ttf",
+                        "/usr/share/fonts/lohit-tamil/Lohit-Tamil.ttf",
+                        "/usr/share/fonts/truetype/samyak-fonts/Samyak-Tamil.ttf",
+                    ]
+                };
+                let covers = |p: &std::path::Path| {
+                    read_capped(p, MAX_UI_FONT_BYTES)
+                        .and_then(|bytes| cadcraft_fonts::ttf::faces(&std::sync::Arc::new(bytes)).into_iter().next())
+                        .is_some_and(|face| covers_tamil(&face))
+                };
+                candidates.iter().map(std::path::PathBuf::from).find(|p| covers(p))
+            })
+            .as_deref()
+    }
+    #[cfg(target_arch = "wasm32")]
+    None
+}
+
+/// Whether the interface in `language` shows the Tamil letters (தமிழ் in the language picker): only
+/// the Tamil interface loads a Tamil font, so only it does.
+pub fn shows_tamil(language: &str) -> bool {
+    language == "ta" && can_show("ta")
 }
 
 /// An installed Japanese font, for Japanese names in a non-Chinese interface. Checked once.
@@ -541,7 +736,7 @@ fn japanese_font() -> Option<&'static std::path::Path> {
                         "/usr/share/fonts/vl-gothic/VL-PGothic-Regular.ttf",
                     ]
                 };
-                candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file())
+                first_font(candidates)
             })
             .as_deref()
     }
@@ -638,10 +833,8 @@ pub fn korean_font() -> Option<&'static cadcraft_fonts::ttf::Face> {
                         "/usr/local/share/fonts/noto/NotoSansCJK-Regular.ttc",
                     ]
                 };
-                for path in candidates {
-                    if let Some(face) =
-                        read_capped(std::path::Path::new(path), MAX_UI_FONT_BYTES).and_then(|bytes| korean_face(std::sync::Arc::new(bytes)))
-                    {
+                for path in installed(candidates) {
+                    if let Some(face) = read_capped(&path, MAX_UI_FONT_BYTES).and_then(|bytes| korean_face(std::sync::Arc::new(bytes))) {
                         return Some(face);
                     }
                 }
@@ -659,11 +852,16 @@ pub fn shows_hangul(language: &str) -> bool {
 
 /// Whether the interface can show `language` without missing-glyph boxes: Chinese needs a font
 /// with its glyphs (installed, or the CJK face this build embedded from craft-fonts), Korean a
-/// font with Hangul, العربية an installed Arabic font or the embedded Arabic face.
+/// font with Hangul, العربية an installed Arabic font or the embedded Arabic face, Tiếng Việt a
+/// system interface font with its tone-marked letters ([`vietnamese_font`]), ქართული the
+/// embedded Georgian face, தமிழ் an installed Tamil font ([`tamil_font`]) or the embedded Tamil face.
 pub fn can_show(language: &str) -> bool {
     match language {
         "ko" => shows_hangul("ko"),
+        "vi" => vietnamese_font().is_some(),
         "ar" => arabic_font().is_some() || embedded_script("Arab"),
+        "ka" => embedded_script("Geor"),
+        "ta" => tamil_font().is_some() || embedded_script("Taml"),
         l if l.starts_with("zh") => cjk_font().is_some() || embedded_script("Hans") || embedded_script("Hant"),
         _ => true,
     }
@@ -737,6 +935,37 @@ pub fn apply(ctx: &egui::Context, theme: Theme, follow_system: bool) {
 
 #[cfg(test)]
 mod tests {
+    /// An empty font file found first doesn't hide a readable one after it: the CJK, Arabic and
+    /// Japanese fonts are kept only when [`super::read_capped`] can take them.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn an_unreadable_first_candidate_does_not_hide_the_next() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-theme-fonts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (empty, good) = (dir.join("CadcraftEmptyTestFont.ttf"), dir.join("CadcraftGoodTestFont.ttf"));
+        std::fs::write(&empty, b"").unwrap();
+        std::fs::write(&good, b"not empty").unwrap();
+        let (e, g) = (empty.to_string_lossy().into_owned(), good.to_string_lossy().into_owned());
+        let found = super::first_font(&[e.as_str(), g.as_str()]);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(found, Some(good));
+    }
+
+    /// The system interface font loaded: the first installed one, and for Vietnamese the first
+    /// installed one with its letters (a later one when the first lacks them), including one
+    /// found away from the candidates' own paths (a NixOS store path).
+    #[test]
+    fn the_vietnamese_interface_takes_the_first_installed_font_with_its_letters() {
+        use std::path::{Path, PathBuf};
+        let installed = || ["b.ttf", "c.ttf", "/nix/store/x/DejaVuSans.ttf"].map(PathBuf::from);
+        let has_vietnamese = |p: &Path| p != Path::new("b.ttf");
+        assert_eq!(super::ui_font_choice(installed(), false, has_vietnamese), Some(PathBuf::from("b.ttf")));
+        assert_eq!(super::ui_font_choice(installed(), true, has_vietnamese), Some(PathBuf::from("c.ttf")));
+        let only_found = |p: &Path| p.starts_with("/nix");
+        assert_eq!(super::ui_font_choice(installed(), true, only_found), Some(PathBuf::from("/nix/store/x/DejaVuSans.ttf")));
+        assert_eq!(super::ui_font_choice(installed(), true, |_| false), None);
+    }
+
     use cadcraft_fonts::CraftFont;
 
     /// A face shaped like `build.rs` writes them, with no font file (as in `cadcraft-fonts`).
@@ -755,19 +984,49 @@ mod tests {
         }
     }
 
+    /// A Tamil font counts only when its first face has every Tamil letter the interface shows:
+    /// the catalog's letters, its two-part and pre-base vowel signs and the language's own name
+    /// among them.
+    #[test]
+    fn tamil_font_needs_every_letter_of_the_tamil_interface() {
+        let letters = super::tamil_letters();
+        assert!("தமிழ்".chars().chain(['ொ', 'ோ', 'ை']).all(|c| letters.contains(&c)), "{letters:?}");
+        assert!(letters.iter().all(|c| ('\u{0b80}'..='\u{0bff}').contains(c)));
+        for bytes in [vec![], vec![0xff; 32]] {
+            assert!(cadcraft_fonts::ttf::faces(&std::sync::Arc::new(bytes)).first().is_none_or(|f| !super::covers_tamil(f)));
+        }
+        if let Some(path) = super::tamil_font() {
+            let face = std::fs::read(path).ok().and_then(|bytes| cadcraft_fonts::ttf::faces(&std::sync::Arc::new(bytes)).into_iter().next());
+            assert!(face.is_some_and(|f| super::covers_tamil(&f)), "{}", path.display());
+        }
+    }
+
     /// The interface's own script leads the embedded faces it loads, and العربية adds its face.
     #[test]
     fn embedded_faces_lead_with_the_interfaces_own_script() {
         let japanese = face("BIZ UDPGothic", &["Jpan", "Latn"]);
         let chinese = face("Han Test Face", &["Hans", "Latn"]);
         let arabic = face("Noto Sans Arabic", &["Arab"]);
-        let faces = [&japanese, &chinese, &arabic];
+        let georgian = face("Noto Sans Georgian", &["Geor"]);
+        let faces = [&japanese, &chinese, &arabic, &georgian];
         // Every interface reads CJK names, so both CJK faces load, the sans-serif face first.
-        assert_eq!(families(&super::embedded_ui_faces(&faces, "en")), ["BIZ UDPGothic", "Han Test Face"]);
+        // The Georgian face loads in every interface too, after them: the picker shows ქართული.
+        assert_eq!(families(&super::embedded_ui_faces(&faces, "en")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian"]);
         // A Chinese interface takes the Han face first: a Japanese face lacks 图 园 测.
-        assert_eq!(families(&super::embedded_ui_faces(&faces, "zh")), ["Han Test Face", "BIZ UDPGothic"]);
+        assert_eq!(families(&super::embedded_ui_faces(&faces, "zh")), ["Han Test Face", "BIZ UDPGothic", "Noto Sans Georgian"]);
         // العربية adds the Arabic face, after the CJK ones egui's bundled faces have no glyphs for.
-        assert_eq!(families(&super::embedded_ui_faces(&faces, "ar")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Arabic"]);
+        assert_eq!(families(&super::embedded_ui_faces(&faces, "ar")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian", "Noto Sans Arabic"]);
+        assert_eq!(families(&super::embedded_ui_faces(&faces, "ka")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian"]);
+        // தமிழ் adds the Tamil face; no other interface loads it.
+        let tamil = face("Noto Sans Tamil", &["Taml"]);
+        let with_tamil = [&japanese, &chinese, &arabic, &georgian, &tamil];
+        assert_eq!(
+            families(&super::embedded_ui_faces(&with_tamil, "ta")),
+            ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian", "Noto Sans Tamil"]
+        );
+        for language in ["en", "ar", "ka", "zh"] {
+            assert!(!families(&super::embedded_ui_faces(&with_tamil, language)).contains(&"Noto Sans Tamil"), "{language}");
+        }
         // Another weight is a style of a face, not an interface face of its own.
         let bold = CraftFont { family: "BIZ UDPGothic", style: "Bold", scripts: &["Jpan"], bytes: &[] };
         assert!(super::embedded_ui_faces(&[&bold], "en").is_empty());
@@ -778,13 +1037,41 @@ mod tests {
     /// leaving the installed-font answer the gate had before.
     #[test]
     fn embedded_faces_answer_for_their_scripts() {
-        let faces = [face("BIZ UDPGothic", &["Jpan", "Latn"]), face("Noto Sans Arabic", &["Arab"])];
-        assert!(super::any_script(&faces, "Jpan") && super::any_script(&faces, "Arab"));
+        let faces = [face("BIZ UDPGothic", &["Jpan", "Latn"]), face("Noto Sans Arabic", &["Arab"]), face("Noto Sans Georgian", &["Geor"])];
+        assert!(super::any_script(&faces, "Jpan") && super::any_script(&faces, "Arab") && super::any_script(&faces, "Geor"));
         assert!(!super::any_script(&faces, "Hans") && !super::any_script(&faces, "Hant"));
         // A `Bold`-only face is not the interface's, and a script code is matched whole.
         let bold = CraftFont { family: "Some Han Bold", style: "Bold", scripts: &["Hans"], bytes: &[] };
         assert!(!super::any_script(&[bold], "Hans") && !super::any_script(&faces, "Ara"));
         assert!(!super::embedded_script("Hans") || super::can_show("zh"));
+        // ქართული rides on the embedded Georgian face alone.
+        assert_eq!(super::can_show("ka"), super::embedded_script("Geor"));
+        // தமிழ் takes an installed Tamil font or the embedded Tamil face.
+        assert!(super::any_script(&[face("Noto Sans Tamil", &["Taml"])], "Taml") && !super::any_script(&faces, "Taml"));
+        assert_eq!(super::can_show("ta"), super::tamil_font().is_some() || super::embedded_script("Taml"));
         assert!(super::can_show("en") && super::can_show("uk"));
+    }
+
+    /// With the craft-fonts Georgian face (release and web builds), every Mkhedruli letter and the
+    /// picker's ქართული render in both families, in a Georgian and in an English interface.
+    #[test]
+    fn embedded_georgian_face_covers_the_alphabet_in_every_interface() {
+        if !super::embedded_script("Geor") {
+            return;
+        }
+        let letters: Vec<char> = ('ა'..='ჰ').chain("ქართული".chars()).collect();
+        for language in ["ka", "en"] {
+            let ctx = egui::Context::default();
+            super::install_fonts(&ctx, language);
+            let mut output = ctx.run_ui(Default::default(), |_| {});
+            output.textures_delta.clear();
+            ctx.fonts_mut(|view| {
+                for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                    for c in &letters {
+                        assert!(view.has_glyph(&egui::FontId::new(12.0, family.clone()), *c), "{language}: missing Georgian glyph {c} in {family:?}");
+                    }
+                }
+            });
+        }
     }
 }

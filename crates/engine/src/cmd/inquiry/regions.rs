@@ -11,7 +11,8 @@ use cadcraft_geom::{Line, Vec2, line_line, point_in_polygon};
 use serde_json::{Value, json};
 
 use super::super::machines::{SelOutcome, SelectPhase, SelectRun};
-use super::super::*;
+use super::super::{CommandSpec, bad, targets};
+
 use super::SelfCheck;
 use crate::{EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
@@ -127,7 +128,9 @@ fn combine(a: &Region, b: &Region, op: Op) -> Result<Option<Region>> {
     }
     loops.retain(|l| l.vertices.len() >= 2);
     let mut r = Region { loops };
-    r.renest();
+    if !r.renest() {
+        return Err(other("These regions are too complex to combine."));
+    }
     Ok(Some(r))
 }
 

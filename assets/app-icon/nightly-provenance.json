@@ -1,0 +1,24 @@
+{
+  "schema": "craft-nightly-icon-provenance/v1",
+  "app": "cadcraft",
+  "channel": "nightly-v1",
+  "source": {
+    "master": "assets/app-icon/cadcraft-1024.png",
+    "note": "The stable 1024 master, padded as its designer made it; the nightly files are derived from it, never upscaled from a smaller icon."
+  },
+  "transform": {
+    "summary": "The app mark (near-black strokes, cream highlights and their antialiasing) is copied unchanged; only the background square is deepened.",
+    "background": {
+      "from": "#14a3c7",
+      "to": "#0c657b",
+      "rule": "A pixel whose channel distance from the stable background is at most 180 is scaled by 0.62; fully transparent pixels and every other colour are left as they were."
+    }
+  },
+  "outputs": {
+    "cadcraft-nightly.png": "256 px PNG of the icon the Linux tar carries as cadcraft-nightly.png",
+    "cadcraft-nightly-1024.png": "the padded 1024 master the icns is generated from",
+    "cadcraft-nightly.ico": "16, 24, 32, 48, 64, 128 and 256 px PNG entries, the Windows executable and window icon",
+    "cadcraft-nightly.icns": "icp4 icp5 icp6 ic07 ic08 ic09 ic10 PNG entries for the macOS bundle (CFBundleIconFile cadcraft-nightly)"
+  },
+  "not_done_here": "No badge, crescent or N was added, and the stable cadcraft.png/.ico/.icns files are untouched."
+}

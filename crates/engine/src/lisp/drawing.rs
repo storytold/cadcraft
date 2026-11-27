@@ -1,5 +1,6 @@
 //! Drawing access from LISP: `command`, system variables, entity lists (`entget`, `entmake`,
-//! `entmod`, `entdel`, `entlast`, `entnext`, `handent`), selection sets (`ssget` and friends),
+//! `entmod`, `entdel`, `entlast`, `entnext`, `handent`; non-graphic objects are in
+//! [`super::objects`]), selection sets (`ssget` and friends),
 //! symbol tables (`tblsearch`, `tblnext`) and unit conversions (`rtos`, `angtos`, `distof`,
 //! `angtof`).
 //!
@@ -7,19 +8,21 @@
 //! [`crate::cmd::file::entity_codec`]), so what `entget` shows is what a DXF file holds, except
 //! for angles, which are radians in a list and degrees in a file.
 
+use std::collections::HashMap;
+
 use std::sync::{Arc, Mutex};
 
 use cadcraft_doc::{Entity, Handle, Space};
-use cadcraft_dxf::Tag;
 use cadcraft_geom::Vec2;
+use craft_dxf::Tag;
 
-use super::LispError;
 use super::builtins::args_err;
 use super::eval::{Ctx, Flow, Need};
 use super::value::{PickSet, Value, to_text};
+use super::{BlockSlots, LispError};
 use crate::{Input, Session};
 
-fn arity(a: &[Value], min: usize, max: usize) -> Result<(), LispError> {
+pub(super) fn arity(a: &[Value], min: usize, max: usize) -> Result<(), LispError> {
     if a.len() < min {
         return Err(args_err(true));
     }
@@ -29,14 +32,14 @@ fn arity(a: &[Value], min: usize, max: usize) -> Result<(), LispError> {
     Ok(())
 }
 
-fn ename(v: &Value) -> Result<Handle, LispError> {
+pub(super) fn ename(v: &Value) -> Result<Handle, LispError> {
     match v {
         Value::Ename(h) => Ok(*h),
         other => Err(LispError::bad_arg("lentityp", other)),
     }
 }
 
-fn string(v: &Value) -> Result<String, LispError> {
+pub(super) fn string(v: &Value) -> Result<String, LispError> {
     match v {
         Value::Str(s) => Ok(s.to_string()),
         other => Err(LispError::bad_arg("stringp", other)),
@@ -64,8 +67,12 @@ fn items(p: &PickSet) -> Vec<Handle> {
 
 /// `(command arg…)`: arguments go to the command line as typed input: a string starts a command
 /// or answers a prompt ("" is Enter), a number or a point is entered, an entity name or a
-/// selection set picks objects, and `pause` waits for the user. A command not finished by the
-/// arguments stays active for the next `command` call. No arguments: cancel the active command.
+/// selection set picks objects (a name, alone or with a point as `entsel` gives it, also answers
+/// a prompt picking one object: [`Session::input_object`]), and `pause` waits for the user. A
+/// command not finished by the arguments stays active for the next `command` call. No
+/// arguments: cancel the active command. Whatever it feeds is the program's input
+/// ([`crate::Origin::Program`]): the command it starts here, and the one a `'command` token
+/// starts while another command runs, never open a dialog.
 pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     if a.is_empty() {
         if ctx.s.running.is_some() {
@@ -86,7 +93,7 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
             }
             Value::Str(s) => {
                 let r = if ctx.s.running.is_none() {
-                    if s.trim().is_empty() { Ok(()) } else { ctx.s.start(s) }
+                    if s.trim().is_empty() { Ok(()) } else { ctx.s.start_programmatic(s) }
                 } else if s.is_empty() {
                     ctx.s.input(Input::Enter)
                 } else {
@@ -108,14 +115,18 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
                     }
                 }
             }
-            Value::Ename(h) => feed(ctx.s, Input::Pick(vec![*h])),
+            Value::Ename(h) => named(ctx.s, *h, None),
             Value::PickSet(p) => feed(ctx.s, Input::Pick(items(p))),
             Value::Cons(_) => {
                 if let Some(p) = arg.as_point() {
-                    feed(ctx.s, Input::Point(Vec2::new(p[0], p[1])));
+                    // A routine's points are in the current UCS, as typed ones are.
+                    let w = ctx.s.input_ucs().to_wcs(Vec2::new(p[0], p[1]));
+                    feed(ctx.s, Input::Point(w));
                 } else if let Value::Ename(h) = arg.car() {
                     // An `entsel` result: (ename point).
-                    feed(ctx.s, Input::Pick(vec![h]));
+                    // The pick point is what `entsel` gave: a UCS point, like the ones above.
+                    let frame = ctx.s.input_ucs();
+                    named(ctx.s, h, arg.cdr().car().as_point().map(|p| frame.to_wcs(Vec2::new(p[0], p[1]))));
                 } else {
                     return Err(LispError::bad_arg("command argument", arg));
                 }
@@ -129,6 +140,14 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 fn feed(s: &mut Session, input: Input) {
     if s.running.is_some()
         && let Err(e) = s.input(input)
+    {
+        s.echo(e.to_string());
+    }
+}
+
+fn named(s: &mut Session, h: Handle, at: Option<Vec2>) {
+    if s.running.is_some()
+        && let Err(e) = s.input_object(h, at)
     {
         s.echo(e.to_string());
     }
@@ -169,7 +188,12 @@ fn to_json_bounded(v: &Value, depth: usize, budget: &mut u64) -> Option<serde_js
         Value::Nil => serde_json::Value::Null,
         Value::Int(i) => serde_json::json!(i),
         Value::Real(r) => serde_json::json!(r),
-        Value::Str(s) => serde_json::json!(&**s),
+        Value::Str(s) => {
+            // A string is copied whole each time it occurs: it spends the allowance by its length
+            // (one unit per 16 bytes, so about 32 MB in all), shared or not.
+            *budget = budget.checked_sub(s.len() as u64 / 16)?;
+            serde_json::json!(&**s)
+        }
         Value::Cons(_) => {
             let mut arr = Vec::new();
             for x in v.iter() {
@@ -181,10 +205,31 @@ fn to_json_bounded(v: &Value, depth: usize, budget: &mut u64) -> Option<serde_js
     })
 }
 
+/// Angle variables CADCraft reports and takes in degrees, as the SETVAR command shows them, which
+/// AutoLISP's `getvar` and `setvar` give and take in radians, as AutoCAD 2024's do: each of these
+/// set to 30 by the SETVAR command, or to `(/ pi 6)` by `setvar`, reads 0.5235987755982987.
+const RADIAN_VARS: [&str; 6] = ["ANGBASE", "CHAMFERD", "DIMJOGANG", "HPANG", "POLARANG", "SNAPANG"];
+
+fn in_radians(name: &str) -> bool {
+    RADIAN_VARS.iter().any(|v| v.eq_ignore_ascii_case(name.trim()))
+}
+
 pub fn getvar(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
     let name = string(&a[0])?;
-    Ok(Flow::Value(crate::sysvars::get(ctx.s, &name).map(|v| from_json(&v)).unwrap_or_default()))
+    Ok(Flow::Value(match crate::sysvars::get(ctx.s, &name) {
+        Some(serde_json::Value::Number(n)) if in_radians(&name) => Value::Real(n.as_f64().unwrap_or(0.0).to_radians()),
+        Some(serde_json::Value::Object(o)) if o.contains_key("x") => point_list(&o, &name),
+        v => v.map(|v| from_json(&v)).unwrap_or_default(),
+    }))
+}
+
+/// Header point variables are stored as `{x, y, z}`; AutoLISP gives a point list. LIMMIN, LIMMAX,
+/// SNAPBASE and HPORIGIN are 2D points, so they lose z; the rest (INSBASE, UCSORG, ...) keep all three.
+fn point_list(o: &serde_json::Map<String, serde_json::Value>, name: &str) -> Value {
+    let coord = |k: &str| Value::Real(o.get(k).and_then(serde_json::Value::as_f64).unwrap_or(0.0));
+    let planar = ["LIMMIN", "LIMMAX", "SNAPBASE", "HPORIGIN"].iter().any(|v| v.eq_ignore_ascii_case(name.trim()));
+    if planar { Value::list(vec![coord("x"), coord("y")]) } else { Value::list(vec![coord("x"), coord("y"), coord("z")]) }
 }
 
 /// Set a system variable after bounded JSON conversion, reporting invalid or oversized values as LISP errors.
@@ -194,6 +239,10 @@ pub fn setvar(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     let mut budget: u64 = TO_JSON_BUDGET;
     let Some(json) = to_json_bounded(&a[1], 0, &mut budget) else {
         return Err(LispError::new(format!("AutoCAD variable setting rejected: {} value too large", to_text(&a[0], true))));
+    };
+    let json = match json {
+        serde_json::Value::Number(n) if in_radians(&name) => serde_json::json!(n.as_f64().unwrap_or(0.0).to_degrees()),
+        other => other,
     };
     match crate::sysvars::set(ctx.s, &name, &json) {
         Ok(()) => Ok(Flow::Value(a[1].clone())),
@@ -222,25 +271,25 @@ fn convert_angles(kind: &str, tags: &mut [Tag], f: fn(f64) -> f64) {
             continue;
         }
         let v = match t.value {
-            cadcraft_dxf::Value::Real(r) => r,
-            cadcraft_dxf::Value::Int(i) => i as f64,
+            craft_dxf::Value::Real(r) => r,
+            craft_dxf::Value::Int(i) => i as f64,
             _ => continue,
         };
-        t.value = cadcraft_dxf::Value::Real(f(v));
+        t.value = craft_dxf::Value::Real(f(v));
     }
 }
 
 fn tag_value(t: &Tag) -> Value {
     match &t.value {
-        cadcraft_dxf::Value::Str(s) | cadcraft_dxf::Value::Hex(s) => Value::str(s),
-        cadcraft_dxf::Value::Real(r) => Value::Real(*r),
-        cadcraft_dxf::Value::Int(i) => Value::Int(i32::try_from(*i).unwrap_or(if *i < 0 { i32::MIN } else { i32::MAX })),
-        cadcraft_dxf::Value::Bool(b) => Value::Int(i32::from(*b)),
+        craft_dxf::Value::Str(s) | craft_dxf::Value::Hex(s) => Value::str(s),
+        craft_dxf::Value::Real(r) => Value::Real(*r),
+        craft_dxf::Value::Int(i) => Value::Int(i32::try_from(*i).unwrap_or(if *i < 0 { i32::MIN } else { i32::MAX })),
+        craft_dxf::Value::Bool(b) => Value::Int(i32::from(*b)),
     }
 }
 
 /// DXF groups as an association list: points combined into lists `(10 x y z)`.
-fn groups_to_list(tags: &[Tag]) -> Vec<Value> {
+pub(super) fn groups_to_list(tags: &[Tag]) -> Vec<Value> {
     let mut out = Vec::new();
     let mut i = 0;
     while let Some(t) = tags.get(i) {
@@ -270,12 +319,16 @@ fn groups_to_list(tags: &[Tag]) -> Vec<Value> {
     out
 }
 
+/// The most string bytes an entity list may hold (counted per occurrence, shared or not).
+const MAX_GROUP_TEXT: usize = 32 << 20;
+
 /// An association list back to DXF groups (points split into x, y, z groups). The type
 /// (`0`), the entity name (`-1`), the handle (`5`), the owner (`330`) and the layout (`410`) are
 /// left out: they aren't the entity's to set.
 fn list_to_groups(list: &Value) -> Result<(String, Vec<Tag>), LispError> {
     let mut kind = None;
     let mut tags = Vec::new();
+    let mut text_left = MAX_GROUP_TEXT;
     for item in list.iter() {
         let Value::Cons(c) = &item else { return Err(LispError::bad_arg("listp", &item)) };
         let Value::Int(code) = c.car else { return Err(LispError::bad_arg("fixnump", &c.car)) };
@@ -297,7 +350,11 @@ fn list_to_groups(list: &Value) -> Result<(String, Vec<Tag>), LispError> {
             _ => tags.push(match &v {
                 Value::Int(i) => Tag::i(code, i64::from(*i)),
                 Value::Real(r) => Tag::f(code, *r),
-                Value::Str(s) => Tag::s(code, &**s),
+                Value::Str(s) => {
+                    // Each occurrence of a shared string becomes its own copy in the tag.
+                    text_left = text_left.checked_sub(s.len()).ok_or_else(|| LispError::new("out of memory: the entity list holds too much text"))?;
+                    Tag::s(code, &**s)
+                }
                 Value::Ename(h) => Tag::s(code, h.hex()),
                 other => return Err(LispError::bad_arg("DXF group value", other)),
             }),
@@ -317,8 +374,16 @@ fn space_of(d: &cadcraft_doc::Drawing, h: Handle) -> Option<Space> {
 pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 2)?;
     let h = ename(&a[0])?;
+    let drawn = ctx.s.doc().is_ok_and(|d| d.entity(h).is_some());
+    let from_block = if drawn { None } else { block_entity(ctx, h) };
     let Ok(d) = ctx.s.doc() else { return Ok(Flow::Value(Value::Nil)) };
-    let Some(e) = d.entity(h) else { return Ok(Flow::Value(Value::Nil)) };
+    // An entity of a block definition (#1700) has no layout.
+    let (e, in_block) = match (d.entity(h), &from_block) {
+        (Some(e), _) => (e, false),
+        (None, Some(e)) => (e, true),
+        // Not an entity: a table record, layout or dictionary (#1659, #1661).
+        (None, None) => return Ok(Flow::Value(super::objects::entget(ctx, h))),
+    };
     let (kind, mut tags) = (codec()?.groups)(d, e);
     convert_angles(&kind, &mut tags, f64::to_radians);
     let layout = match space_of(d, h) {
@@ -326,7 +391,7 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         _ => "Model".into(),
     };
     let mut items = vec![Value::cons(Value::Int(-1), Value::Ename(h)), Value::cons(Value::Int(0), Value::str(&kind))];
-    let mut placed_layout = false;
+    let mut placed_layout = in_block;
     for v in groups_to_list(&tags) {
         // The layout name follows the AcDbEntity marker, as AutoCAD lists it.
         let after_marker = !placed_layout && v.car().as_number() == Some(100.0) && matches!(v.cdr(), Value::Str(ref s) if &**s == "AcDbEntity");
@@ -454,6 +519,7 @@ fn end_block(ctx: &mut Ctx<'_>) -> Value {
     }
     let name = b.name.clone();
     d.blocks.insert(name.clone(), Arc::new(b));
+    ctx.env.block_next = None;
     ctx.s.touch();
     Value::str(&name)
 }
@@ -465,13 +531,20 @@ pub fn entmod(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         return Err(LispError::bad_arg("lentityp", &Value::Nil));
     };
     let Some(old) = ctx.s.doc().ok().and_then(|d| d.entity(h)).cloned() else { return Ok(Flow::Value(Value::Nil)) };
-    let (kind_name, common, kind) = match entity_from_list(ctx, list) {
+    let (kind_name, common, mut kind) = match entity_from_list(ctx, list) {
         Ok(x) => x,
         Err(_) => return Ok(Flow::Value(Value::Nil)),
     };
     // entmod changes an entity, never its type.
     if !kind_name.eq_ignore_ascii_case(old.kind.dxf_name()) {
         return Ok(Flow::Value(Value::Nil));
+    }
+    // A block reference's attributes are entities of their own in AutoCAD, which entmod of the
+    // INSERT leaves alone; its list doesn't hold them, so they are kept from the reference.
+    if let (cadcraft_doc::EntityKind::Insert(new), cadcraft_doc::EntityKind::Insert(was)) = (&mut kind, &old.kind)
+        && new.attribs.is_empty()
+    {
+        new.attribs = was.attribs.clone();
     }
     let Ok(d) = ctx.s.doc_mut() else { return Ok(Flow::Value(Value::Nil)) };
     d.ensure_layer(&common.layer);
@@ -518,24 +591,76 @@ pub fn entdel(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     }
 }
 
+/// `b` holds the same handles as `a`, in the same chunks and order. A chunk `b` still shares
+/// with `a` (which is held, so its chunks stay alive) is the same; only a chunk an edit copied is
+/// compared handle by handle.
+fn same_handles(a: &cadcraft_doc::EntityStore, b: &cadcraft_doc::EntityStore) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let (mut x, mut y) = (a.chunk_slices(), b.chunk_slices());
+    loop {
+        match (x.next(), y.next()) {
+            (None, None) => return true,
+            (Some((ka, sa)), Some((kb, sb))) => {
+                if ka != kb && (sa.len() != sb.len() || sa.iter().zip(sb).any(|(p, q)| p.handle != q.handle)) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+}
+
 /// Every entity's handle in creation order (model space and layouts), cached per drawing.
+///
+/// The cache is keyed by content identity, as the spatial index is: it holds clones of the
+/// spaces it was taken from, so any edit (`entmake`, `entmod`, `entdel`, a command, undo) copies
+/// the chunk it touches and the cache no longer matches. The drawing's address is no key: an
+/// edit in place keeps it, and a new drawing can be given the address of a dropped one.
 fn handles_in_order(ctx: &mut Ctx<'_>) -> Arc<Vec<Handle>> {
+    let Ok(d) = ctx.s.doc() else { return Arc::default() };
+    let spaces = || std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities));
+    if let Some((stores, v)) = &mut ctx.env.order
+        && stores.len() == 1 + d.layouts.len()
+        && stores.iter().zip(spaces()).all(|(a, b)| same_handles(a, b))
+    {
+        // An edit that left every handle in place (a property `entmod`) keeps the order: hold
+        // the spaces as they are now, so the next call finds their chunks shared again.
+        if !stores.iter().zip(spaces()).all(|(a, b)| a.same_as(b)) {
+            *stores = spaces().cloned().collect();
+        }
+        return v.clone();
+    }
+    let mut v: Vec<Handle> = spaces().flat_map(|s| s.iter().map(|e| e.handle)).collect();
+    v.sort_unstable();
+    let v = Arc::new(v);
+    ctx.env.order = Some((spaces().cloned().collect(), v.clone()));
+    v
+}
+
+/// Every block-definition entity with its successor within its block, cached per drawing like
+/// [`handles_in_order`]: one pass over the blocks, then `entnext`, `entget` and `handent` on a
+/// block's entity are hash lookups instead of scans of the block (and of every block, to find
+/// which holds the entity).
+fn block_slots(ctx: &mut Ctx<'_>) -> Arc<BlockSlots> {
     let Ok(st) = ctx.s.state() else { return Arc::default() };
     let key = Arc::as_ptr(&st.doc) as usize;
-    if let Some((k, v)) = &ctx.env.order
+    if let Some((k, v)) = &ctx.env.block_next
         && *k == key
     {
         return v.clone();
     }
-    let d = &st.doc;
-    let mut v: Vec<Handle> = d.model.handles();
-    for l in &d.layouts {
-        v.extend(l.entities.handles());
+    let mut m = HashMap::new();
+    for b in st.doc.blocks.values() {
+        let mut it = b.entities.iter().peekable();
+        while let Some(e) = it.next() {
+            m.insert(e.handle, (e.clone(), it.peek().map(|n| n.handle)));
+        }
     }
-    v.sort_unstable();
-    let v = Arc::new(v);
-    ctx.env.order = Some((key, v.clone()));
-    v
+    let m = Arc::new(m);
+    ctx.env.block_next = Some((key, m.clone()));
+    m
 }
 
 pub fn entlast(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
@@ -545,6 +670,15 @@ pub fn entlast(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 
 pub fn entnext(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 0, 1)?;
+    // From an entity of a block definition: the next one in that block, nil after the last (#1700).
+    if let Some(v) = a.first().filter(|v| !v.is_nil()) {
+        let h = ename(v)?;
+        if ctx.s.doc().is_ok_and(|d| d.entity(h).is_none())
+            && let Some((_, next)) = block_slots(ctx).get(&h)
+        {
+            return Ok(Flow::Value(next.map(Value::Ename).unwrap_or_default()));
+        }
+    }
     let order = handles_in_order(ctx);
     let next = match a.first() {
         None | Some(Value::Nil) => order.first().copied(),
@@ -560,8 +694,14 @@ pub fn entnext(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 pub fn handent(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
     let s = string(&a[0])?;
-    let h = Handle::parse_hex(&s).filter(|h| ctx.s.doc().is_ok_and(|d| d.entity(*h).is_some()));
-    Ok(Flow::Value(h.map(Value::Ename).unwrap_or_default()))
+    let Some(h) = Handle::parse_hex(&s) else { return Ok(Flow::Value(Value::Nil)) };
+    let found = ctx.s.doc().is_ok_and(|d| d.entity(h).is_some()) || block_entity(ctx, h).is_some() || super::objects::exists(ctx, h);
+    Ok(Flow::Value(if found { Value::Ename(h) } else { Value::Nil }))
+}
+
+/// Entity `h` of a block definition (#1700), by the cached index.
+fn block_entity(ctx: &mut Ctx<'_>, h: Handle) -> Option<Arc<Entity>> {
+    block_slots(ctx).get(&h).map(|(e, _)| e.clone())
 }
 
 // ---------------- selection sets ----------------
@@ -589,10 +729,13 @@ pub fn ssget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         }
         _ => (rest, None),
     };
+    // The points are UCS points, as `getpoint` and `getcorner` give them: the selection runs in
+    // the world.
+    let frame = ctx.s.input_ucs();
     let point = |i: usize| -> Result<Vec2, LispError> {
         let v = pts.get(i).ok_or_else(|| args_err(true))?;
         let p = v.as_point().ok_or_else(|| LispError::bad_arg("2D/3D point", v))?;
-        Ok(Vec2::new(p[0], p[1]))
+        Ok(frame.to_wcs(Vec2::new(p[0], p[1])))
     };
     let s = &mut *ctx.s;
     let all = |s: &Session, all_spaces: bool| -> Vec<Handle> {
@@ -612,24 +755,30 @@ pub fn ssget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         Some("X") => all(s, true),
         Some("L") => {
             let order = handles_in_order(ctx);
-            order.last().copied().into_iter().collect()
+            // Inside an MSPACE viewport, the objects that viewport does not draw are passed over.
+            let st = ctx.s.state().ok();
+            let drawn = |h: &Handle| st.is_none_or(|st| st.doc.entity(*h).is_none_or(|e| !st.hidden_in_viewport(e)));
+            order.iter().rev().copied().find(drawn).into_iter().collect()
         }
-        Some("P") => ctx.s.state().map(|st| st.previous_selection.clone()).unwrap_or_default(),
+        Some("P") => ctx.s.state().map(|st| st.drawn_in_viewport(&st.previous_selection)).unwrap_or_default(),
         Some("I") => ctx.s.selection(),
         Some("W") | Some("C") => {
+            // A selection window is the box around its corners in the world, like SELECT's: the
+            // same corners typed at either pick the same objects.
             let (p1, p2) = (point(0)?, point(1)?);
             let s = &*ctx.s;
             let Ok(d) = s.doc() else { return Ok(Flow::Value(Value::Nil)) };
-            crate::select::select_window(d, &space, cadcraft_geom::Bounds2::from_points([p1, p2]), mode.as_deref() == Some("C"))
+            let bx = cadcraft_geom::Bounds2::from_points([p1, p2]);
+            crate::select::select_window_in(d, &space, s.viewport_frozen(), bx, mode.as_deref() == Some("C"))
         }
         Some("F") | Some("WP") | Some("CP") => {
             let poly: Vec<Vec2> =
-                pts.first().map(|l| l.iter().filter_map(|p| p.as_point().map(|q| Vec2::new(q[0], q[1]))).collect()).unwrap_or_default();
+                pts.first().map(|l| l.iter().filter_map(|p| p.as_point().map(|q| frame.to_wcs(Vec2::new(q[0], q[1])))).collect()).unwrap_or_default();
             let s = &*ctx.s;
             let Ok(d) = s.doc() else { return Ok(Flow::Value(Value::Nil)) };
             match mode.as_deref() {
-                Some("F") => crate::select::select_fence(d, &space, &poly),
-                m => crate::select::select_polygon(d, &space, &poly, m == Some("CP")),
+                Some("F") => crate::select::select_fence_in(d, &space, s.viewport_frozen(), &poly),
+                m => crate::select::select_polygon_in(d, &space, s.viewport_frozen(), &poly, m == Some("CP")),
             }
         }
         Some(":S") | Some("A") | None => {
@@ -645,7 +794,7 @@ pub fn ssget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
                 let s = &*ctx.s;
                 let ap = s.settings.pickbox.max(1.0) * s.pixel_size();
                 let Ok(d) = s.doc() else { return Ok(Flow::Value(Value::Nil)) };
-                crate::select::pick(d, &space, p, ap).into_iter().collect()
+                crate::select::pick_in(d, &space, s.viewport_frozen(), p, ap).into_iter().collect()
             }
         }
         Some(m) => return Err(LispError::new(format!("bad argument value: ssget mode {m}"))),
@@ -666,7 +815,7 @@ fn interactive_ssget(ctx: &mut Ctx<'_>, filter: Option<Value>) -> Result<Flow, L
     if ctx.s.running.is_some() {
         return Ok(Flow::Value(Value::Nil));
     }
-    if let Err(e) = ctx.s.start("select") {
+    if let Err(e) = ctx.s.start_programmatic("select") {
         return Err(LispError::new(e.to_string()));
     }
     let f = super::eval::lookup(ctx.env, &super::value::Sym::new("SSGET"));
@@ -949,12 +1098,17 @@ fn table_records(d: &cadcraft_doc::Drawing, table: &str) -> Vec<Value> {
             .blocks
             .values()
             .map(|b| {
-                Value::list(vec![
+                let mut items = vec![
                     pair(0, Value::str("BLOCK")),
                     pair(2, Value::str(&b.name)),
                     pair(70, Value::Int(0)),
                     Value::list(vec![Value::Int(10), Value::Real(b.base.x), Value::Real(b.base.y), Value::Real(b.base.z)]),
-                ])
+                ];
+                // Its first entity (-2): entnext walks the rest of the definition (#1700).
+                if let Some(first) = b.entities.iter().next() {
+                    items.push(pair(-2, Value::Ename(first.handle)));
+                }
+                Value::list(items)
             })
             .collect(),
         "DIMSTYLE" => d
@@ -1029,7 +1183,7 @@ pub fn rtos(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 }
 
 fn decimal(v: f64, prec: usize, dimzin: i64) -> String {
-    let mut s = format!("{v:.prec$}");
+    let mut s = crate::units::fixed(v, prec);
     if s.starts_with("-0") && s.trim_start_matches(['-', '0', '.']).is_empty() {
         s = s.trim_start_matches('-').to_string();
     }
@@ -1069,7 +1223,8 @@ pub fn distof(_ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 pub fn angtof(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 2)?;
     let s = string(&a[0])?;
-    let mut settings = ctx.s.angle_settings();
+    // A pure string-to-angle conversion: ANGBASE and ANGDIR apply, the UCS does not.
+    let mut settings = ctx.s.angle_settings().world();
     // AUNITS 0..=4; any other units argument is an error in AutoCAD, nil here.
     match a.get(1) {
         None | Some(Value::Nil) => {}
@@ -1079,11 +1234,104 @@ pub fn angtof(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     Ok(Flow::Value(settings.direction(&s).map(Value::Real).unwrap_or_default()))
 }
 
-/// `(trans pt from to [disp])`: points are in the world system throughout (no UCS yet).
-pub fn trans(_ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
+/// A coordinate system `trans` converts from or to: its origin and axes in world coordinates.
+fn trans_system(ctx: &mut Ctx<'_>, v: &Value) -> Result<crate::ucs::UcsFrame, LispError> {
+    use crate::ucs::UcsFrame;
+    match v {
+        // 0 the WCS; 3 paper space's display system, which lines up with paper space's WCS (from
+        // or to the active layout viewport's display system, `viewport_to_paper` applies).
+        Value::Int(0 | 3) => Ok(UcsFrame::WORLD),
+        // 2 the display system: in a plan view, the WCS turned back by the view's twist (X runs
+        // right across the screen).
+        Value::Int(2) => {
+            let twist = cadcraft_geom::norm_angle(ctx.s.state().map_or(0.0, |st| st.view().twist));
+            Ok(UcsFrame::WORLD.rotated_z(-twist))
+        }
+        Value::Int(1) => Ok(ctx.s.input_ucs()),
+        // An object: its OCS. An entity of a block definition is found as `entget` finds it.
+        // LINE and POINT keep their points in world coordinates whatever their extrusion (the
+        // DXF Reference), so their system is the WCS.
+        Value::Ename(h) => {
+            let frame = |e: &Entity| match e.kind {
+                cadcraft_doc::EntityKind::Line(_) | cadcraft_doc::EntityKind::Point(_) => Some(UcsFrame::WORLD),
+                _ => ocs(e.common.extrusion),
+            };
+            let found = match ctx.s.doc().map_err(|e| LispError::new(e.to_string()))?.entity(*h) {
+                Some(e) => frame(e),
+                None => frame(&*block_entity(ctx, *h).ok_or_else(|| LispError::bad_arg("lentityp", v))?),
+            };
+            found.ok_or_else(|| LispError::bad_arg("lentityp", v))
+        }
+        // An extrusion direction: the OCS of objects with it.
+        Value::Cons(_) => {
+            let n = v.as_point().ok_or_else(|| LispError::bad_arg("coordinate system", v))?;
+            ocs(cadcraft_geom::Vec3::new(n[0], n[1], n[2])).ok_or_else(|| LispError::bad_arg("coordinate system", v))
+        }
+        other => Err(LispError::bad_arg("coordinate system", other)),
+    }
+}
+
+/// The object coordinate system of extrusion direction `n` (the arbitrary axis algorithm of the
+/// DXF Reference): `None` for a direction with no length.
+fn ocs(n: cadcraft_geom::Vec3) -> Option<crate::ucs::UcsFrame> {
+    use cadcraft_geom::Vec3;
+    let l = n.len();
+    if !(l > 1e-12 && l.is_finite()) {
+        return None;
+    }
+    let n = n * (1.0 / l);
+    let w = if n.x.abs() < 1.0 / 64.0 && n.y.abs() < 1.0 / 64.0 { Vec3::new(0.0, 1.0, 0.0) } else { Vec3::Z };
+    let ax = w.cross(n);
+    crate::ucs::UcsFrame::new(Vec3::ZERO, ax, n.cross(ax))
+}
+
+/// `trans` between the display system (2) of the active layout viewport and paper space's
+/// display system (3): the viewport's scale, and where its view sits on the sheet. `None` for any
+/// other pair of systems, or with no active viewport (on the Model tab, or on the sheet itself,
+/// the two line up).
+fn viewport_to_paper(ctx: &Ctx<'_>, from: &Value, to: &Value, p: cadcraft_geom::Vec3, disp: bool) -> Option<cadcraft_geom::Vec3> {
+    let to_paper = match (from, to) {
+        (Value::Int(2), Value::Int(3)) => true,
+        (Value::Int(3), Value::Int(2)) => false,
+        _ => return None,
+    };
+    let (_, vp) = ctx.s.state().ok()?.active_viewport()?;
+    // Paper units per model unit; display coordinates are the world turned by the view twist, so
+    // the view centre in them is turned too.
+    let k = vp.scale();
+    let (view, sheet) = (vp.view_center.rotate(vp.view_twist()), vp.center.xy());
+    let q = if to_paper {
+        let xy = if disp { p.xy() * k } else { sheet + (p.xy() - view) * k };
+        xy.to3(p.z * k)
+    } else {
+        let xy = if disp { p.xy() / k } else { view + (p.xy() - sheet) / k };
+        xy.to3(p.z / k)
+    };
+    Some(q)
+}
+
+/// `(trans pt from to [disp])`: `pt` from coordinate system `from` to `to` (0 WCS, 1 UCS, 2 and 3
+/// display, an entity name for its OCS, or an extrusion direction); with `disp` non-nil `pt` is a
+/// displacement, which the systems' origins don't move.
+pub fn trans(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 3, 4)?;
     let p = a[0].as_point().ok_or_else(|| LispError::bad_arg("2D/3D point", &a[0]))?;
-    Ok(Flow::Value(Value::point(&p)))
+    let from = trans_system(ctx, &a[1])?;
+    let to = trans_system(ctx, &a[2])?;
+    let disp = a.get(3).is_some_and(|v| !v.is_nil());
+    let p = cadcraft_geom::Vec3::new(p[0], p[1], p[2]);
+    let q = if let Some(q) = viewport_to_paper(ctx, &a[1], &a[2], p, disp) {
+        q
+    } else if disp {
+        let w = from.x * p.x + from.y * p.y + from.z() * p.z;
+        cadcraft_geom::Vec3::new(w.dot(to.x), w.dot(to.y), w.dot(to.z()))
+    } else {
+        to.to_ucs3(from.to_wcs3(p))
+    };
+    if !q.is_finite() {
+        return Err(LispError::bad_arg("2D/3D point", &a[0]));
+    }
+    Ok(Flow::Value(Value::point(&[q.x, q.y, q.z])))
 }
 
 /// What `(load name)` reads: a file loaded through APPLOAD (the web), or one on disk, with
@@ -1094,8 +1342,45 @@ pub fn load_source(s: &Session, name: &str) -> Option<String> {
     }
     let candidates =
         if std::path::Path::new(name).extension().is_none() { vec![format!("{name}.lsp"), name.to_string()] } else { vec![name.to_string()] };
-    // As given (a path, or relative to the working folder), then in the support folder.
-    let support =
-        s.lisp_support_dir().map(|d| candidates.iter().map(|c| d.join(c).to_string_lossy().into_owned()).collect::<Vec<_>>()).unwrap_or_default();
-    candidates.iter().chain(&support).find_map(|c| super::builtins::read_text_file(c))
+    // An absolute path is read as given. A relative name is looked up in the support folder only,
+    // never in the process working folder: that can be the folder of a drawing just opened from a
+    // file manager, and a `tools.lsp` shipped beside it must not answer a startup file's
+    // `(load "tools")` (#1927). Without a support folder (the command-line tool, which has no
+    // startup files) a relative name is read as given.
+    let dir = match s.lisp_support_dir() {
+        Some(d) if !std::path::Path::new(name).is_absolute() => d,
+        _ => return candidates.iter().find_map(super::builtins::read_text_file),
+    };
+    // A relative name stays inside the support folder: plain folder and file names only. `..` would
+    // climb out of it, and on Windows a rooted name (`\tools`) or a drive-relative one (`C:tools`,
+    // the working folder of drive C) is not absolute, yet joined to the folder it replaces it.
+    use std::path::Component;
+    if !std::path::Path::new(name).components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir)) {
+        return None;
+    }
+    candidates.iter().find_map(|c| super::builtins::read_text_file(dir.join(c)))
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    /// One 64 KB string occurring many times is charged by its length each time.
+    #[test]
+    fn shared_strings_spend_the_conversion_budgets() {
+        let big = Value::str(&"x".repeat(64 << 10));
+        // 600 x 64 KB is over the 32 MiB an entity list may hold; 100 x 64 KB is not.
+        let list = |n: usize| {
+            let mut items = vec![Value::cons(Value::Int(0), Value::str("TEXT"))];
+            items.extend(std::iter::repeat_n(Value::cons(Value::Int(1), big.clone()), n));
+            Value::list(items)
+        };
+        assert!(list_to_groups(&list(600)).is_err());
+        assert!(list_to_groups(&list(100)).is_ok());
+        // 1,000 x 64 KB is 4,096,000 units of the 2,000,000 SETVAR allows; 100 x 64 KB is not.
+        let mut budget = TO_JSON_BUDGET;
+        assert!(to_json_bounded(&Value::list(vec![big.clone(); 1_000]), 0, &mut budget).is_none());
+        let mut budget = TO_JSON_BUDGET;
+        assert!(to_json_bounded(&Value::list(vec![big; 100]), 0, &mut budget).is_some());
+    }
 }

@@ -68,23 +68,62 @@ pub fn format_distance(v: f64, lunits: i64, luprec: i64) -> String {
             };
             format!("{}{}{}", if neg { "-" } else { "" }, whole, fs)
         }
-        _ => format!("{:.*}", prec, v),
+        _ => fixed(v, prec),
     }
 }
 
-/// Scientific notation with a signed exponent of at least two digits (`1.7500E+01`, `1.00E-05`).
-fn scientific(v: f64, prec: usize) -> String {
-    let s = format!("{:.*E}", prec, v);
-    match s.split_once('E') {
-        Some((mantissa, exp)) => {
-            let (sign, digits) = match exp.strip_prefix('-') {
-                Some(d) => ('-', d),
-                None => ('+', exp),
-            };
-            format!("{mantissa}E{sign}{digits:0>2}")
-        }
-        None => s,
+/// `v` with `prec` decimals, rounded as AutoCAD rounds a number it shows (RTOS, LUNITS): at 15
+/// significant digits, with a half rounded away from zero. AutoCAD 2024 gives 1.01 for 1.005 to two
+/// places (its binary value is just below 1.005), 3 for 2.5 and -0.13 for -0.125, where Rust's
+/// formatting rounds the binary value and a half to even (1.00, 2 and -0.12).
+pub fn fixed(v: f64, prec: usize) -> String {
+    let plain = || format!("{v:.prec$}");
+    if !v.is_finite() {
+        return plain();
     }
+    let sci = format!("{:.14e}", v.abs());
+    let Some((mantissa, exp)) = sci.split_once('e') else { return plain() };
+    let Ok(exp) = exp.parse::<i64>() else { return plain() };
+    let sig: Vec<u8> = mantissa.bytes().filter(u8::is_ascii_digit).map(|b| b - b'0').collect();
+    // Digit `k` of `sig` is worth 10^(exp - k); keep those down to 10^-prec, in units of 10^-prec.
+    let digit = |k: i64| usize::try_from(k).ok().and_then(|k| sig.get(k)).copied().unwrap_or(0);
+    let keep = exp + 1 + prec as i64;
+    let mut units: Vec<u8> = (0..keep).map(digit).collect();
+    if keep >= 0 && digit(keep) >= 5 {
+        let mut carry = true;
+        for d in units.iter_mut().rev() {
+            if *d == 9 {
+                *d = 0;
+            } else {
+                *d += 1;
+                carry = false;
+                break;
+            }
+        }
+        if carry {
+            units.insert(0, 1);
+        }
+    }
+    let n: String = units.iter().map(|d| char::from(b'0' + d)).collect();
+    let n = format!("{:0>width$}", n.trim_start_matches('0'), width = prec + 1);
+    let (int, frac) = n.split_at(n.len() - prec);
+    let body = if prec == 0 { int.to_string() } else { format!("{int}.{frac}") };
+    if v < 0.0 && n.bytes().any(|b| b != b'0') { format!("-{body}") } else { body }
+}
+
+/// Scientific notation with a signed exponent of at least two digits (`1.7500E+01`, `1.00E-05`),
+/// the mantissa rounded as [`fixed`] rounds.
+fn scientific(v: f64, prec: usize) -> String {
+    let s = format!("{:.14e}", v);
+    let Some((m, e)) = s.split_once('e') else { return s };
+    let (Ok(m), Ok(mut e)) = (m.parse::<f64>(), e.parse::<i64>()) else { return s };
+    let mut mantissa = fixed(m, prec);
+    // 9.99… rounded up to 10: one more power of ten.
+    if mantissa.trim_start_matches('-').starts_with("10") {
+        e += 1;
+        mantissa = fixed(m / 10.0, prec);
+    }
+    format!("{mantissa}E{}{:0>2}", if e < 0 { '-' } else { '+' }, e.abs())
 }
 
 fn gcd(a: i64, b: i64) -> i64 {
@@ -133,7 +172,16 @@ pub fn format_angle(a: f64, aunits: i64, auprec: i64) -> String {
             } else {
                 ("S", "E", deg - 270.0)
             };
-            format!("{ns} {} {ew}", format_dms(ang, prec))
+            // A bearing shown as due north, south, east or west is that letter, as AutoCAD 2024
+            // shows it ("E" for 0), except to whole degrees ("N 90d E").
+            let dms = format_dms(ang, prec);
+            if prec > 0 && dms == format_dms(0.0, prec) {
+                ns.to_string()
+            } else if prec > 0 && dms == format_dms(90.0, prec) {
+                ew.to_string()
+            } else {
+                format!("{ns} {dms} {ew}")
+            }
         }
         _ => format!("{:.*}", prec, wrap_full_turn(deg, 360.0, prec)),
     }
@@ -221,15 +269,25 @@ pub struct AngleSettings {
     pub angbase: f64,
     /// ANGDIR 1: positive angles turn clockwise.
     pub clockwise: bool,
+    /// The current UCS's X axis, radians counterclockwise from world +X: directions are measured
+    /// in the UCS (ANGBASE from its X axis, the overrides and bearings too). Sizes of angles
+    /// ([`AngleSettings::amount`], [`AngleSettings::rotation`]) don't depend on it.
+    pub ucs: f64,
 }
 
 impl AngleSettings {
     pub fn from_header(h: &cadcraft_doc::Header) -> Self {
-        AngleSettings { aunits: h.i64("AUNITS", 0), angbase: h.f64("ANGBASE", 0.0), clockwise: h.i64("ANGDIR", 0) != 0 }
+        AngleSettings { aunits: h.i64("AUNITS", 0), angbase: h.f64("ANGBASE", 0.0), clockwise: h.i64("ANGDIR", 0) != 0, ucs: 0.0 }
+    }
+
+    /// The same settings with directions measured in the World UCS (`*` coordinates).
+    pub fn world(&self) -> Self {
+        AngleSettings { ucs: 0.0, ..*self }
     }
 
     /// A typed angle size in radians (included angles, sweeps, angles from an axis): a bare
-    /// number in AUNITS, or with an explicit unit: `30d`, `45d30'15"`, `0.5r`, `100g`.
+    /// number in AUNITS, or with an explicit unit: `30d`, `45d30'15"`, `0.5r`, `100g`; a
+    /// surveyor's bearing (`N45dE`, or `N`, `E`, `S`, `W`) is its angle counterclockwise from east.
     pub fn amount(&self, s: &str) -> Option<f64> {
         parse_units(s, self.aunits).map(|(a, _)| a)
     }
@@ -240,36 +298,37 @@ impl AngleSettings {
     }
 
     /// A typed direction in radians counterclockwise from +X: the amount measured from ANGBASE in
-    /// the ANGDIR sense. Surveyor's bearings (`N45dE`) are absolute. The overrides measure from
-    /// +X counterclockwise whatever ANGBASE and ANGDIR say: `<<a` in degrees, `<<<a` in AUNITS.
+    /// the ANGDIR sense, a surveyor's bearing too, as AutoCAD 2024 measures it (`N45dE` with
+    /// ANGBASE 90 and ANGDIR 1 is 45 degrees). The overrides measure from +X counterclockwise
+    /// whatever ANGBASE and ANGDIR say: `<<<a` in AUNITS or as a bearing, `<<a` in degrees only
+    /// (AutoCAD refuses `<<N45dE` and `<<N`).
     pub fn direction(&self, s: &str) -> Option<f64> {
         let t = s.trim();
+        let ucs = |a: f64| Some(a + self.ucs).filter(|v| v.is_finite());
         if let Some(r) = t.strip_prefix("<<<") {
-            return parse_units(r, self.aunits).map(|(a, _)| a);
+            return parse_units(r, self.aunits).and_then(|(a, _)| ucs(a));
         }
         if let Some(r) = t.strip_prefix("<<") {
-            return parse_units(r, 0).map(|(a, _)| a);
+            return parse_units(r, 0).filter(|(_, bearing)| !bearing).and_then(|(a, _)| ucs(a));
         }
-        let (a, absolute) = parse_units(t, self.aunits)?;
-        if absolute {
-            return Some(a);
-        }
-        let v = self.angbase + if self.clockwise { -a } else { a };
-        v.is_finite().then_some(v)
+        let (a, _) = parse_units(t, self.aunits)?;
+        ucs(self.angbase + if self.clockwise { -a } else { a })
     }
 
-    /// Direction `dir` (radians counterclockwise from +X) as the drawing shows directions, in
-    /// radians: from ANGBASE in the ANGDIR sense, 0 up to a full turn. (A block turned 2.23°
-    /// shows as 87.77 in a drawing measured clockwise from north, as in AutoCAD's Properties.)
+    /// Direction `dir` (radians counterclockwise from world +X) as the drawing shows directions,
+    /// in radians: from ANGBASE in the ANGDIR sense, measured in the current UCS (`ucs`) as typed
+    /// directions are read ([`AngleSettings::direction`]), 0 up to a full turn. (A block turned
+    /// 2.23° shows as 87.77 in a drawing measured clockwise from north, as in AutoCAD's Properties.)
     pub fn shown(&self, dir: f64) -> f64 {
-        let a = if self.clockwise { self.angbase - dir } else { dir - self.angbase };
+        let local = dir - self.ucs;
+        let a = if self.clockwise { self.angbase - local } else { local - self.angbase };
         a.rem_euclid(std::f64::consts::TAU)
     }
 
-    /// The direction (radians counterclockwise from +X) the drawing shows as `v` (radians): the
-    /// inverse of [`AngleSettings::shown`].
+    /// The direction (radians counterclockwise from world +X) the drawing shows as `v`
+    /// (radians): the inverse of [`AngleSettings::shown`].
     pub fn unshown(&self, v: f64) -> f64 {
-        (self.angbase + if self.clockwise { -v } else { v }).rem_euclid(std::f64::consts::TAU)
+        (self.ucs + self.angbase + if self.clockwise { -v } else { v }).rem_euclid(std::f64::consts::TAU)
     }
 }
 
@@ -280,7 +339,8 @@ pub fn parse_angle(s: &str) -> Option<f64> {
     AngleSettings::default().direction(s)
 }
 
-/// A typed angle in radians and whether it is absolute (a surveyor's bearing).
+/// A typed angle in radians and whether it is a surveyor's bearing (`N45dE`, or `N`, `E`, `S`,
+/// `W`), whose angle is its direction counterclockwise from east.
 fn parse_units(s: &str, aunits: i64) -> Option<(f64, bool)> {
     let t = s.trim().to_ascii_lowercase();
     if t.is_empty() {
@@ -291,7 +351,7 @@ fn parse_units(s: &str, aunits: i64) -> Option<(f64, bool)> {
         (num(r)?, false)
     } else if let Some(g) = t.strip_suffix('g') {
         ((num(g)? * 0.9).to_radians(), false)
-    } else if let Some(b) = bearing(&t) {
+    } else if let Some(b) = cardinal(&t).or_else(|| bearing(&t)) {
         (b, true)
     } else if let Some(v) = num(&t) {
         let a = match aunits {
@@ -304,6 +364,18 @@ fn parse_units(s: &str, aunits: i64) -> Option<(f64, bool)> {
         (parse_dms(&t)?.to_radians(), false)
     };
     v.0.is_finite().then_some(v)
+}
+
+/// A compass point (`n`, `e`, `s`, `w`, lower case), a due bearing as surveyor's units show it,
+/// as radians counterclockwise from +X. AutoCAD 2024 takes one in any angle format.
+fn cardinal(t: &str) -> Option<f64> {
+    match t {
+        "e" => Some(0.0),
+        "n" => Some(PI / 2.0),
+        "w" => Some(PI),
+        "s" => Some(1.5 * PI),
+        _ => None,
+    }
 }
 
 /// A surveyor's bearing (`n45d30'e`, lower case) as radians counterclockwise from +X.
@@ -357,9 +429,12 @@ fn parse_dms(t: &str) -> Option<f64> {
 }
 
 impl crate::Session {
-    /// How typed angles are read in the current drawing (the defaults without one).
+    /// How typed angles are read in the current drawing (the defaults without one): directions
+    /// are measured in the current UCS.
     pub fn angle_settings(&self) -> AngleSettings {
-        self.doc().map(|d| AngleSettings::from_header(&d.header)).unwrap_or_default()
+        let a = self.doc().map(|d| AngleSettings::from_header(&d.header)).unwrap_or_default();
+        let ucs = self.input_ucs().rotation();
+        AngleSettings { ucs: if ucs.is_finite() { ucs } else { 0.0 }, ..a }
     }
 }
 
@@ -403,7 +478,7 @@ mod tests {
 
     #[test]
     fn directions_show_from_angbase_in_the_angdir_sense() {
-        let north_clockwise = AngleSettings { aunits: 0, angbase: 90f64.to_radians(), clockwise: true };
+        let north_clockwise = AngleSettings { aunits: 0, angbase: 90f64.to_radians(), clockwise: true, ucs: 0.0 };
         // AutoCAD shows a block turned 2.22729505553431° as 87.77 in such a drawing.
         let shown = north_clockwise.shown(2.22729505553431f64.to_radians()).to_degrees();
         assert!((shown - 87.77270494446569).abs() < 1e-9, "{shown}");
@@ -413,8 +488,31 @@ mod tests {
         let plain = AngleSettings::default();
         assert!((plain.shown(0.5) - 0.5).abs() < 1e-12 && (plain.unshown(0.5) - 0.5).abs() < 1e-12);
         // Counterclockwise from a base of 30°: 45° shows as 15.
-        let based = AngleSettings { aunits: 0, angbase: 30f64.to_radians(), clockwise: false };
+        let based = AngleSettings { aunits: 0, angbase: 30f64.to_radians(), clockwise: false, ucs: 0.0 };
         assert!((based.shown(45f64.to_radians()).to_degrees() - 15.0).abs() < 1e-9);
+    }
+
+    /// In a turned UCS, a shown direction (the Properties palette's Rotation) is measured from
+    /// the UCS X axis, as typed directions are: what is typed as 0 shows as 0, and back.
+    #[test]
+    fn shown_directions_are_measured_in_the_ucs() {
+        let turned = AngleSettings { ucs: 90f64.to_radians(), ..AngleSettings::default() };
+        let typed = turned.direction("0").unwrap();
+        assert!((typed - 90f64.to_radians()).abs() < 1e-12, "0 in the UCS is world 90°");
+        assert!(turned.shown(typed).abs() < 1e-12, "and shows as 0");
+        assert!((turned.unshown(0.0) - typed).abs() < 1e-12, "0 entered is that direction");
+        // With ANGBASE and ANGDIR too: every direction shown and entered back is itself.
+        let s = AngleSettings { aunits: 0, angbase: 30f64.to_radians(), clockwise: true, ucs: 50f64.to_radians() };
+        for deg in [0.0, 12.5, 90.0, 181.0, 359.0] {
+            let dir = f64::to_radians(deg);
+            let back = s.unshown(s.shown(dir));
+            assert!((back - dir).rem_euclid(std::f64::consts::TAU).min((dir - back).rem_euclid(std::f64::consts::TAU)) < 1e-9, "{deg}");
+            let typed = s.direction(&format!("{}", s.shown(dir).to_degrees())).unwrap();
+            assert!(
+                ((typed - dir).rem_euclid(std::f64::consts::TAU)).min((dir - typed).rem_euclid(std::f64::consts::TAU)) < 1e-9,
+                "{deg}: shown then typed"
+            );
+        }
     }
 
     #[test]
@@ -435,11 +533,38 @@ mod tests {
         assert_eq!(format_distance(11.6, 3, 0), "1'-0\"");
     }
 
+    /// RTOS in AutoCAD 2024 (accoreconsole, DIMZIN 0): a half rounds away from zero, at 15
+    /// significant digits.
+    #[test]
+    fn numbers_round_as_autocad_rounds_them() {
+        for (v, prec, want) in [
+            (1500.5, 0, "1501"),
+            (2.5, 0, "3"),
+            (-2.5, 0, "-3"),
+            (0.125, 2, "0.13"),
+            (0.5, 0, "1"),
+            (1.005, 2, "1.01"),
+            (3.5, 0, "4"),
+            (0.0625, 3, "0.063"),
+            (-0.125, 2, "-0.13"),
+            (1234.5678, 3, "1234.568"),
+        ] {
+            assert_eq!(format_distance(v, 2, prec), want, "{v} to {prec}");
+        }
+        assert_eq!(format_distance(2.5, 1, 0), "3E+00");
+        assert_eq!(format_distance(0.125, 1, 1), "1.3E-01");
+        assert_eq!(format_distance(9.96, 1, 1), "1.0E+01");
+        assert_eq!(fixed(-0.004, 2), "0.00");
+        assert_eq!(fixed(1e-20, 3), "0.000");
+        assert_eq!(fixed(123456789012.0, 1), "123456789012.0");
+    }
+
     #[test]
     fn scientific_exponent_is_signed_and_padded() {
         assert_eq!(format_distance(17.5, 1, 4), "1.7500E+01");
         assert_eq!(format_distance(0.00001, 1, 2), "1.00E-05");
-        assert_eq!(format_distance(1234.5, 1, 3), "1.234E+03");
+        // 1.2345 is halfway: away from zero, as AutoCAD rounds 2.5 to 3E+00.
+        assert_eq!(format_distance(1234.5, 1, 3), "1.235E+03");
         assert_eq!(format_distance(12345678.0, 1, 3), "1.235E+07");
         assert_eq!(format_distance(-17.5, 1, 4), "-1.7500E+01");
         assert_eq!(format_distance(0.0, 1, 2), "0.00E+00");
@@ -473,6 +598,46 @@ mod tests {
         ];
         for (angle, prec, expected) in cases {
             assert_eq!(format_angle(angle, 1, prec), expected, "AUPREC {prec}");
+        }
+    }
+
+    #[test]
+    fn surveyors_units_read_a_due_bearing_typed_as_one_letter() {
+        // What surveyor's units show for a due bearing can be typed back, e.g. `@10<E`. AutoCAD 2024
+        // reads the letter as an angle like any other, from ANGBASE in the ANGDIR sense: with
+        // ANGBASE 90 and ANGDIR 1, `@10<N` draws east.
+        let a = AngleSettings { aunits: 4, angbase: PI / 2.0, clockwise: true, ucs: 0.0 };
+        for (t, want) in [("E", PI / 2.0), ("n", 0.0), ("W", 1.5 * PI), ("s", PI)] {
+            let got = a.direction(t).unwrap().rem_euclid(2.0 * PI);
+            assert!((got - want).abs() < 1e-12, "{t}: {got}");
+        }
+        // And in any angle format: `@10<E` draws east at AUNITS 0, `@10<S` south at AUNITS 1.
+        for (aunits, t, want) in [(0, "E", 0.0), (1, "S", 1.5 * PI)] {
+            let got = AngleSettings { aunits, ..AngleSettings::default() }.direction(t);
+            assert!(got.is_some_and(|a| (a - want).abs() < 1e-12), "AUNITS {aunits} {t}: {got:?}");
+        }
+    }
+
+    #[test]
+    fn surveyors_units_show_a_due_bearing_as_one_letter() {
+        // AutoCAD 2024's ANGTOS in surveyor's units (measured): due east, north, west and south are
+        // one letter, also when the bearing only rounds to one; to whole degrees east stays a
+        // bearing.
+        let cases = [
+            (0.0, 0, "N 90d E"),
+            (0.0, 1, "E"),
+            (0.0, 2, "E"),
+            (0.0, 4, "E"),
+            (PI / 2.0, 1, "N"),
+            (PI, 4, "W"),
+            (3.0 * PI / 2.0, 4, "S"),
+            (0.00001, 2, "E"),
+            (1.0, 1, "N 32d42' E"),
+            (1.0, 3, "N 32d42'15\" E"),
+            (1.0, 7, "N 32d42'15.194\" E"),
+        ];
+        for (angle, prec, expected) in cases {
+            assert_eq!(format_angle(angle, 4, prec), expected, "{angle} AUPREC {prec}");
         }
     }
 
@@ -520,6 +685,10 @@ mod tests {
         assert!((parse_angle("90").unwrap() - PI / 2.0).abs() < 1e-12);
         assert!((parse_angle("45d30'").unwrap().to_degrees() - 45.5).abs() < 1e-9);
         assert!((parse_angle("N45dE").unwrap().to_degrees() - 45.0).abs() < 1e-9);
+        // A compass point on its own, in either case.
+        for (t, deg) in [("N", 90.0), ("e", 0.0), ("W", 180.0), ("s", 270.0)] {
+            assert!((parse_angle(t).unwrap().to_degrees() - deg).abs() < 1e-9, "{t}");
+        }
         assert!((parse_angle("1.5r").unwrap() - 1.5).abs() < 1e-12);
         assert_eq!(format_angle(PI / 2.0, 0, 0), "90");
         assert_eq!(format_angle(PI / 4.0, 4, 0), "N 45d E");

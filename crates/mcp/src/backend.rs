@@ -1,10 +1,12 @@
 //! Where MCP tool calls end up: a control-channel method call.
 
-use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::Arc;
 use std::time::Duration;
 
 use cadcraft_engine::Session;
+use cadcraft_engine::file_access::{self, AutomationRoots};
 use serde_json::{Value, json};
 
 /// Something that answers control-channel methods (`engine.execute`, `cmdline.input`,
@@ -28,6 +30,11 @@ pub struct Remote {
     /// The per-session control token for this port, read from the owner-only token file on first
     /// use so requests can authenticate (CWE-306).
     token: Option<String>,
+    /// Whether a request on the current connection has passed the server's token check, so the
+    /// server takes lines longer than `MAX_UNAUTHENTICATED_LINE` on it (#1925).
+    authed: bool,
+    /// Longest reply line accepted (`MAX_REPLY_LINE`; smaller in tests).
+    max_reply: usize,
 }
 
 /// The port component of a `HOST:PORT` address, for locating the token file.
@@ -38,10 +45,29 @@ fn port_of(addr: &str) -> Option<u16> {
 /// How long a launched app has to open its control port.
 const LAUNCH_WAIT: Duration = Duration::from_secs(30);
 
+/// Longest reply line in bytes the client will buffer. It matches the control server's request
+/// cap (256 MiB, room for whole drawings and images as base64), so a peer squatting on the port
+/// can't make the client allocate without bound (#1925).
+const MAX_REPLY_LINE: usize = 256 * 1024 * 1024;
+
+/// Read one `\n`-terminated reply of at most `max` bytes (newline excluded). `Ok(0)` is end of
+/// stream; a longer line is an `InvalidData` error and the rest of it stays unread.
+fn read_reply_line(reader: &mut impl BufRead, reply: &mut String, max: usize) -> std::io::Result<usize> {
+    let limit = u64::try_from(max).unwrap_or(u64::MAX).saturating_add(1);
+    let n = reader.take(limit).read_line(reply)?;
+    if n > max && !reply.ends_with('\n') {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("reply from the control port is longer than {max} bytes; is that CADCraft's control server?"),
+        ));
+    }
+    Ok(n)
+}
+
 impl Remote {
     /// Connect to a running control server; its session token is read lazily when the first request is sent.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, launch: false, token: None };
+        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, launch: false, token: None, authed: false, max_reply: MAX_REPLY_LINE };
         r.reconnect()?;
         Ok(r)
     }
@@ -49,15 +75,23 @@ impl Remote {
     /// the server before the app is open. With `launch`, a call that finds nothing at `addr`
     /// opens the app with that control port first (macOS) and waits for it.
     pub fn lazy(addr: &str, launch: bool) -> Self {
-        Self { addr: addr.to_string(), conn: None, next_id: 1, launch, token: None }
+        Self { addr: addr.to_string(), conn: None, next_id: 1, launch, token: None, authed: false, max_reply: MAX_REPLY_LINE }
     }
 
     /// The per-session token for this port, read (and cached) from the owner-only token file. A
     /// missing file is not fatal here: the request is sent without a token and the server replies
     /// with an authentication error the user can act on.
+    ///
+    /// The desktop app listens only on `127.0.0.1:PORT`, so the token goes only to that exact
+    /// peer: a name that also resolves elsewhere (`localhost` → `::1`, where another local account
+    /// may listen on the same port) must not be handed the desktop's credential (CWE-522).
     fn token(&mut self) -> Option<&str> {
+        let port = port_of(&self.addr)?;
+        let peer = self.conn.as_ref().and_then(|(_, s)| s.peer_addr().ok());
+        if peer != Some(SocketAddr::from((Ipv4Addr::LOCALHOST, port))) {
+            return None;
+        }
         if self.token.is_none()
-            && let Some(port) = port_of(&self.addr)
             && let Ok(t) = crate::control_token::read(port)
         {
             self.token = Some(t);
@@ -91,6 +125,7 @@ impl Remote {
     }
     fn reconnect(&mut self) -> std::io::Result<()> {
         self.conn = None;
+        self.authed = false;
         let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, format!("cannot resolve {}", self.addr));
         for sa in self.addr.to_socket_addrs()? {
             match TcpStream::connect_timeout(&sa, Duration::from_millis(800)) {
@@ -120,7 +155,7 @@ impl Remote {
             return Err((e, true));
         }
         let mut reply = String::new();
-        match reader.read_line(&mut reply) {
+        match read_reply_line(reader, &mut reply, self.max_reply) {
             Ok(0) => {
                 self.conn = None;
                 Err((std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "connection closed"), true))
@@ -185,6 +220,29 @@ fn is_read_only(method: &str) -> bool {
 }
 
 impl Remote {
+    /// Connect if needed, put the token for the peer actually connected to on `req`, and send it.
+    /// The server reads the token only at the end of a line and keeps lines short until one has
+    /// passed the check (#1925), so a long request on a new connection goes after a `ping` with the
+    /// token; when the `ping` is refused its reply comes back instead and the request isn't sent.
+    fn sign_and_send(&mut self, req: &mut Value) -> Result<String, (std::io::Error, bool)> {
+        if self.conn.is_none() {
+            self.reach().map_err(|e| (e, false))?;
+        }
+        self.set_token(req);
+        let line = req.to_string();
+        if !self.authed && line.len() > crate::control_token::MAX_UNAUTHENTICATED_LINE {
+            let mut ping = json!({"id": req.get("id").cloned().unwrap_or(Value::Null), "method": "ping"});
+            self.set_token(&mut ping);
+            // The request itself hasn't been sent, so a failure here is safe to retry.
+            let reply = self.roundtrip(&ping.to_string()).map_err(|(e, _)| (e, false))?;
+            if !serde_json::from_str::<Value>(&reply).is_ok_and(|v| past_the_token_check(&v)) {
+                // The app closes the connection after such a refusal.
+                self.conn = None;
+                return Ok(reply);
+            }
+        }
+        self.roundtrip(&line)
+    }
     /// Put the current token (if any) on `req`, replacing the one it carries.
     fn set_token(&mut self, req: &mut Value) {
         let token = self.token().map(str::to_string);
@@ -196,36 +254,47 @@ impl Remote {
         }
     }
     /// Send `req` and parse the reply, refreshing the token before a safe retry after a transport
-    /// error. A mutation that may have reached the server is never resent automatically.
+    /// error. A mutation that may have reached the server is never resent automatically, and when
+    /// its reply is lost (on the first attempt or the retry) the error says so.
     fn exchange(&mut self, method: &str, req: &mut Value) -> Result<Value, String> {
-        let reply = match self.roundtrip(&req.to_string()) {
+        let reply = match self.sign_and_send(req) {
             Ok(r) => r,
             Err((e, sent)) => {
                 self.token = None;
                 self.conn = None;
                 // A mutation whose reply was lost must never be sent twice.
                 if sent && !is_read_only(method) {
-                    return Err(format!(
-                        "CADCraft at {}: {e}; the reply was lost, so `{method}` may or may not have been applied. Inspect the drawing first",
-                        self.addr
-                    ));
+                    return Err(maybe_applied(&self.addr, method, &e));
                 }
                 // A restarted server may have rotated its token before dropping the old socket.
-                self.set_token(req);
-                self.roundtrip(&req.to_string()).map_err(|(e, _)| {
+                self.sign_and_send(req).map_err(|(e, sent)| {
                     self.token = None;
                     self.conn = None;
-                    format!("CADCraft at {}: {e}", self.addr)
+                    if sent && !is_read_only(method) { maybe_applied(&self.addr, method, &e) } else { format!("CADCraft at {}: {e}", self.addr) }
                 })?
             }
         };
-        serde_json::from_str(&reply).map_err(|e| format!("bad reply: {e}"))
+        let v = serde_json::from_str(&reply).map_err(|e| format!("bad reply: {e}"))?;
+        self.authed |= past_the_token_check(&v);
+        Ok(v)
     }
+}
+
+/// The error for a mutation that may have reached the app but whose reply was lost.
+fn maybe_applied(addr: &str, method: &str, e: &std::io::Error) -> String {
+    format!("CADCraft at {addr}: {e}; the reply was lost, so `{method}` may or may not have been applied. Inspect the drawing first")
 }
 
 /// An `unauthorized` reply (the app also closes the connection).
 fn unauthorized(v: &Value) -> bool {
     v.get("error").and_then(Value::as_str).is_some_and(|e| e.starts_with("unauthorized"))
+}
+
+/// A reply to a request that passed the token check, on a connection the app keeps open: a result,
+/// or `busy` or a timeout (both say in `state` whether the request ran). The app's other refusals
+/// (`unauthorized` aside) carry no `state` and close the connection.
+fn past_the_token_check(v: &Value) -> bool {
+    v.get("ok").and_then(Value::as_bool) == Some(true) || (v.get("state").is_some() && !unauthorized(v))
 }
 
 impl Backend for Remote {
@@ -235,14 +304,12 @@ impl Backend for Remote {
         let id = self.next_id;
         self.next_id += 1;
         let mut req = json!({"id": id, "method": method, "params": params});
-        self.set_token(&mut req);
         let mut v = self.exchange(method, &mut req)?;
         // The token is read before `--launch` opens the app, which then writes a new one (#2087); the
         // file can also be left over from an earlier session. Once, so a wrong token can't loop.
         if unauthorized(&v) && v.get("state").and_then(Value::as_str) == Some("not-run") {
             self.token = None;
             self.conn = None;
-            self.set_token(&mut req);
             v = self.exchange(method, &mut req)?;
         }
         if v.get("ok").and_then(Value::as_bool) == Some(true) {
@@ -264,6 +331,7 @@ impl Backend for Remote {
     fn has_ui(&self) -> bool {
         true
     }
+    /// What this backend talks to, for messages.
     fn describe(&self) -> String {
         format!("connected to CADCraft at {}", self.addr)
     }
@@ -279,7 +347,7 @@ const HEADLESS_METHODS: &[(&str, &str, &str)] = &[
     ("engine.execute", "{command, params}", "Run any command with JSON parameters. Never opens a dialog."),
     ("engine.commands", "", "Every command: id, label, menu path, shortcut, aliases, params doc, enabled."),
     ("drawing.inspect", "{entities?, limit?}", "Drawing summary and entities with handles and geometry."),
-    ("ui.render", "{path?, width?, height?, fit?}", "Render the drawing; replies pngBase64."),
+    ("ui.render", "{path?, width?, height?, fit?, window?, background?, plot_style?}", "Render the drawing; replies pngBase64."),
     ("app.open", "{path}", "Open a drawing."),
     ("app.save", "{path?}", "Save the drawing (Save As with a path)."),
     ("control.methods", "", "This list."),
@@ -287,13 +355,19 @@ const HEADLESS_METHODS: &[(&str, &str, &str)] = &[
 ];
 
 /// An in-process headless session (no window).
+#[derive(Default)]
 pub struct Headless {
     pub session: Session,
+    /// The folders its methods may read and write (`--automation-read-root`,
+    /// `--automation-write-root`); `None`: anywhere.
+    roots: Option<Arc<AutomationRoots>>,
 }
 
-impl Default for Headless {
-    fn default() -> Self {
-        Headless { session: Session::new() }
+impl Headless {
+    /// Confine the files every method reads and writes to `roots` ([`file_access`]).
+    pub fn with_automation_roots(mut self, roots: Option<Arc<AutomationRoots>>) -> Self {
+        self.roots = roots;
+        self
     }
 }
 
@@ -312,8 +386,9 @@ fn state(s: &Session) -> Value {
     })
 }
 
-impl Backend for Headless {
-    fn call(&mut self, method: &str, p: Value) -> Result<Value, String> {
+impl Headless {
+    /// The reply to one control method; the caller holds it to the roots.
+    fn answer(&mut self, method: &str, p: &Value) -> Result<Value, String> {
         let s = &mut self.session;
         let str_p = |k: &str| p.get(k).and_then(Value::as_str).map(str::to_string);
         match method {
@@ -373,13 +448,20 @@ impl Backend for Headless {
             "engine.commands" => {
                 Ok(Value::Array(cadcraft_engine::command_specs().iter().map(|c| serde_json::to_value(c.info(s)).unwrap_or_default()).collect()))
             }
-            "drawing.inspect" | "document.inspect" => s.execute("drawing.inspect", &p).map_err(|e| e.to_string()),
+            "drawing.inspect" | "document.inspect" => s.execute("drawing.inspect", p).map_err(|e| e.to_string()),
             "ui.render" => {
                 let w = p.get("width").and_then(Value::as_f64).unwrap_or(1600.0).clamp(16.0, 8192.0) as u32;
                 let h = p.get("height").and_then(Value::as_f64).unwrap_or(1000.0).clamp(16.0, 8192.0) as u32;
                 let st = s.state().map_err(|e| e.to_string())?;
-                let window = render_window(&p);
-                let opts = cadcraft_render::Options { view: window, transparency: s.settings.transparency_display, ..Default::default() };
+                let window = render_window(p);
+                // `background` and `plot_style` (#803), read as the app reads them.
+                let look = cadcraft_engine::render_look::RenderLook::from_params(&st.doc, p)?;
+                let opts = cadcraft_render::Options {
+                    view: window,
+                    transparency: s.settings.transparency_display,
+                    plot_style_table: look.plot_style_table.clone(),
+                    ..Default::default()
+                };
                 let list = cadcraft_render::build(&st.doc, &st.space, &opts);
                 let fit = p.get("fit").and_then(Value::as_bool).unwrap_or(true);
                 let side = |k: &str| p.get(k).and_then(Value::as_f64).map(|x| x as u32);
@@ -392,12 +474,19 @@ impl Backend for Headless {
                     cadcraft_render::raster::View { center: v.center, scale: f64::from(h) / v.height.max(1e-12), width: w, height: h }
                 };
                 let (w, h) = (view.width, view.height);
-                let png =
-                    cadcraft_render::raster::render_png(&list, &view, &cadcraft_render::raster::RasterOptions::default()).ok_or("render failed")?;
+                let png = cadcraft_render::raster::render_png(&list, &view, &look.raster()).ok_or("render failed")?;
+                let mut r =
+                    json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h, "truncated": list.truncated});
                 if let Some(path) = str_p("path") {
-                    std::fs::write(&path, &png).map_err(|e| format!("{path}: {e}"))?;
+                    file_access::check_write(&path)?;
+                    let file = std::path::Path::new(&path);
+                    let folder = cadcraft_engine::atomic_write::missing_folder(file);
+                    cadcraft_engine::atomic_write::write_atomic_making_folders(file, &png).map_err(|e| format!("{path}: {e}"))?;
+                    if let Some(folder) = folder {
+                        r["createdFolder"] = json!(folder.display().to_string());
+                    }
                 }
-                Ok(json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h}))
+                Ok(r)
             }
             "app.open" => {
                 let path = str_p("path").ok_or("missing path")?;
@@ -405,7 +494,7 @@ impl Backend for Headless {
             }
             "app.save" => {
                 let id = if p.get("path").is_some() { "saveas" } else { "qsave" };
-                s.execute(id, &p).map_err(|e| e.to_string())
+                s.execute(id, p).map_err(|e| e.to_string())
             }
             "ui.screenshot" => Err("no UI in headless mode; use render".into()),
             "control.methods" => Ok(HEADLESS_METHODS
@@ -416,9 +505,18 @@ impl Backend for Headless {
             other => Err(format!("unknown method `{other}`; `control.methods` lists them (docs/control-protocol.md)")),
         }
     }
+}
+
+impl Backend for Headless {
+    /// Run one control method inside the roots, if any.
+    fn call(&mut self, method: &str, p: Value) -> Result<Value, String> {
+        let roots = self.roots.clone();
+        file_access::confine(roots.as_ref(), || self.answer(method, &p))
+    }
     fn has_ui(&self) -> bool {
         false
     }
+    /// What this backend talks to, for messages.
     fn describe(&self) -> String {
         "headless CADCraft session".into()
     }
@@ -429,6 +527,37 @@ mod tests {
     use super::*;
     use std::net::TcpListener;
     use std::sync::Arc;
+
+    /// A peer squatting on the control port can't make the client buffer an endless reply line (#1925).
+    #[test]
+    fn an_overlong_reply_is_refused_without_buffering_it() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let server = std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(conn.try_clone().unwrap()).read_line(&mut line).unwrap();
+            // No newline: the reply never ends. A bounded client gives up after the limit.
+            let _ = conn.write_all(&[b'x'; 4096]);
+            let _ = conn.flush();
+            std::thread::sleep(Duration::from_millis(500));
+        });
+        let mut remote = Remote::connect(&addr).unwrap();
+        remote.max_reply = 100;
+        let err = remote.roundtrip("{}").unwrap_err().0;
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "{err}");
+        assert!(err.to_string().contains("longer than 100 bytes"), "{err}");
+        assert!(remote.conn.is_none());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn replies_up_to_the_limit_are_read() {
+        let mut input: &[u8] = b"0123456789\nrest\n";
+        let mut reply = String::new();
+        assert_eq!(read_reply_line(&mut input, &mut reply, 10).unwrap(), 11);
+        assert_eq!(reply, "0123456789\n");
+    }
 
     /// A server that reads one request per connection and closes without replying must not see the request twice.
     #[test]
@@ -530,6 +659,24 @@ mod tests {
         })
     }
 
+    /// A listener on another loopback address with the desktop's port (here `::1`) never receives
+    /// the desktop's token.
+    #[test]
+    fn token_is_not_sent_to_another_loopback_listener() {
+        let Ok(listener) = TcpListener::bind("[::1]:0") else { return };
+        let addr = listener.local_addr().unwrap();
+        crate::control_token::issue(addr.port()).unwrap();
+        let server = fake_app(listener, move |req, _| {
+            assert!(req.get("token").is_none(), "token leaked to {addr}");
+            json!({"ok": true, "result": "x"})
+        });
+        let mut remote = Remote::lazy(&addr.to_string(), false);
+        let got = remote.call("ping", json!({}));
+        crate::control_token::revoke(addr.port());
+        assert_eq!(got, Ok(json!("x")));
+        assert_eq!(server.join().unwrap(), 1);
+    }
+
     /// `--launch` reads the token before it opens the app, so the first request carries the token
     /// of an earlier session (or none); the app refuses it without running it, and the call is
     /// resent once with the token the app has just written (#2087).
@@ -601,5 +748,206 @@ mod tests {
         assert!(error.contains("may or may not have been applied"));
         assert!(!server.join().unwrap(), "a failed mutation write was retried");
         assert!(remote.token.is_none());
+    }
+
+    /// Serve connections by the app's line rules (#1925): until a request on a connection has
+    /// carried the valid token (`valid(n)` = `Ok(token)` for the n-th request read), a line longer
+    /// than `MAX_UNAUTHENTICATED_LINE` is refused; so is a request without the token. `Err(reply)`
+    /// answers with `reply` instead (none when null). As in the app, a refusal closes the
+    /// connection unless it says in `state` whether the request ran (busy, a timeout); other
+    /// requests are answered with their method. Returns the connection, method and length of every
+    /// line read, once no new connection comes for a while.
+    fn strict_app(
+        listener: TcpListener,
+        mut valid: impl FnMut(usize) -> Result<String, Value> + Send + 'static,
+    ) -> std::thread::JoinHandle<Vec<(usize, String, usize)>> {
+        std::thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let mut seen = Vec::new();
+            for conn_no in 0.. {
+                let start = std::time::Instant::now();
+                let conn = loop {
+                    match listener.accept() {
+                        Ok((conn, _)) => break Some(conn),
+                        Err(_) if start.elapsed() < Duration::from_millis(500) => std::thread::sleep(Duration::from_millis(10)),
+                        Err(_) => break None,
+                    }
+                };
+                let Some(conn) = conn else { break };
+                conn.set_nonblocking(false).unwrap();
+                let mut reader = BufReader::new(conn.try_clone().unwrap());
+                let mut out = conn;
+                let mut authed = false;
+                let mut line = String::new();
+                while reader.read_line(&mut line).unwrap_or(0) > 0 {
+                    let req: Value = serde_json::from_str(&line).unwrap();
+                    let len = line.trim_end().len();
+                    line.clear();
+                    seen.push((conn_no, req["method"].as_str().unwrap_or_default().to_string(), len));
+                    let reply = if !authed && len > crate::control_token::MAX_UNAUTHENTICATED_LINE {
+                        json!({"ok": false, "error": "request line too long before a request with the control token"})
+                    } else {
+                        match valid(seen.len() - 1) {
+                            Ok(valid) if req["token"].as_str() == Some(valid.as_str()) => {
+                                authed = true;
+                                json!({"id": req["id"], "ok": true, "result": req["method"]})
+                            }
+                            Ok(_) => {
+                                json!({"id": req["id"], "ok": false, "error": "unauthorized: missing or invalid control token", "state": "not-run"})
+                            }
+                            Err(Value::Null) => break,
+                            Err(reply) => {
+                                // Busy and timeouts come after the token check.
+                                authed |= reply.get("state").is_some() && !unauthorized(&reply);
+                                reply
+                            }
+                        }
+                    };
+                    writeln!(out, "{reply}").unwrap();
+                    if reply["ok"] != json!(true) && (reply.get("state").is_none() || unauthorized(&reply)) {
+                        break;
+                    }
+                }
+            }
+            seen
+        })
+    }
+
+    /// Parameters that make a request line longer than the server reads before the token check.
+    fn long_params() -> Value {
+        json!({"command": "text", "params": {"text": "x".repeat(crate::control_token::MAX_UNAUTHENTICATED_LINE)}})
+    }
+
+    /// A long request on a new connection goes after a short `ping` with the token, so the server
+    /// takes it; later long requests on that connection go straight away, and one on the next
+    /// connection again goes after a `ping`.
+    #[test]
+    fn a_long_request_on_a_new_connection_goes_after_an_authenticating_ping() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let token = crate::control_token::issue(addr.port()).unwrap();
+        let server = strict_app(listener, move |_| Ok(token.clone()));
+        let mut remote = Remote::lazy(&addr.to_string(), false);
+        let mut got = vec![remote.call("engine.execute", long_params()), remote.call("engine.execute", long_params())];
+        // The connection drops (the app restarted, say); the client connects again.
+        remote.conn = None;
+        got.push(remote.call("engine.execute", long_params()));
+        drop(remote);
+        let seen = server.join().unwrap();
+        crate::control_token::revoke(addr.port());
+        assert_eq!(got, vec![Ok(json!("engine.execute")); 3]);
+        let methods: Vec<(usize, &str)> = seen.iter().map(|(c, m, _)| (*c, m.as_str())).collect();
+        assert_eq!(methods, [(0, "ping"), (0, "engine.execute"), (0, "engine.execute"), (1, "ping"), (1, "engine.execute")]);
+        assert!(seen[0].2 <= crate::control_token::MAX_UNAUTHENTICATED_LINE, "{seen:?}");
+    }
+
+    /// When the `ping` before a long request is refused (a stale token, #2087), the long request
+    /// isn't sent on that connection; it is sent once, on a new connection, with the new token.
+    #[test]
+    fn a_refused_ping_keeps_the_long_request_back_until_the_new_token_is_read() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        crate::control_token::issue(addr.port()).unwrap();
+        let mut fresh = String::new();
+        let server = strict_app(listener, move |n| {
+            if n == 0 {
+                // The app starts and writes its own session's token.
+                fresh = crate::control_token::issue(addr.port()).unwrap();
+            }
+            Ok(fresh.clone())
+        });
+        let mut remote = Remote::lazy(&addr.to_string(), false);
+        let got = remote.call("engine.execute", long_params());
+        drop(remote);
+        let seen = server.join().unwrap();
+        crate::control_token::revoke(addr.port());
+        assert_eq!(got, Ok(json!("engine.execute")));
+        let methods: Vec<(usize, &str)> = seen.iter().map(|(c, m, _)| (*c, m.as_str())).collect();
+        assert_eq!(methods, [(0, "ping"), (1, "ping"), (1, "engine.execute")]);
+    }
+
+    /// A lost reply to the `ping` before a long mutation doesn't make the mutation "maybe applied":
+    /// it hasn't been sent, so it is sent once on a new connection.
+    #[test]
+    fn a_lost_ping_reply_leaves_the_long_request_safe_to_send() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let token = crate::control_token::issue(addr.port()).unwrap();
+        // The first connection closes after reading the `ping`, without a reply.
+        let server = strict_app(listener, move |n| if n == 0 { Err(Value::Null) } else { Ok(token.clone()) });
+        let mut remote = Remote::lazy(&addr.to_string(), false);
+        let got = remote.call("engine.execute", long_params());
+        drop(remote);
+        let seen = server.join().unwrap();
+        crate::control_token::revoke(addr.port());
+        assert_eq!(got, Ok(json!("engine.execute")));
+        let methods: Vec<(usize, &str)> = seen.iter().map(|(c, m, _)| (*c, m.as_str())).collect();
+        assert_eq!(methods, [(0, "ping"), (1, "ping"), (1, "engine.execute")]);
+    }
+
+    /// A refusal that closes the connection (here every connection slot is taken) never leaves a
+    /// mutation "maybe applied": a long one refused at its `ping` isn't sent, the next request goes
+    /// on a new connection, and a long request after a refused short one authenticates first.
+    #[test]
+    fn a_refusal_that_closes_the_connection_leaves_no_mutation_in_doubt() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let token = crate::control_token::issue(addr.port()).unwrap();
+        let full = json!({"ok": false, "error": "too many control connections"});
+        let server = strict_app(listener, move |n| if n < 2 { Err(full.clone()) } else { Ok(token.clone()) });
+        let mut remote = Remote::lazy(&addr.to_string(), false);
+        let short = json!({"command": "circle", "params": {}});
+        let got = [remote.call("engine.execute", long_params()), remote.call("engine.execute", short), remote.call("engine.execute", long_params())];
+        drop(remote);
+        let seen = server.join().unwrap();
+        crate::control_token::revoke(addr.port());
+        let full = Err("too many control connections".to_string());
+        assert_eq!(got, [full.clone(), full, Ok(json!("engine.execute"))]);
+        let methods: Vec<(usize, &str)> = seen.iter().map(|(c, m, _)| (*c, m.as_str())).collect();
+        assert_eq!(methods, [(0, "ping"), (1, "engine.execute"), (2, "ping"), (2, "engine.execute")]);
+    }
+
+    /// When the retry after a lost `ping` reply sends the long request and its reply is lost too,
+    /// a mutation is reported as maybe applied (and not sent again); a read-only request isn't.
+    #[test]
+    fn a_lost_reply_on_the_retry_still_says_a_mutation_may_have_been_applied() {
+        for (method, warned) in [("engine.execute", true), ("drawing.inspect", false)] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let token = crate::control_token::issue(addr.port()).unwrap();
+            // The first `ping` and then the request on the retry's connection go unanswered.
+            let server = strict_app(listener, move |n| if n == 1 { Ok(token.clone()) } else { Err(Value::Null) });
+            let mut remote = Remote::lazy(&addr.to_string(), false);
+            let got = remote.call(method, long_params());
+            drop(remote);
+            let seen = server.join().unwrap();
+            crate::control_token::revoke(addr.port());
+            let err = got.unwrap_err();
+            assert_eq!(err.contains("may or may not have been applied"), warned, "{method}: {err}");
+            let methods: Vec<(usize, &str)> = seen.iter().map(|(c, m, _)| (*c, m.as_str())).collect();
+            assert_eq!(methods, [(0, "ping"), (1, "ping"), (1, method)], "sent once");
+        }
+    }
+
+    /// A `ping` that passed the token check but timed out in the app (it may have run) still lets
+    /// the long request through on that connection, instead of reporting it as maybe applied.
+    #[test]
+    fn a_ping_that_timed_out_after_the_token_check_lets_the_long_request_through() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let token = crate::control_token::issue(addr.port()).unwrap();
+        let server =
+            strict_app(
+                listener,
+                move |n| if n == 0 { Err(json!({"ok": false, "error": "timeout", "state": "may-have-run"})) } else { Ok(token.clone()) },
+            );
+        let mut remote = Remote::lazy(&addr.to_string(), false);
+        let got = remote.call("engine.execute", long_params());
+        drop(remote);
+        let seen = server.join().unwrap();
+        crate::control_token::revoke(addr.port());
+        assert_eq!(got, Ok(json!("engine.execute")));
+        let methods: Vec<(usize, &str)> = seen.iter().map(|(c, m, _)| (*c, m.as_str())).collect();
+        assert_eq!(methods, [(0, "ping"), (0, "engine.execute")]);
     }
 }

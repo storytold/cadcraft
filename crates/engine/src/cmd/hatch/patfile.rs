@@ -13,7 +13,7 @@ use cadcraft_doc::library::{PatternLine, pattern, standard_patterns};
 use serde_json::{Value, json};
 
 use super::super::helpers::support_text;
-use super::*;
+use super::{Result, Session, bad, bool_or};
 
 /// Most user patterns held at once.
 pub const MAX_USER_PATTERNS: usize = 4096;
@@ -26,6 +26,13 @@ fn store() -> MutexGuard<'static, Vec<UserPattern>> {
 /// The user pattern called `name` (case-insensitive), if a file loaded one.
 pub(crate) fn user_pattern(name: &str) -> Option<UserPattern> {
     store().iter().find(|p| p.name.eq_ignore_ascii_case(name)).cloned()
+}
+
+/// The name of the user pattern that is the Greek word `name` in another case or accent
+/// ([`user_pattern`] folds ASCII only).
+pub(crate) fn user_pattern_name(name: &str) -> Option<String> {
+    let same = crate::keyboard::same_greek_word_as(name)?;
+    store().iter().find(|p| same(&p.name)).map(|p| p.name.clone())
 }
 
 /// The line families a new hatch of pattern `name` carries: a user pattern's, else none (the
