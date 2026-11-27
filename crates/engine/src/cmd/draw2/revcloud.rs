@@ -104,8 +104,8 @@ fn cloud_entity(vs: Vec<PolyVertex>, calligraphy: bool, arc_len: f64) -> EntityK
 const REVCLOUD_APP: &str = "RevcloudProps";
 
 /// Adds a revision cloud with its `RevcloudProps` xdata (how AutoCAD and other readers tell a
-/// revision cloud from a polyline). Made from object `src`, the cloud takes the object's place
-/// and properties.
+/// revision cloud from a polyline). A cloud made from `src` copies its properties. DELOBJ 0
+/// keeps that source object alongside the cloud.
 fn add_cloud(s: &mut Session, vs: Vec<PolyVertex>, calligraphy: bool, arc_len: f64, src: Option<Handle>) -> Result<Handle> {
     let h = s.add_entity(cloud_entity(vs, calligraphy, arc_len))?;
     let mut common = match src {
@@ -126,7 +126,9 @@ fn add_cloud(s: &mut Session, vs: Vec<PolyVertex>, calligraphy: bool, arc_len: f
     ]);
     let d = s.doc_mut()?;
     d.modify_entity(h, |e| e.common = common)?;
-    if let Some(src) = src {
+    if let Some(src) = src
+        && d.header.f64("DELOBJ", 1.0) != 0.0
+    {
         d.remove_entity(src);
     }
     Ok(h)
