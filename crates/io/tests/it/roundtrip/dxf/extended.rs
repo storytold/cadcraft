@@ -329,6 +329,10 @@ fn layer_states() {
     collection(collections::layer_states(), collections::assert_layer_states);
 }
 #[test]
+fn layer_filters() {
+    collection(collections::layer_filters(), collections::assert_layer_filters);
+}
+#[test]
 fn layouts_and_paperspace() {
     collection(collections::layouts(), collections::assert_layouts);
 }

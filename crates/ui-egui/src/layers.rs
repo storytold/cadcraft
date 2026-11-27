@@ -4,7 +4,7 @@
 //! `linetype`).
 
 use cadcraft_color::{Color, Rgb, aci_rgb};
-use cadcraft_doc::{Handle, Layer, Lineweight};
+use cadcraft_doc::{FilterKind, FilterRule, Handle, Layer, LayerFilters, Lineweight};
 use egui::{Color32, Rect, RichText, Sense, Stroke, pos2, vec2};
 use serde_json::{Value, json};
 
@@ -15,8 +15,6 @@ use crate::theme::Tokens;
 /// Dialog-local UI state (kept in egui memory between frames).
 #[derive(Clone, Debug, Default)]
 struct LpmState {
-    /// 0 = All, 1 = All Used Layers.
-    filter: u8,
     search: String,
     selected: Option<String>,
     /// (layer, buffer) while renaming.
@@ -26,6 +24,29 @@ struct LpmState {
     sort_desc: bool,
     state_name: String,
     state_sel: Option<String>,
+    /// The property filter being edited in the Layer Filter Properties window.
+    filter_edit: Option<FilterEdit>,
+    /// (filter, buffer) while renaming a filter in the tree.
+    filter_renaming: Option<(String, String)>,
+}
+
+/// A property filter being edited: `original` is `None` for a filter not created yet.
+#[derive(Clone, Debug, Default)]
+struct FilterEdit {
+    original: Option<String>,
+    parent: Option<String>,
+    name: String,
+    rules: Vec<FilterRule>,
+}
+
+/// The layer a row drag carries onto a group filter.
+#[derive(Clone, Debug)]
+struct LayerDrag(String);
+
+/// The group filters a layer row offers in its menu, and the group filter shown.
+struct GroupMenu<'a> {
+    groups: &'a [String],
+    shown: Option<&'a str>,
 }
 
 fn rgb32(r: Rgb) -> Color32 {
@@ -241,11 +262,10 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
     let total = layers.len();
     let q = st.search.to_lowercase();
-    let shown: Vec<Layer> = layers
-        .into_iter()
-        .filter(|l| st.filter == 0 || used.contains(&l.name.to_ascii_lowercase()))
-        .filter(|l| q.is_empty() || crate_wild(&q, &l.name.to_lowercase()))
-        .collect();
+    let (filtered, filter_note) = filtered_layers(&d.layer_filters, layers, &used);
+    let shown: Vec<Layer> = filtered.into_iter().filter(|l| q.is_empty() || crate_wild(&q, &l.name.to_lowercase())).collect();
+    let groups: Vec<String> = d.layer_filters.filters.iter().filter(|f| f.is_group()).map(|f| f.name.clone()).collect();
+    let shown_group = d.layer_filters.current.as_deref().filter(|c| d.layer_filters.get(c).is_some_and(|f| f.is_group()));
     let title = match &vp {
         Some(_) => "Layer Properties Manager — current viewport",
         None => "Layer Properties Manager",
@@ -332,17 +352,9 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 // resizable window offers its whole previous height, so the window grew every frame (#29).
                 ui.set_max_height(avail);
                 // ----- filter tree -----
-                ui.allocate_ui_with_layout(vec2(150.0, avail), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.set_min_width(150.0);
-                    ui.label(RichText::new(crate::tl!("Filters")).small().color(t.text_dim));
-                    for (i, l) in ["All", "All Used Layers"].iter().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.add_space(if i == 0 { 0.0 } else { 14.0 });
-                            if ui.selectable_label(st.filter == i as u8, crate::i18n::t(l)).clicked() {
-                                st.filter = i as u8;
-                            }
-                        });
-                    }
+                ui.allocate_ui_with_layout(vec2(190.0, avail), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_min_width(190.0);
+                    filter_tree(ui, &d.layer_filters, &mut st, &mut actions);
                     ui.add_space(8.0);
                     if let Some((h, _)) = &vp {
                         ui.label(RichText::new(crate::tf!("Viewport {id}", id = h.hex())).small().color(t.text_dim));
@@ -378,6 +390,10 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                                     }
                                 }
                                 ui.end_row();
+                                if let Some(note) = filter_note.as_ref().filter(|_| shown.is_empty()) {
+                                    ui.label(RichText::new(note).color(t.text_dim));
+                                    ui.end_row();
+                                }
                                 for l in &shown {
                                     row(
                                         ui,
@@ -388,6 +404,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                                             viewport: vp.as_ref(),
                                             linetypes: &linetypes,
                                             library: &library,
+                                            groups: GroupMenu { groups: &groups, shown: shown_group },
                                             state: &mut st,
                                             actions: &mut actions,
                                         },
@@ -413,9 +430,352 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 );
             });
         });
+    filter_editor(ctx, &d.layer_filters, &d.layers, &used, &mut st, &mut actions);
     ctx.data_mut(|dd| dd.insert_temp(sid, st));
     for (c, p) in actions {
         let _ = app.run(c, p);
+    }
+}
+
+/// The layers the current filter shows, and a note to put above the table: why it shows none, or
+/// why the filter cannot be used.
+fn filtered_layers(fs: &LayerFilters, layers: Vec<Layer>, used: &std::collections::HashSet<String>) -> (Vec<Layer>, Option<String>) {
+    let in_use = |l: &Layer| used.contains(&l.name.to_ascii_lowercase());
+    match fs.shown(&layers, &in_use) {
+        Err(e) => (Vec::new(), Some(crate::tf!("This filter cannot be used: {why}", why = e))),
+        Ok(idx) => {
+            let keep: std::collections::HashSet<usize> = idx.into_iter().collect();
+            let out: Vec<Layer> = layers.into_iter().enumerate().filter(|(i, _)| keep.contains(i)).map(|(_, l)| l).collect();
+            let note = match fs.current.as_deref().and_then(|c| fs.get(c)) {
+                _ if !out.is_empty() => None,
+                Some(f) if matches!(&f.kind, FilterKind::Group { layers } if layers.is_empty()) => {
+                    Some(crate::tl!("This group filter holds no layers yet: drag layers onto it or use a layer's menu.").to_string())
+                }
+                _ => Some(crate::tl!("No layers match this filter.").to_string()),
+            };
+            (out, note)
+        }
+    }
+}
+
+fn next_name(fs: &LayerFilters, base: &str) -> String {
+    (1..=fs.filters.len() + 1).map(|n| format!("{base}{n}")).find(|n| fs.get(n).is_none()).unwrap_or_else(|| base.to_string())
+}
+
+fn new_property(st: &mut LpmState, fs: &LayerFilters, parent: Option<String>) {
+    st.filter_edit = Some(FilterEdit { original: None, parent, name: next_name(fs, "Properties Filter"), rules: vec![FilterRule::default()] });
+}
+
+fn new_group(st: &mut LpmState, fs: &LayerFilters, parent: Option<String>, actions: &mut Vec<(&'static str, Value)>) {
+    let name = next_name(fs, "Group Filter");
+    actions.push(("layerfilter.new", json!({ "name": name, "kind": "group", "parent": parent })));
+    actions.push(("layerfilter.apply", json!({ "name": name })));
+    st.filter_renaming = Some((name.clone(), name));
+}
+
+/// The filter tree: All, All Used Layers and the drawing's filters, nested; the buttons for new
+/// filters and the Invert and palette options.
+fn filter_tree(ui: &mut egui::Ui, fs: &LayerFilters, st: &mut LpmState, actions: &mut Vec<(&'static str, Value)>) {
+    let t = Tokens::get();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(crate::tl!("Filters")).small().color(t.text_dim));
+        if ui.small_button(crate::tl!("New Property Filter")).clicked() {
+            new_property(st, fs, None);
+        }
+    });
+    if ui.small_button(crate::tl!("New Group Filter")).clicked() {
+        new_group(st, fs, None, actions);
+    }
+    egui::ScrollArea::vertical().id_salt("lpm_filters").max_height(230.0).auto_shrink([false, true]).show(ui, |ui| {
+        let current = fs.current.as_deref();
+        if ui.selectable_label(current.is_none(), crate::tl!("All")).clicked() {
+            actions.push(("layerfilter.apply", json!({ "name": LayerFilters::ALL })));
+        }
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            let on = current.is_some_and(|c| c.eq_ignore_ascii_case(LayerFilters::ALL_USED));
+            if ui.selectable_label(on, crate::tl!("All Used Layers")).clicked() {
+                actions.push(("layerfilter.apply", json!({ "name": LayerFilters::ALL_USED })));
+            }
+        });
+        let mut seen: Vec<String> = Vec::new();
+        filter_nodes(ui, fs, None, 1, &mut seen, st, actions);
+    });
+    let mut invert = fs.invert;
+    if ui.checkbox(&mut invert, crate::tl!("Invert filter")).changed() {
+        actions.push(("layerfilter.apply", json!({ "invert": invert })));
+    }
+    let mut palette = fs.apply_to_palette;
+    if ui.checkbox(&mut palette, crate::tl!("Apply to Layers palette")).changed() {
+        actions.push(("layerfilter.apply", json!({ "palette": palette })));
+    }
+}
+
+fn filter_nodes(
+    ui: &mut egui::Ui,
+    fs: &LayerFilters,
+    parent: Option<&str>,
+    depth: usize,
+    seen: &mut Vec<String>,
+    st: &mut LpmState,
+    actions: &mut Vec<(&'static str, Value)>,
+) {
+    if depth > cadcraft_doc::layer_filter::MAX_FILTER_DEPTH {
+        return;
+    }
+    let kids: Vec<cadcraft_doc::LayerFilter> = fs.children(parent).cloned().collect();
+    for f in kids {
+        if seen.iter().any(|n| n.eq_ignore_ascii_case(&f.name)) {
+            continue;
+        }
+        seen.push(f.name.clone());
+        ui.horizontal(|ui| {
+            ui.add_space(14.0 * depth as f32);
+            filter_node(ui, fs, &f, st, actions);
+        });
+        filter_nodes(ui, fs, Some(&f.name), depth + 1, seen, st, actions);
+    }
+}
+
+fn filter_node(ui: &mut egui::Ui, fs: &LayerFilters, f: &cadcraft_doc::LayerFilter, st: &mut LpmState, actions: &mut Vec<(&'static str, Value)>) {
+    let t = Tokens::get();
+    let name = f.name.clone();
+    if let Some((n, mut buf)) = st.filter_renaming.clone().filter(|(n, _)| n.eq_ignore_ascii_case(&name)) {
+        let r = ui.add(egui::TextEdit::singleline(&mut buf).desired_width(150.0).id(egui::Id::unique(("lpm_frename", &name))));
+        if !r.has_focus() && !r.lost_focus() {
+            r.request_focus();
+        }
+        if r.lost_focus() {
+            let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if !cancel && buf.trim() != name && !buf.trim().is_empty() {
+                actions.push(("layerfilter.set", json!({ "name": name, "newName": buf.trim() })));
+            }
+            st.filter_renaming = None;
+        } else {
+            st.filter_renaming = Some((n, buf));
+        }
+        return;
+    }
+    let on = fs.current.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(&name));
+    let r = ui.selectable_label(on, &name);
+    let r = r.on_hover_text(if f.is_group() { crate::tl!("Group filter") } else { crate::tl!("Property filter") });
+    if f.is_group() {
+        if r.dnd_hover_payload::<LayerDrag>().is_some() {
+            ui.painter().rect_stroke(r.rect, 2.0, Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
+        }
+        if let Some(drag) = r.dnd_release_payload::<LayerDrag>() {
+            actions.push(("layerfilter.add", json!({ "name": name, "layers": [drag.0.clone()] })));
+        }
+    }
+    if r.clicked() {
+        actions.push(("layerfilter.apply", json!({ "name": name })));
+    }
+    if r.double_clicked() {
+        if let FilterKind::Property { rules } = &f.kind {
+            st.filter_edit = Some(FilterEdit { original: Some(name.clone()), parent: f.parent.clone(), name: name.clone(), rules: rules.clone() });
+        } else {
+            st.filter_renaming = Some((name.clone(), name.clone()));
+        }
+    }
+    r.context_menu(|ui| filter_menu(ui, fs, f, st, actions));
+}
+
+fn filter_menu(ui: &mut egui::Ui, fs: &LayerFilters, f: &cadcraft_doc::LayerFilter, st: &mut LpmState, actions: &mut Vec<(&'static str, Value)>) {
+    let name = f.name.clone();
+    if let FilterKind::Property { rules } = &f.kind
+        && ui.button(crate::tl!("Properties...")).clicked()
+    {
+        st.filter_edit = Some(FilterEdit { original: Some(name.clone()), parent: f.parent.clone(), name: name.clone(), rules: rules.clone() });
+        ui.close();
+    }
+    if ui.button(crate::tl!("New Property Filter")).clicked() {
+        new_property(st, fs, Some(name.clone()));
+        ui.close();
+    }
+    if f.is_group() && ui.button(crate::tl!("New Group Filter")).clicked() {
+        new_group(st, fs, Some(name.clone()), actions);
+        ui.close();
+    }
+    if ui.button(crate::tl!("Rename")).clicked() {
+        st.filter_renaming = Some((name.clone(), name.clone()));
+        ui.close();
+    }
+    if ui.button(crate::tl!("Delete")).clicked() {
+        actions.push(("layerfilter.delete", json!({ "name": name })));
+        ui.close();
+    }
+}
+
+/// A Yes/No/any condition of a filter rule, cycled by clicking.
+fn tri_state(ui: &mut egui::Ui, v: &mut Option<bool>, yes: &str, no: &str) {
+    let label = match v {
+        None => crate::tl!("Any"),
+        Some(true) => crate::i18n::t(yes),
+        Some(false) => crate::i18n::t(no),
+    };
+    if ui.add_sized([74.0, 20.0], egui::Button::new(label)).clicked() {
+        *v = match v {
+            None => Some(true),
+            Some(true) => Some(false),
+            Some(false) => None,
+        };
+    }
+}
+
+fn pattern_cell(ui: &mut egui::Ui, v: &mut String, width: f32) {
+    let bad = !v.trim().is_empty() && cadcraft_doc::layer_filter::Wildcard::parse(v.trim()).is_err();
+    let mut edit = egui::TextEdit::singleline(v).desired_width(width);
+    if bad {
+        edit = edit.text_color(Color32::from_rgb(0xe0, 0x50, 0x50));
+    }
+    ui.add(edit);
+}
+
+/// The Layer Filter Properties window: the rules of a property filter and the layers they list.
+fn filter_editor(
+    ctx: &egui::Context,
+    fs: &LayerFilters,
+    layers: &[Layer],
+    used: &std::collections::HashSet<String>,
+    st: &mut LpmState,
+    actions: &mut Vec<(&'static str, Value)>,
+) {
+    let Some(mut ed) = st.filter_edit.take() else { return };
+    let t = Tokens::get();
+    let mut open = true;
+    let mut done: Option<bool> = None;
+    let trimmed: Vec<FilterRule> = ed.rules.iter().map(trim_rule).collect();
+    let problem = trimmed.iter().find_map(|r| r.validate().err()).map(|e| e.to_string());
+    let name_problem = LayerFilters::valid_name(ed.name.trim()).err().map(|e| e.to_string()).or_else(|| {
+        let clash = fs.get(ed.name.trim()).is_some() && !ed.original.as_deref().is_some_and(|o| o.eq_ignore_ascii_case(ed.name.trim()));
+        clash.then(|| crate::tf!("A filter named {name} already exists.", name = ed.name.trim()))
+    });
+    let preview = preview_layers(fs, &ed, &trimmed, layers, used);
+    egui::Window::new(crate::tl!("Layer Filter Properties"))
+        .id(egui::Id::unique("lpm_filter_editor"))
+        .open(&mut open)
+        .default_size(vec2(900.0, 360.0))
+        .resizable(true)
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(crate::tl!("Filter name"));
+                ui.add(egui::TextEdit::singleline(&mut ed.name).desired_width(220.0));
+                if let Some(p) = &name_problem {
+                    ui.label(RichText::new(p).color(Color32::from_rgb(0xe0, 0x50, 0x50)));
+                }
+            });
+            ui.label(
+                RichText::new(crate::tl!(
+                    "A layer is listed when it matches every condition of a row; rows add layers. Text accepts wildcards: * ? # @ . [ ] ~ ,"
+                ))
+                .small()
+                .color(t.text_dim),
+            );
+            rules_grid(ui, &mut ed.rules);
+            if let Some(p) = &problem {
+                ui.label(RichText::new(p).color(Color32::from_rgb(0xe0, 0x50, 0x50)));
+            }
+            ui.separator();
+            ui.label(RichText::new(crate::tf!("Filter preview: {n} layers", n = preview.len())).small().color(t.text_dim));
+            egui::ScrollArea::vertical().id_salt("lpm_filter_preview").max_height(90.0).show(ui, |ui| {
+                ui.label(preview.join(", "));
+            });
+            ui.horizontal(|ui| {
+                if ui.add_enabled(problem.is_none() && name_problem.is_none(), egui::Button::new(crate::tl!("OK"))).clicked() {
+                    done = Some(true);
+                }
+                if ui.button(crate::tl!("Cancel")).clicked() {
+                    done = Some(false);
+                }
+            });
+        });
+    match done {
+        Some(true) => commit_filter(&ed, &trimmed, actions),
+        Some(false) => {}
+        None if open => st.filter_edit = Some(ed),
+        None => {}
+    }
+}
+
+fn trim_rule(r: &FilterRule) -> FilterRule {
+    let tr = |s: &String| s.trim().to_string();
+    FilterRule {
+        name: tr(&r.name),
+        color: tr(&r.color),
+        linetype: tr(&r.linetype),
+        lineweight: tr(&r.lineweight),
+        transparency: tr(&r.transparency),
+        plot_style: tr(&r.plot_style),
+        description: tr(&r.description),
+        ..r.clone()
+    }
+}
+
+fn preview_layers(
+    fs: &LayerFilters,
+    ed: &FilterEdit,
+    rules: &[FilterRule],
+    layers: &[Layer],
+    used: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    let mut trial = fs.clone();
+    let key = "*preview*";
+    trial.filters.retain(|f| !ed.original.as_deref().is_some_and(|o| o.eq_ignore_ascii_case(&f.name)));
+    let mut f = cadcraft_doc::LayerFilter::property(key, rules.to_vec());
+    f.parent = ed.parent.clone();
+    trial.filters.push(f);
+    let in_use = |l: &Layer| used.contains(&l.name.to_ascii_lowercase());
+    trial
+        .select(Some(key), false, layers, &in_use)
+        .map(|v| v.into_iter().filter_map(|i| layers.get(i).map(|l| l.name.clone())).collect())
+        .unwrap_or_default()
+}
+
+fn commit_filter(ed: &FilterEdit, rules: &[FilterRule], actions: &mut Vec<(&'static str, Value)>) {
+    let rules = serde_json::to_value(rules).unwrap_or(Value::Array(Vec::new()));
+    let name = ed.name.trim().to_string();
+    match &ed.original {
+        None => actions.push(("layerfilter.new", json!({ "name": name, "parent": ed.parent, "rules": rules }))),
+        Some(o) => actions.push(("layerfilter.set", json!({ "name": o, "newName": name, "rules": rules }))),
+    }
+    actions.push(("layerfilter.apply", json!({ "name": name })));
+}
+
+fn rules_grid(ui: &mut egui::Ui, rules: &mut Vec<FilterRule>) {
+    let cols =
+        ["Name", "On", "Freeze", "Lock", "Plot", "Color", "Linetype", "Lineweight", "Transparency", "Plot Style", "New VP Freeze", "In use", ""];
+    let mut remove = None;
+    egui::ScrollArea::both().id_salt("lpm_rules").max_height(160.0).show(ui, |ui| {
+        egui::Grid::new("lpm_rules_grid").striped(true).num_columns(cols.len()).spacing(vec2(6.0, 3.0)).show(ui, |ui| {
+            for h in cols {
+                ui.label(RichText::new(crate::i18n::t(h)).strong());
+            }
+            ui.end_row();
+            for (i, r) in rules.iter_mut().enumerate() {
+                pattern_cell(ui, &mut r.name, 120.0);
+                tri_state(ui, &mut r.on, "On", "Off");
+                tri_state(ui, &mut r.frozen, "Frozen", "Thawed");
+                tri_state(ui, &mut r.locked, "Locked", "Unlocked");
+                tri_state(ui, &mut r.plot, "Plot", "No plot");
+                pattern_cell(ui, &mut r.color, 70.0);
+                pattern_cell(ui, &mut r.linetype, 90.0);
+                pattern_cell(ui, &mut r.lineweight, 60.0);
+                pattern_cell(ui, &mut r.transparency, 50.0);
+                pattern_cell(ui, &mut r.plot_style, 70.0);
+                tri_state(ui, &mut r.new_vp_freeze, "Frozen", "Thawed");
+                tri_state(ui, &mut r.used, "In use", "Not in use");
+                if ui.small_button("×").on_hover_text(crate::tl!("Delete row")).clicked() {
+                    remove = Some(i);
+                }
+                ui.end_row();
+            }
+        });
+    });
+    if let Some(i) = remove.filter(|i| *i < rules.len()) {
+        rules.remove(i);
+    }
+    if rules.len() < cadcraft_doc::layer_filter::MAX_RULES && ui.button(crate::tl!("Add row")).clicked() {
+        rules.push(FilterRule::default());
     }
 }
 
@@ -427,14 +787,15 @@ struct LayerRow<'a> {
     viewport: Option<&'a (Handle, cadcraft_doc::Viewport)>,
     linetypes: &'a cadcraft_doc::NamedList<cadcraft_doc::Linetype>,
     library: &'a [String],
+    groups: GroupMenu<'a>,
     state: &'a mut LpmState,
     actions: &'a mut Vec<(&'static str, Value)>,
 }
 
 fn row(ui: &mut egui::Ui, args: LayerRow<'_>) {
-    let LayerRow { layer: l, current: cur, used, viewport: vp, linetypes, library, state: st, actions } = args;
+    let LayerRow { layer: l, current: cur, used, viewport: vp, linetypes, library, groups, state: st, actions } = args;
     let t = Tokens::get();
-    let name = layer_identity(ui, l, cur, used, st, actions);
+    let name = layer_identity(ui, l, cur, used, &groups, st, actions);
     // On / Freeze / Lock / Plot.
     if icons::button(ui, if l.on { Icon::Bulb } else { Icon::BulbOff }, 20.0, "On/Off", false).clicked() {
         actions.push(("layer.set", json!({ "name": name, "on": !l.on })));
@@ -634,6 +995,7 @@ fn layer_identity(
     l: &Layer,
     cur: &str,
     used: &std::collections::HashSet<String>,
+    groups: &GroupMenu<'_>,
     st: &mut LpmState,
     actions: &mut Vec<(&'static str, Value)>,
 ) -> String {
@@ -679,7 +1041,8 @@ fn layer_identity(
             }
         }
         _ => {
-            let (nr, r) = ui.allocate_exact_size(vec2(150.0, 20.0), Sense::click());
+            let (nr, r) = ui.allocate_exact_size(vec2(150.0, 20.0), Sense::click_and_drag());
+            r.dnd_set_drag_payload(LayerDrag(name.clone()));
             if selected {
                 ui.painter().rect_filled(nr, 2.0, t.accent.gamma_multiply(0.45));
             } else if r.hovered() {
@@ -705,13 +1068,36 @@ fn layer_identity(
                     actions.push(("layer.delete", json!({ "name": name })));
                     ui.close();
                 }
+                group_entries(ui, &name, groups, actions);
             });
         }
     }
     name
 }
 
-fn used_layers(d: &cadcraft_doc::Drawing) -> std::collections::HashSet<String> {
+fn group_entries(ui: &mut egui::Ui, name: &str, groups: &GroupMenu<'_>, actions: &mut Vec<(&'static str, Value)>) {
+    if groups.groups.is_empty() {
+        return;
+    }
+    ui.separator();
+    ui.menu_button(crate::tl!("Add to Group Filter"), |ui| {
+        for g in groups.groups {
+            if ui.button(g).clicked() {
+                actions.push(("layerfilter.add", json!({ "name": g, "layers": [name] })));
+                ui.close();
+            }
+        }
+    });
+    if let Some(g) = groups.shown
+        && ui.button(crate::tl!("Remove from Group Filter")).clicked()
+    {
+        actions.push(("layerfilter.remove", json!({ "name": g, "layers": [name] })));
+        ui.close();
+    }
+}
+
+/// Lower-case names of the layers that have objects on them.
+pub(crate) fn used_layers(d: &cadcraft_doc::Drawing) -> std::collections::HashSet<String> {
     let mut set = std::collections::HashSet::new();
     let ents = d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())).chain(d.blocks.values().flat_map(|b| b.entities.iter()));
     for e in ents.take(5_000_000) {
@@ -770,6 +1156,41 @@ mod tests {
         assert!(crate_wild("w*s", "walls"));
         assert!(crate_wild("?alls", "walls"));
         assert!(!crate_wild("x*", "walls"));
+    }
+
+    /// The filter tree, a filter that lists nothing and the filter editor draw without trouble.
+    #[test]
+    fn dialog_draws_filters_and_editor() {
+        let mut session = cadcraft_engine::Session::new();
+        session.open_drawing(cadcraft_engine::sample::default_sample(), "Bracket", None);
+        session.execute("layerfilter.new", &json!({ "name": "Walls", "rules": [{ "name": "A-WALL*" }] })).unwrap();
+        session.execute("layerfilter.new", &json!({ "name": "G", "kind": "group" })).unwrap();
+        session.execute("layerfilter.new", &json!({ "name": "In G", "parent": "G" })).unwrap();
+        session.execute("layerfilter.apply", &json!({ "name": "G", "palette": true })).unwrap();
+        let mut app = CadApp::new(session, crate::Services::default());
+        let ctx = egui::Context::default();
+        let st = LpmState {
+            filter_edit: Some(FilterEdit {
+                original: Some("Walls".into()),
+                parent: None,
+                name: "Walls".into(),
+                rules: vec![FilterRule { name: "[".into(), ..Default::default() }],
+            }),
+            ..Default::default()
+        };
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique("lpm_state"), st));
+        let screen = Rect::from_min_size(egui::Pos2::ZERO, vec2(1600.0, 1000.0));
+        for _ in 0..3 {
+            let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| {
+                let mut open = true;
+                dialog(&mut app, ui.ctx(), &mut open);
+            });
+            out.textures_delta.clear();
+        }
+        let st: LpmState = ctx.data_mut(|d| d.get_temp(egui::Id::unique("lpm_state"))).unwrap();
+        assert!(st.filter_edit.is_some(), "the editor stays open while its pattern is invalid");
+        assert_eq!(app.session.doc().unwrap().layer_filters.current.as_deref(), Some("G"));
     }
 
     /// Issue #29: just opening the dialog must not grow its window frame after frame.

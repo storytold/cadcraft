@@ -933,6 +933,11 @@ fn compare_tables(a: &Drawing, b: &Drawing, out: &mut Out) {
     compare_named(out, Table, "VPORT", &refs(&a.vports), &refs(&b.vports), |x| &x.name);
     compare_named(out, Table, "UCS", &refs(&a.ucss), &refs(&b.ucss), |x| &x.name);
     compare_named(out, Table, "LAYERSTATE", &refs(&a.layer_states), &refs(&b.layer_states), |x| &x.name);
+    compare_named(out, Table, "LAYERFILTER", &refs(&a.layer_filters.filters), &refs(&b.layer_filters.filters), |x| &x.name);
+    let sel = |x: &cadcraft_doc::LayerFilters| (x.current.clone(), x.invert, x.apply_to_palette);
+    if sel(&a.layer_filters) != sel(&b.layer_filters) {
+        out.push(Table, Change::Changed, "LAYERFILTER selection".to_string(), format!("{:?} -> {:?}", sel(&a.layer_filters), sel(&b.layer_filters)));
+    }
     compare_named(out, Table, "GROUP", &refs(&a.groups), &refs(&b.groups), |x| &x.name);
     compare_named(out, Table, "SCALE", &refs(&a.scales), &refs(&b.scales), |x| &x.name);
     compare_named(out, Table, "PLOTSTYLE", &refs(&a.plot_style_tables), &refs(&b.plot_style_tables), |x| &x.name);

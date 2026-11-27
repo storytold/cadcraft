@@ -6,13 +6,14 @@
 //!
 //! CADCraft's own data lives under the registered application `CADCRAFT` (xdata) and the
 //! named-object-dictionary entries `CADCRAFT_CONSTRAINTS`, `CADCRAFT_LAYERSTATES`,
-//! `CADCRAFT_PLOTSTYLES`, `CADCRAFT_HANDSEED` and `CADCRAFT_MLEADERSTYLE` (XRECORDs). Other
+//! `CADCRAFT_LAYERFILTERS`, `CADCRAFT_PLOTSTYLES`, `CADCRAFT_HANDSEED` and `CADCRAFT_MLEADERSTYLE` (XRECORDs). Other
 //! readers keep or ignore them.
 
 use std::collections::HashMap;
 
 use cadcraft_color::Color;
-use cadcraft_doc::{ArrayParams, AssocSnap, Constraint, DimAssoc, DimStyle, Handle, LayerState, Parametric, PlotStyleTable};
+use cadcraft_doc::layer_filter;
+use cadcraft_doc::{ArrayParams, AssocSnap, Constraint, DimAssoc, DimStyle, Handle, LayerFilters, LayerState, Parametric, PlotStyleTable};
 use cadcraft_render::Arrowhead;
 use craft_dxf::{Tag, Version};
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,8 @@ pub(crate) const APP: &str = "CADCRAFT";
 pub(crate) const CONSTRAINTS_KEY: &str = "CADCRAFT_CONSTRAINTS";
 /// Named-object-dictionary key of the saved layer states XRECORD.
 pub(crate) const LAYER_STATES_KEY: &str = "CADCRAFT_LAYERSTATES";
+/// Named-object-dictionary key of the layer filters XRECORD.
+pub(crate) const LAYER_FILTERS_KEY: &str = "CADCRAFT_LAYERFILTERS";
 /// Named-object-dictionary key of the drawing's plot style tables XRECORD.
 pub(crate) const PLOT_STYLES_KEY: &str = "CADCRAFT_PLOTSTYLES";
 /// Named-object-dictionary key of the annotative scaling XRECORD.
@@ -776,6 +779,46 @@ pub(crate) fn parse_layer_states(text: &str) -> Option<Vec<LayerState>> {
         return None;
     }
     Some(p.states)
+}
+
+/// The layer filters stored in the `CADCRAFT_LAYERFILTERS` XRECORD.
+#[derive(Serialize, Deserialize)]
+struct LayerFiltersPayload {
+    version: u32,
+    #[serde(default)]
+    filters: LayerFilters,
+}
+
+/// JSON chunks for the layer filters XRECORD, or `None` when the drawing has no layer filters.
+pub(crate) fn layer_filter_chunks(filters: &LayerFilters) -> Option<Vec<String>> {
+    if filters.is_empty() {
+        return None;
+    }
+    let json = serde_json::to_string(&LayerFiltersPayload { version: 1, filters: filters.clone() }).ok()?;
+    if json.len() > MAX_PAYLOAD || !layer_filters_within_limits(filters) {
+        return None;
+    }
+    Some(json_chunks(&json))
+}
+
+fn layer_filters_within_limits(filters: &LayerFilters) -> bool {
+    let oversized = filters.filters.iter().any(|f| match &f.kind {
+        cadcraft_doc::FilterKind::Group { layers } => layers.len() > layer_filter::MAX_GROUP_LAYERS,
+        cadcraft_doc::FilterKind::Property { rules } => rules.len() > layer_filter::MAX_RULES,
+    });
+    filters.filters.len() <= layer_filter::MAX_FILTERS && !oversized
+}
+
+/// Parse the layer filters XRECORD text; `None` when it is not a payload we understand.
+pub(crate) fn parse_layer_filters(text: &str) -> Option<LayerFilters> {
+    if text.len() > MAX_PAYLOAD {
+        return None;
+    }
+    let p: LayerFiltersPayload = serde_json::from_str(text).ok()?;
+    if p.version != 1 || !layer_filters_within_limits(&p.filters) {
+        return None;
+    }
+    Some(p.filters)
 }
 
 /// The drawing's plot style tables stored in the `CADCRAFT_PLOTSTYLES` XRECORD.

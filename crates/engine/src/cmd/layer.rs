@@ -1,5 +1,7 @@
-//! Layers: LAYER (programmatic sub-ids, -LAYER prompts), layer tools (LAYMCUR, LAYISO, LAYOFF, LAYFRZ…).
+//! Layers: LAYER (programmatic sub-ids, -LAYER prompts), layer tools (LAYMCUR, LAYISO, LAYOFF, LAYFRZ…),
+//! layer filters (`layerfilter.*`).
 
+mod filters;
 mod prompts;
 mod state_prompts;
 
@@ -13,7 +15,7 @@ use super::{CommandSpec, bad, bool_or, ok, str_param, targets};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![
+    let mut specs = vec![
         CommandSpec::new("layer", "Layers", run_list)
             .menu(&["Format", "Layers"])
             .alias(&["la", "layers", "-layer"])
@@ -71,7 +73,9 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Format", "Layer Tools", "Layer Delete"])
             .params("{names: [...]} (deletes the layers and every object on them)")
             .interactive(|_| Ok(Box::new(merge::LayerRemove::delete()))),
-    ]
+    ];
+    specs.extend(filters::specs());
+    specs
 }
 
 fn layer_json(l: &Layer, current: bool) -> Value {
@@ -263,6 +267,7 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         }
         merge::rename_in_viewports(d, &old, &nn);
         d.rename_proxy_layer(&old, &nn);
+        d.layer_filters.rename_layer(&old, &nn);
         if cur.eq_ignore_ascii_case(&old) {
             d.header.set_str("CLAYER", &nn);
         }
@@ -311,7 +316,9 @@ fn run_delete(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("layer.delete", "layer has objects on it"));
     }
     d.layers.retain(|l| !l.name.eq_ignore_ascii_case(&name));
-    merge::forget_in_viewports(d, &std::collections::HashSet::from([name.to_ascii_lowercase()]));
+    let gone = std::collections::HashSet::from([name.to_ascii_lowercase()]);
+    merge::forget_in_viewports(d, &gone);
+    d.layer_filters.forget_layers(&gone);
     ok()
 }
 
