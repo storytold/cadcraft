@@ -84,8 +84,8 @@ Hours are Opus 5.5 agent wall-clock hours, calibrated on this repo's own build: 
 
 ## Languages
 
-AutoCAD 2027 for Mac ships 8 interface languages; CADCraft ships English plus eighteen catalogs
-(Ukrainian, Brazilian Portuguese, German, Spanish, Czech, Russian, French, Simplified Chinese, Italian, Korean, Swedish, Arabic, Greek, Hungarian, Turkish, Bosnian, Georgian and Vietnamese). Detail: [localization-parity.md](docs/localization-parity.md).
+AutoCAD 2027 for Mac ships 8 interface languages; CADCraft ships English plus twenty catalogs
+(Ukrainian, Brazilian Portuguese, German, Spanish, Czech, Russian, French, Simplified Chinese, Italian, Korean, Swedish, Arabic, Greek, Hungarian, Turkish, Bosnian, Georgian, Vietnamese, Norwegian and Polish). Detail: [localization-parity.md](docs/localization-parity.md).
 
 | Language | Status | UI translated |
 |---|---|---:|
@@ -102,8 +102,9 @@ AutoCAD 2027 for Mac ships 8 interface languages; CADCraft ships English plus ei
 | German | partial | 1,031 catalog rows |
 | Korean | partial | 1,235 catalog rows |
 | Vietnamese | partial | 1,460 catalog rows (2026-11-07); native review pending |
+| Polish | partial | 1,981 catalog rows; independent proofreading pending |
 
-Other languages shipped: Ukrainian (1,357 rows, the reference catalog, #36), Czech (1,215), Russian (1,005), Italian (1,352), Swedish (1,382), Hungarian (1,326) and Turkish (1,330), counted 2026-10-24; engine messages stay English. Every catalog but Ukrainian's has strings added since it landed that still fall back to English: 6 (Italian, Swedish) to 296 (French) per `cargo xtask i18n` ([localization-parity.md](docs/localization-parity.md)).
+Other languages shipped: Ukrainian (1,357 rows, the reference catalog, #36), Czech (1,215), Russian (1,005), Italian (1,352), Swedish (1,382), Hungarian (1,326) and Turkish (1,330), counted 2026-10-24, and Polish (1,981); engine messages stay English. Every catalog but Ukrainian's has strings added since it landed that still fall back to English: 6 (Italian, Swedish) to 296 (French) per `cargo xtask i18n` ([localization-parity.md](docs/localization-parity.md)).
 
 ## Upcoming
 
