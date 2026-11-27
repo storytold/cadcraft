@@ -16,7 +16,7 @@ CADCraft treats these as untrusted, and a way past these defences is a vulnerabi
 
 - **Drawing files.** Opening a DXF, DWG or other file must not run code, write outside the paths the user chose, or crash the app. Panics are bugs too, but memory exhaustion or a decoder abort on a crafted file is the more serious case.
 - **AutoLISP in a drawing's folder.** A drawing must not run code that the user didn't choose to load.
-- **The control channel.** It listens on loopback only and needs the session token from an owner-only file on every request. Another local account reaching it without that token is a vulnerability.
+- **The control channel.** It listens on loopback only and needs the session token from an owner-only file on every request. Another local account reaching it without that token is a vulnerability. The MCP bridge sends requests only to a server that proves it holds the token, so a program listening on the port in the app's place gets none.
 - **Temporary and autosave files.** Autosave files are unsaved drawings: another account must not be able to read them or redirect a write through them.
 - **Updates.** A release must not be replaceable by someone other than the project.
 
@@ -25,7 +25,7 @@ CADCraft treats these as untrusted, and a way past these defences is a vulnerabi
 These are known and being worked on, so they don't need a report:
 
 - Agents connected through MCP or the control channel can read and write any path the user can. There are no workspace roots yet.
-- A local process can make the control channel buffer up to 512 MiB before its token is checked. The total is capped, so this can slow the app but not exhaust memory without limit.
+- A local process without the token can hold the control channel's 16 connections for up to 10 seconds at a time, with at most 64 KiB of request line each, so it can keep an agent from reaching the app while it keeps reconnecting. It can't make the app run anything.
 - The DWG worker process has no memory limit of its own yet, so a crafted file can use a lot of memory before it stops. It ends that one open or save, not the app.
 - The web build has no autosave yet.
 

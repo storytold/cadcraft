@@ -11,6 +11,9 @@
 use std::io;
 use std::path::PathBuf;
 
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+
 /// Length of the token in bytes (256 bits), rendered as lowercase hex.
 const TOKEN_BYTES: usize = 32;
 
@@ -20,6 +23,68 @@ const TOKEN_BYTES: usize = 32;
 /// token can make the app buffer (#1925). A client sends a longer request only after a shorter one
 /// with the token has been answered on the same connection.
 pub const MAX_UNAUTHENTICATED_LINE: usize = 64 * 1024;
+
+/// How long a connection may stay open before a request on it has carried the right token; the
+/// server closes it then, so peers without the token can't hold every connection slot until the
+/// idle timeout (#1925). A client that keeps an unauthenticated connection this long opens a new one.
+pub const MAX_UNAUTHENTICATED_TIME: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Shortest and longest `hello` nonce, in hexadecimal digits.
+pub const NONCE_DIGITS: std::ops::RangeInclusive<usize> = 32..=128;
+
+/// What the server's proof is computed over besides the nonce, so a proof is never a valid token or
+/// a MAC made for anything else.
+const PROOF_LABEL: &[u8] = b"cadcraft control server proof v1\n";
+
+/// A fresh nonce for a `hello` (256 bits of operating-system randomness, hex).
+pub fn new_nonce() -> io::Result<String> {
+    random_hex()
+}
+
+/// Whether `nonce` is one the server answers: hexadecimal digits, [`NONCE_DIGITS`] long.
+pub fn valid_nonce(nonce: &str) -> bool {
+    NONCE_DIGITS.contains(&nonce.len()) && nonce.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// HMAC-SHA-256 of the proof label and `nonce`, keyed with the session token (HMAC takes keys of
+/// any length, so it is always `Some`).
+fn proof_mac(token: &str, nonce: &str) -> Option<Hmac<Sha256>> {
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(token.as_bytes()).ok()?;
+    mac.update(PROOF_LABEL);
+    mac.update(nonce.as_bytes());
+    Some(mac)
+}
+
+/// The server's answer to a `hello` carrying `nonce`: it shows the server holds the session token
+/// without sending the token, so a client can tell the app from another program listening on its
+/// port before it sends a request (#1925).
+pub fn server_proof(token: &str, nonce: &str) -> String {
+    proof_mac(token, nonce).map(|mac| hex(&mac.finalize().into_bytes())).unwrap_or_default()
+}
+
+/// Whether `proof` is [`server_proof`] for `token` and `nonce`, compared in constant time.
+pub fn verify_server_proof(token: &str, nonce: &str, proof: &str) -> bool {
+    let (Some(bytes), Some(mac)) = (unhex(proof), proof_mac(token, nonce)) else { return false };
+    mac.verify_slice(&bytes).is_ok()
+}
+
+/// Lowercase hexadecimal.
+fn hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+/// The bytes of an even-length hexadecimal string, or `None`.
+fn unhex(text: &str) -> Option<Vec<u8>> {
+    if !text.len().is_multiple_of(2) {
+        return None;
+    }
+    text.as_bytes().chunks(2).map(|pair| std::str::from_utf8(pair).ok().and_then(|p| u8::from_str_radix(p, 16).ok())).collect()
+}
 
 /// The file holding the control token for `port`, inside a per-user private directory.
 ///
@@ -140,12 +205,7 @@ pub fn matches(expected: &str, given: &str) -> bool {
 fn random_hex() -> io::Result<String> {
     let mut bytes = [0u8; TOKEN_BYTES];
     getrandom::fill(&mut bytes).map_err(|e| io::Error::other(format!("no secure randomness: {e}")))?;
-    let mut s = String::with_capacity(TOKEN_BYTES * 2);
-    for b in bytes {
-        use std::fmt::Write as _;
-        let _ = write!(s, "{b:02x}");
-    }
-    Ok(s)
+    Ok(hex(&bytes))
 }
 
 /// Replace a stale token with an exclusively created file using Unix mode `0600`, then flush its bytes.
@@ -174,6 +234,32 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A proof checks out only for the token and nonce it was made with, and is neither the token
+    /// nor readable as one.
+    #[test]
+    fn a_server_proof_holds_only_for_its_token_and_nonce() {
+        let (token, nonce) = (random_hex().unwrap(), new_nonce().unwrap());
+        let proof = server_proof(&token, &nonce);
+        assert!(verify_server_proof(&token, &nonce, &proof));
+        assert!(!verify_server_proof(&random_hex().unwrap(), &nonce, &proof), "another token");
+        assert!(!verify_server_proof(&token, &new_nonce().unwrap(), &proof), "another nonce");
+        assert!(!matches(&token, &proof));
+        let mut flipped = proof.clone().into_bytes();
+        flipped[0] = if flipped[0] == b'0' { b'1' } else { b'0' };
+        for bad in [String::from_utf8(flipped).unwrap(), proof[1..].to_string(), format!("{}zz", &proof[2..]), String::new()] {
+            assert!(!verify_server_proof(&token, &nonce, &bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn nonces_are_hex_of_a_bounded_length() {
+        let nonce = new_nonce().unwrap();
+        assert!(valid_nonce(&nonce));
+        for bad in ["", "abc", &"0".repeat(*NONCE_DIGITS.end() + 1), &format!("{}g", &nonce[1..])] {
+            assert!(!valid_nonce(bad), "{bad:?}");
+        }
+    }
 
     /// An issued token has the expected size, can be read back, and disappears after revocation.
     #[test]

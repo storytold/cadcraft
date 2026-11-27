@@ -60,10 +60,19 @@ fn no_connect_still_serves_headless() {
 fn connect_with_address_routes_to_that_endpoint() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
     let addr = listener.local_addr().expect("local addr").to_string();
+    let port = listener.local_addr().expect("local addr").port();
+    // As the app does: write the session token, and prove holding it when the bridge says hello.
+    let token = cadcraft_mcp::control_token::issue(port).expect("issue token");
     let server = std::thread::spawn(move || {
         let (conn, _) = listener.accept().expect("accept");
         let mut reader = BufReader::new(conn.try_clone().expect("clone"));
         let mut line = String::new();
+        reader.read_line(&mut line).expect("read hello");
+        let hello: Value = serde_json::from_str(&line).expect("json hello");
+        assert_eq!(hello["method"], "hello", "the bridge says hello first: {line}");
+        let proof = cadcraft_mcp::control_token::server_proof(&token, hello["params"]["nonce"].as_str().unwrap_or_default());
+        writeln!(&conn, "{}", json!({"id": hello["id"], "ok": true, "result": {"proof": proof}})).expect("write proof");
+        line.clear();
         reader.read_line(&mut line).expect("read request");
         let req: Value = serde_json::from_str(&line).expect("json request");
         let reply = json!({"id": req["id"], "ok": true, "result": {"fixture": "loopback"}});
@@ -75,6 +84,7 @@ fn connect_with_address_routes_to_that_endpoint() {
     let out = mcp(&["--connect", &addr], &format!("{INIT}\n{call}\n"));
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     let req = server.join().expect("server thread");
+    cadcraft_mcp::control_token::revoke(port);
     assert_eq!(req["method"], "ui.inspect");
     let r = replies(&out);
     let instructions = r.iter().find(|v| v["id"] == 1).and_then(|v| v["result"]["instructions"].as_str()).unwrap_or_default();

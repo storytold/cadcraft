@@ -5,15 +5,19 @@
 //! HTTP request line, a stray `nc`, binary data) gets one error reply and the connection is
 //! closed, so nothing sent after it runs. Every resource a client can hold is bounded
 //! ([`Limits`]): simultaneous connections, request line length (shorter until a request on the
-//! connection has carried the token), queued requests, and how long a socket may sit idle or
-//! blocked on a write.
+//! connection has carried the token), queued requests, how long a connection may stay open before
+//! it has shown the token, and how long a socket may sit idle or blocked on a write.
+//!
+//! A `hello` with a nonce is answered before the token check with a proof that the server holds
+//! the token ([`cadcraft_mcp::control_token::server_proof`]), so a client can tell the app from
+//! another program on the port before it sends anything else (#1925).
 
-use std::io::{BufRead, BufReader, ErrorKind, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cadcraft_ui_egui::ControlRequest;
 use serde_json::{Value, json};
@@ -33,6 +37,9 @@ struct Limits {
     total_bytes: usize,
     /// Requests waiting for the app at once; more are answered `busy`.
     queue: usize,
+    /// How long a connection may stay open before a request on it has carried the right token; it
+    /// is closed then, so peers without the token can't hold the connection slots (#1925).
+    preauth_time: Duration,
     /// How long a connection may go without sending a byte before it is closed.
     idle_timeout: Duration,
     /// How long a reply write may block before the connection is closed.
@@ -51,6 +58,7 @@ impl Default for Limits {
             // Room for one maximal request plus smaller ones, not `max_clients` maximal ones.
             total_bytes: 512 * 1024 * 1024,
             queue: 64,
+            preauth_time: cadcraft_mcp::control_token::MAX_UNAUTHENTICATED_TIME,
             idle_timeout: Duration::from_secs(600),
             write_timeout: Duration::from_secs(30),
             reply_timeout: Duration::from_secs(60),
@@ -338,6 +346,47 @@ fn is_http_request_line(text: &str) -> bool {
         || text.rsplit_once(' ').is_some_and(|(_, version)| version.starts_with("HTTP/"))
 }
 
+/// The method a client sends, before any request with the token, to have the server prove it holds
+/// the token.
+const HELLO: &str = "hello";
+
+/// `hello`'s parameters.
+#[derive(serde::Deserialize)]
+struct HelloParams {
+    nonce: String,
+}
+
+/// The proof answering a `hello` with `params`, or the error that closes the connection.
+fn hello_proof(params: Option<&serde_json::value::RawValue>, token: &str) -> Result<String, String> {
+    let nonce = params.and_then(|p| serde_json::from_str::<HelloParams>(p.get()).ok()).map(|p| p.nonce).unwrap_or_default();
+    if !cadcraft_mcp::control_token::valid_nonce(&nonce) {
+        let digits = &cadcraft_mcp::control_token::NONCE_DIGITS;
+        return Err(format!("`hello` needs a `nonce` of {} to {} hexadecimal digits; closing the connection", digits.start(), digits.end()));
+    }
+    Ok(cadcraft_mcp::control_token::server_proof(token, &nonce))
+}
+
+/// A connection's read side. Until `until` (the end of [`Limits::preauth_time`]), each read waits
+/// at most until then, however the bytes trickle in; after it, reads fail as timed out.
+struct Timed {
+    stream: TcpStream,
+    idle: Duration,
+    until: Option<Instant>,
+}
+
+impl Read for Timed {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if let Some(until) = self.until {
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(std::io::Error::new(ErrorKind::TimedOut, "no request with the control token in time"));
+            }
+            self.stream.set_read_timeout(Some(left.min(self.idle)))?;
+        }
+        self.stream.read(buf)
+    }
+}
+
 /// Serve bounded JSON lines, authenticating each request before enqueueing it for the UI.
 /// Invalid credentials close the connection; queue and reply limits report whether a request ran.
 fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context, limits: Limits, token: &str, budget: Budget) {
@@ -346,7 +395,8 @@ fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context
     }
     let Ok(read) = stream.try_clone() else { return };
     let mut out = stream;
-    let mut reader = BufReader::new(read);
+    let until = Instant::now().checked_add(limits.preauth_time);
+    let mut reader = BufReader::new(Timed { stream: read, idle: limits.idle_timeout, until });
     let mut buf = Vec::new();
     let mut held = Held::new(budget);
     // The token is checked only after the whole line is read, so until a request here has carried
@@ -368,6 +418,17 @@ fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context
             Ok(true) => match parse_line(&buf) {
                 Line::Blank => continue,
                 Line::Reject(e) => e,
+                // Answered without the token and without authenticating the connection: the proof
+                // shows the token is known here, not that the peer knows it.
+                Line::Request { id, method, params, .. } if method == HELLO => match hello_proof(params, token) {
+                    Ok(proof) => {
+                        if writeln!(out, "{}", json!({"id": id, "ok": true, "result": {"proof": proof}})).is_err() {
+                            break;
+                        }
+                        continue;
+                    }
+                    Err(e) => e,
+                },
                 Line::Request { id, method, params, token: given } => {
                     // Authenticate the peer before dispatching: loopback TCP does not identify the
                     // OS user, so only a client holding the owner-only session token may drive the
@@ -380,7 +441,14 @@ fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context
                         let _ = writeln!(out, "{r}");
                         break;
                     }
-                    authenticated = true;
+                    if !authenticated {
+                        authenticated = true;
+                        let timed = reader.get_mut();
+                        timed.until = None;
+                        if timed.stream.set_read_timeout(Some(limits.idle_timeout)).is_err() {
+                            break;
+                        }
+                    }
                     // Absent `params` is `{}`; ones that cannot be decoded (an unpaired surrogate escape) are an
                     // error, not a request run with defaults.
                     let params = match params.map(|r| serde_json::from_str::<Value>(r.get())) {
@@ -742,6 +810,87 @@ mod tests {
         BufReader::new(c).read_line(&mut line).unwrap();
         let v: Value = serde_json::from_str(&line).unwrap();
         assert_eq!((v["ok"].as_bool(), v["method"].as_str()), (Some(true), Some("ping")), "{line}");
+    }
+
+    /// A `hello` line with `nonce` and no token.
+    fn hello_line(nonce: &str) -> String {
+        json!({"id": "h", "method": "hello", "params": {"nonce": nonce}}).to_string() + "\n"
+    }
+
+    /// A `hello` is answered with a proof of the token before any token has been shown, and the
+    /// connection stays open for requests; the `hello` itself authenticates nothing.
+    #[test]
+    fn a_hello_is_answered_with_a_proof_of_the_token() {
+        let addr = serve_echo_with(preauth());
+        let mut c = TcpStream::connect(addr).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut r = BufReader::new(c.try_clone().unwrap());
+        let nonce = cadcraft_mcp::control_token::new_nonce().unwrap();
+        c.write_all(hello_line(&nonce).as_bytes()).unwrap();
+        let mut line = String::new();
+        r.read_line(&mut line).unwrap();
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["id"], "h", "{line}");
+        let proof = v["result"]["proof"].as_str().unwrap();
+        assert!(cadcraft_mcp::control_token::verify_server_proof(TEST_TOKEN, &nonce, proof), "{line}");
+        assert!(!line.contains(TEST_TOKEN), "the token itself is never sent");
+        // Still unauthenticated: a line past the preauth bound is refused…
+        let refused = exchange(addr, format!("{}{}", hello_line(&nonce), long_req_line(1, 2000)).as_bytes());
+        assert_eq!(refused.len(), 2, "{refused:?}");
+        assert!(refused[1]["error"].as_str().unwrap().contains("longer than 1000 bytes"), "{refused:?}");
+        // …and a request with the token after the hello goes through on the same connection.
+        c.write_all(req_line(2, "ping").as_bytes()).unwrap();
+        line.clear();
+        r.read_line(&mut line).unwrap();
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!((v["id"].as_i64(), v["method"].as_str()), (Some(2), Some("ping")), "{line}");
+    }
+
+    /// A `hello` without a usable nonce gets an error and the connection is closed.
+    #[test]
+    fn a_hello_without_a_usable_nonce_closes_the_connection() {
+        let addr = serve_echo();
+        for bad in [r#"{"method":"hello"}"#.to_string(), hello_line("abc").trim_end().to_string(), hello_line(&"z".repeat(64)).trim_end().to_string()]
+        {
+            let replies = exchange(addr, format!("{bad}\n{}", req_line(1, "ping")).as_bytes());
+            assert_eq!(replies.len(), 1, "{bad}: {replies:?}");
+            assert!(replies[0]["error"].as_str().unwrap().contains("`nonce`"), "{bad}: {replies:?}");
+        }
+    }
+
+    /// A connection that doesn't show the token within `preauth_time` is closed even while it keeps
+    /// sending (a byte at a time, or `hello`s), so peers without the token can't hold the slots;
+    /// one that has shown it stays open past that time.
+    #[test]
+    fn a_connection_that_never_shows_the_token_is_closed_in_time() {
+        let limits = Limits { preauth_time: Duration::from_millis(400), idle_timeout: Duration::from_secs(5), ..short() };
+        let addr = serve_echo_with(limits);
+        let nonce = cadcraft_mcp::control_token::new_nonce().unwrap();
+        for trickle in [b"{".to_vec(), hello_line(&nonce).into_bytes()] {
+            let mut c = TcpStream::connect(addr).unwrap();
+            c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let reader = std::thread::spawn({
+                let c = c.try_clone().unwrap();
+                move || BufReader::new(c).lines().count()
+            });
+            let t = std::time::Instant::now();
+            while c.write_all(&trickle).is_ok() && t.elapsed() < Duration::from_secs(4) && !reader.is_finished() {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            assert!(reader.is_finished() && t.elapsed() < Duration::from_secs(3), "still open after {:?}", t.elapsed());
+            let _ = reader.join();
+        }
+        let mut c = TcpStream::connect(addr).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut r = BufReader::new(c.try_clone().unwrap());
+        let mut line = String::new();
+        c.write_all(req_line(1, "ping").as_bytes()).unwrap();
+        r.read_line(&mut line).unwrap();
+        std::thread::sleep(Duration::from_millis(700));
+        c.write_all(req_line(2, "pong").as_bytes()).unwrap();
+        line.clear();
+        r.read_line(&mut line).unwrap();
+        assert!(line.contains("pong"), "an authenticated connection outlives the preauth time: {line:?}");
     }
 
     #[test]
