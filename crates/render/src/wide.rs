@@ -79,7 +79,8 @@ pub(crate) fn second_vertex_at(p: &LwPolyline, tol: f64) -> f64 {
 /// for each dot, and the centre line of each dash. With PLINEGEN the pattern runs along the whole
 /// polyline (stretched around a closed one from its second vertex, as a thin one is); otherwise
 /// it restarts at every vertex. A pattern shorter than `min_pattern` fills the whole band, as does
-/// a run past a dash limit (`dash_budget`, see [`linetype::Budget`]).
+/// a run past a dash limit (`dash_budget`, see [`linetype::Budget`]); a pattern of gaps only draws
+/// nothing.
 pub(crate) fn dashed(
     p: &LwPolyline,
     tol: f64,

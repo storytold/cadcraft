@@ -61,8 +61,9 @@ fn visits(len: f64, pattern: &[f64], min_pattern: f64) -> Option<f64> {
 
 /// The drawn stretches of a run `len` long, as (start, end) along it (a dot: start == end), in
 /// order; `None` when it is drawn continuous (see [`visits`]), also when it repeats past
-/// [`MAX_ELEMENTS`] or `budget` refuses it. A pattern of gaps only draws nothing at any length,
-/// without a charge. `pattern` is scaled; `min_pattern` is the caller's.
+/// [`MAX_ELEMENTS`] or `budget` refuses it. A pattern of gaps only draws nothing, without a charge
+/// (the callers return before this for one, see [`gaps_only`]). `pattern` is scaled; `min_pattern`
+/// is the caller's.
 fn layout(len: f64, pattern: &[f64], how: Layout, min_pattern: f64, budget: &mut impl Budget) -> Option<Vec<(f64, f64)>> {
     let elements = visits(len, pattern, min_pattern)?;
     let period: f64 = pattern.iter().map(|d| d.abs()).sum();
@@ -74,7 +75,7 @@ fn layout(len: f64, pattern: &[f64], how: Layout, min_pattern: f64, budget: &mut
         }
         at += d.abs();
     }
-    // Gaps only: nothing to draw or walk, at any length.
+    // Gaps only: nothing to draw or walk (and `% drawn.len()` below needs one).
     if drawn.is_empty() {
         return Some(Vec::new());
     }
@@ -199,6 +200,13 @@ fn scaled(lt: &Linetype, scale: f64, min_pattern: f64) -> Option<Vec<f64>> {
     (total > 1e-12 && total >= min_pattern).then(|| lt.pattern.iter().map(|d| d.length * scale).collect())
 }
 
+/// Whether `lt` is a pattern of gaps only: it draws no line on any run, also where a pattern with
+/// a dash or a dot is drawn continuous (shorter than a period, sub-pixel, past a limit). Texts and
+/// shapes in it are placed as [`phase`] says.
+fn gaps_only(lt: &Linetype) -> bool {
+    !lt.pattern.is_empty() && lt.pattern.iter().all(|e| e.length < 0.0)
+}
+
 /// The pieces of `pts` over `ranges` (in order along it), a dot as a single point.
 fn cut(pts: &[Vec2], ranges: &[(f64, f64)]) -> Vec<Vec<Vec2>> {
     let mut cum = Vec::with_capacity(pts.len());
@@ -242,13 +250,17 @@ fn cut(pts: &[Vec2], ranges: &[(f64, f64)]) -> Vec<Vec<Vec2>> {
 
 /// Split `pts`, an open run, into dashes. Dots come back as single-point runs. A run shorter than
 /// one period, or with a scaled pattern shorter than `min_pattern` (sub-pixel), comes back whole,
-/// as does one past a limit (see [`layout`]).
+/// as does one past a limit (see [`layout`]). A pattern of gaps only gives nothing.
 pub(crate) fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64, budget: &mut impl Budget) -> Vec<Vec<Vec2>> {
     apply_as(pts, lt, scale, min_pattern, Layout::Open, budget).unwrap_or_else(|| vec![pts.to_vec()])
 }
 
-/// [`apply`] with the run laid out as `how` says; `None` when the run is drawn continuous.
+/// [`apply`] with the run laid out as `how` says; `None` when the run is drawn continuous, and no
+/// pieces for a pattern of gaps only.
 pub(crate) fn apply_as(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64, how: Layout, budget: &mut impl Budget) -> Option<Vec<Vec<Vec2>>> {
+    if gaps_only(lt) {
+        return Some(Vec::new());
+    }
     if pts.len() < 2 {
         return None;
     }
@@ -259,8 +271,12 @@ pub(crate) fn apply_as(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64
 /// The dashes of the pattern along a run of length `len` laid out as `how` says, as (start, end)
 /// distances; a dot has start == end. Laid out like [`apply_as`]. `None` when the run is drawn
 /// continuous: shorter than one period, a scaled pattern shorter than `min_pattern`, too many
-/// repeats (see [`MAX_PERIODS`]), or past a limit (see [`layout`]).
+/// repeats (see [`MAX_PERIODS`]), or past a limit (see [`layout`]). A pattern of gaps only has no
+/// dashes on any run.
 pub(crate) fn ranges(len: f64, lt: &Linetype, scale: f64, min_pattern: f64, how: Layout, budget: &mut impl Budget) -> Option<Vec<(f64, f64)>> {
+    if gaps_only(lt) {
+        return Some(Vec::new());
+    }
     if len > 0.0 { scaled(lt, scale, min_pattern).and_then(|p| layout(len, &p, how, min_pattern, budget)) } else { None }
 }
 
@@ -521,14 +537,27 @@ mod tests {
         assert_eq!(ranges(50_001.0 * 0.75, &lt, 1.0, 1e-9, Layout::Open, &mut b), None);
         assert_eq!((b.left, b.refused), (usize::MAX, 1));
 
-        // Gaps only draw nothing at any length, past the run's own limit too.
+        // Gaps only draw nothing on every path where a pattern with a dash is drawn continuous:
+        // shorter than a period, a pattern under `min_pattern` (sub-pixel), past 50,000 periods
+        // with a level of detail, past the run's own limit; and on a run within them.
         let gaps = Linetype::simple("GAPS", "", &[-0.5, -0.25]);
         let mut b = Left { left: 0, refused: 0 };
-        for len in [750.0, 750_000.0] {
-            assert_eq!(ranges(len, &gaps, 1.0, 0.0, Layout::Open, &mut b), Some(Vec::new()), "{len}");
-            assert!(apply(&[Vec2::ZERO, Vec2::new(len, 0.0)], &gaps, 1.0, 0.0, &mut b).is_empty(), "{len}");
+        for (len, min) in [(0.5, 0.0), (750.0, 10.0), (50_001.0 * 0.75, 1e-9), (750_000.0, 0.0), (750.0, 0.0)] {
+            assert_eq!(ranges(len, &gaps, 1.0, min, Layout::Open, &mut b), Some(Vec::new()), "{len} {min}");
+            assert_eq!(ranges(len, &gaps, 1.0, min, Layout::Closed { anchor: 0.0 }, &mut b), Some(Vec::new()), "{len} {min}");
+            assert!(apply(&[Vec2::ZERO, Vec2::new(len, 0.0)], &gaps, 1.0, min, &mut b).is_empty(), "{len} {min}");
         }
+        assert!(apply(&[Vec2::ZERO], &gaps, 1.0, 0.0, &mut b).is_empty(), "a run of one point");
         assert_eq!(b.refused, 0);
+        // A pattern with a dash keeps those fallbacks: drawn whole.
+        for (len, min) in [(0.5, 0.0), (750.0, 10.0), (50_001.0 * 0.75, 1e-9)] {
+            let pts = [Vec2::ZERO, Vec2::new(len, 0.0)];
+            assert_eq!(apply(&pts, &lt, 1.0, min, &mut b), vec![pts.to_vec()], "{len} {min}");
+        }
+        assert_eq!(apply(&[Vec2::ZERO], &lt, 1.0, 0.0, &mut b), vec![vec![Vec2::ZERO]]);
+        // So does a pattern of no elements (continuous), which is not a pattern of gaps.
+        let pts = [Vec2::ZERO, Vec2::new(750.0, 0.0)];
+        assert_eq!(apply(&pts, &Linetype::continuous(), 1.0, 0.0, &mut b), vec![pts.to_vec()]);
     }
 
     /// A closed run is stretched to a whole number of periods, rounded: 192 is 1.5 periods of 128
