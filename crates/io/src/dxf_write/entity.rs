@@ -168,7 +168,11 @@ fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
                 w.f(38, elevation);
             }
             thickness(w, e);
-            for v in &p.vertices {
+            // The vertex identifiers the file gave the polyline (DXF 2010 and later), while its
+            // vertices are where they were read: geometric constraints name its segments by them.
+            let kept = d.foreign.entities.get(&e.handle).map(|x| x.vertex_ids.as_slice()).filter(|_| cx.target >= Version::R2010);
+            let ids = kept.and_then(|kept| cadcraft_doc::foreign::vertex_ids_for(kept, p.vertices.iter().map(|v| (v.p.x, v.p.y))));
+            for (i, v) in p.vertices.iter().enumerate() {
                 w.p2(10, v.p);
                 if v.start_width != 0.0 || v.end_width != 0.0 {
                     w.f(40, v.start_width);
@@ -176,6 +180,9 @@ fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
                 }
                 if v.bulge != 0.0 {
                     w.f(42, v.bulge);
+                }
+                if let Some(id) = ids.as_ref().and_then(|ids| ids.get(i)).filter(|id| **id != 0) {
+                    w.i(91, i64::from(*id));
                 }
             }
         }

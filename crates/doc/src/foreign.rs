@@ -42,11 +42,41 @@ pub struct ForeignExtra {
     pub color_book: Option<(String, String)>,
     /// Other unmodelled property groups (material 347, shadow mode 284).
     pub props: Vec<RawTag>,
+    /// A lightweight polyline's vertex identifiers (group 91, DXF 2010 and later) as read: one per
+    /// vertex in the polyline's order; empty when the file gave none. Geometric constraints name the
+    /// polyline's segments by them, so they are written back while the polyline's vertices are
+    /// where they were read ([`vertex_ids_for`]).
+    pub vertex_ids: Vec<VertexId>,
+}
+
+/// A vertex of a lightweight polyline as it was read: its identifier and its point as the
+/// polyline has it once read (a polyline whose normal points down is read mirrored in x).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct VertexId {
+    /// The identifier (group 91); 0 for a vertex without one.
+    pub id: i32,
+    pub x: f64,
+    pub y: f64,
+}
+
+/// The identifiers `kept` gives the vertices at `points`, in their order, while every vertex is
+/// where it was read. `None` once a vertex was added, removed, moved or the order changed: the
+/// identifiers no longer say which vertex is which.
+pub fn vertex_ids_for(kept: &[VertexId], points: impl ExactSizeIterator<Item = (f64, f64)> + Clone) -> Option<Vec<i32>> {
+    if kept.is_empty() || kept.len() != points.len() {
+        return None;
+    }
+    kept.iter().zip(points).all(|(k, (x, y))| k.x == x && k.y == y).then(|| kept.iter().map(|k| k.id).collect())
 }
 
 impl ForeignExtra {
     pub fn is_empty(&self) -> bool {
-        self.xdict.is_none() && self.reactors.is_empty() && self.xdata.is_empty() && self.color_book.is_none() && self.props.is_empty()
+        self.xdict.is_none()
+            && self.reactors.is_empty()
+            && self.xdata.is_empty()
+            && self.color_book.is_none()
+            && self.props.is_empty()
+            && self.vertex_ids.is_empty()
     }
 }
 
