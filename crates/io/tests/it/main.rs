@@ -12,6 +12,7 @@ mod attrib_props;
 mod block_expansion;
 mod closed_spline;
 mod codepages;
+mod dash_controls;
 mod dim_block_resave_roundtrip;
 mod dim_block_text;
 mod dim_marks_roundtrip;

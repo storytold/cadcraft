@@ -182,6 +182,12 @@ pub fn install_io() {
         write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
         plot: Some(|d, space, opts| cadcraft_io::plotter::plot(d, space, opts).map_err(|e| e.to_string())),
     });
+    // The same writers, with what an image draws short of the drawing (dashed lines past the
+    // dash limit), so EXPORT, SAVEAS and PLOT can say so.
+    cadcraft_engine::cmd::file::set_noted_io(cadcraft_engine::cmd::file::NotedIo {
+        write: |d, name| cadcraft_io::write_framed_noted(d, name, None).map_err(|e| e.to_string()),
+        plot: |d, space, opts| cadcraft_io::plotter::plot_noted(d, space, opts).map_err(|e| e.to_string()),
+    });
     cadcraft_engine::cmd::file::set_image_decoder(|b| cadcraft_io::raster::decode(b).map_err(|e| e.to_string()));
     cadcraft_engine::cmd::file::set_write_as(|d, name, o| {
         cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())

@@ -22,6 +22,12 @@ pub const MAX_PNG_PIXELS: f64 = 40.0e6;
 /// `svg`. `margins: [l, b, r, t]` (mm) bound the printable area of this plot (model space or a
 /// layout).
 pub fn plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
+    plot_noted(d, space, opts).map(|(bytes, _)| bytes)
+}
+
+/// [`plot`], also returning what the plot draws short of the drawing because of a render limit,
+/// one note each ([`crate::undashed_note`]).
+pub fn plot_noted(d: &Drawing, space: &Space, opts: &Value) -> Result<(Vec<u8>, Vec<String>)> {
     pdf::validate_plot_offset_json(opts)?;
     if matches!(space, Space::Model)
         && opts.get("output").and_then(Value::as_str).is_some_and(|output| output.eq_ignore_ascii_case("svg"))
@@ -42,12 +48,13 @@ pub fn plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
         }
         _ => d,
     };
-    match opts.get("output").and_then(Value::as_str).map(str::to_ascii_lowercase).as_deref() {
-        None | Some("pdf") => pdf::plot(d, space, opts),
-        Some("png") => png(d, space, opts),
-        Some("svg") => svg(d, space, opts),
-        Some(other) => Err(IoError::Unsupported(other.to_string())),
-    }
+    let (bytes, undashed) = match opts.get("output").and_then(Value::as_str).map(str::to_ascii_lowercase).as_deref() {
+        None | Some("pdf") => pdf::plot_noted(d, space, opts)?,
+        Some("png") => png(d, space, opts)?,
+        Some("svg") => svg(d, space, opts)?,
+        Some(other) => return Err(IoError::Unsupported(other.to_string())),
+    };
+    Ok((bytes, crate::undashed_note(undashed).into_iter().collect()))
 }
 
 /// The sheet a plot draws on (a model-space plot's printable area inside the device margins).
@@ -62,7 +69,8 @@ fn fit_scale(b: &Bounds2, sheet: &Sheet, o: &PdfOptions) -> f64 {
     pdf::plot_scale(b, sheet, o.fit != Some(false), o.scale)
 }
 
-fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
+/// The PNG plot and the dashed runs it drew continuous because of a dash limit.
+fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<(Vec<u8>, usize)> {
     let o = pdf::with_saved_setup(d, space, &PdfOptions::from_json(opts));
     let (sheet, page) = sheet(d, space, &o)?;
     let dpi = opts.get("resolution").and_then(Value::as_f64).filter(|r| r.is_finite()).unwrap_or(300.0).clamp(50.0, 2400.0);
@@ -116,15 +124,18 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
         // PDF clips a placed plot to the printable area: blank the rest of the sheet.
         raster::blank_outside_printable(&mut pm, &sheet.printable, k);
     }
-    raster::encode_png(&pm).ok_or_else(|| IoError::Format("render failed".into()))
+    let png = raster::encode_png(&pm).ok_or_else(|| IoError::Format("render failed".into()))?;
+    Ok((png, list.undashed))
 }
 
-fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
+/// The SVG plot and the dashed runs it drew continuous because of a dash limit.
+fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<(Vec<u8>, usize)> {
     let o = PdfOptions::from_json(opts);
     let Space::Model = space else {
         let (sheet, page) = sheet(d, space, &o)?;
         let transparency = o.plot_transparency.unwrap_or(page.plot_transparency);
-        return Ok(crate::svg::export_window_with(d, space, Some(sheet.bounds()), transparency).into_bytes());
+        let (svg, undashed) = crate::svg::export_noted(d, space, Some(sheet.bounds()), transparency);
+        return Ok((svg.into_bytes(), undashed));
     };
     // Model space as plotted: the plot style table, lineweights, and the table's ends, joins and
     // fills at the scale that fits the window (or the extents) on the device's paper.
@@ -141,7 +152,7 @@ fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let mut list = cadcraft_render::build_plot(d, space, &ropts);
     let s = fit_scale(&window.unwrap_or(list.bounds), &sheet, &o);
     cadcraft_render::pen::apply(&mut list, s * sheet.unit_mm);
-    Ok(crate::svg::export_list(&list, window).into_bytes())
+    Ok((crate::svg::export_list(&list, window).into_bytes(), list.undashed))
 }
 
 #[cfg(test)]

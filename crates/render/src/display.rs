@@ -108,10 +108,16 @@ pub struct DisplayList {
     /// Block contents expanded while building (see [`MAX_BLOCK_EXPANSION`]).
     pub expanded: usize,
     /// The block-expansion budget or the point budget ([`crate::MAX_DISPLAY_POINTS`]) was spent:
-    /// block contents or objects past it are not in the list. The screen,
-    /// plots and exports draw what is here; the CLI and the control channel report this, so an
-    /// output that leaves contents out is never silent (#1070).
+    /// block contents or objects past it are not in the list; or a dashed run was drawn
+    /// continuous past a dash limit ([`DisplayList::undashed`]). The screen,
+    /// plots and exports draw what is here; the control channel and the MCP render report this,
+    /// so an output that leaves contents out is never silent (#1070).
     pub truncated: bool,
+    /// Dashed runs drawn continuous because of a dash limit: one run repeating its pattern past
+    /// [`crate::MAX_RUN_DASH_ELEMENTS`], or the build past [`crate::MAX_DASH_ELEMENTS`] (#1069). Runs drawn
+    /// continuous by rule (shorter than one period, a pattern under two pixels or, on screen, past
+    /// 50,000 periods) are not counted.
+    pub undashed: usize,
     /// Plot style end, join and fill style per primitive (parallel to `prims`; missing entries
     /// are "use object"), turned into geometry by [`pen::apply`].
     pub pens: Vec<Pen>,
@@ -210,4 +216,5 @@ pub(crate) fn append(dst: &mut DisplayList, src: DisplayList) {
     dst.bounds = dst.bounds.union(&src.bounds);
     dst.expanded = dst.expanded.saturating_add(src.expanded);
     dst.truncated |= src.truncated;
+    dst.undashed = dst.undashed.saturating_add(src.undashed);
 }
