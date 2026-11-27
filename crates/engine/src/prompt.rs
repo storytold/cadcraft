@@ -37,6 +37,7 @@ const NO_OR: &[&str] = &[
     "Choose mode for selected object conversion",
     "Create annotative block",
     "Enter a configuration option",
+    "Enter a copy mode option",
     "Enter a plotting preference",
     "Enter an annotation option",
     "Enter an option",

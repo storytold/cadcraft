@@ -603,7 +603,7 @@ fn sample(d: &Drawing, style: &TextStyle, w: u32, h: u32, bg: egui::Color32) -> 
     let mut s = cadcraft_engine::Session::new();
     {
         let doc = s.doc_mut().ok()?;
-        doc.text_styles = vec![TextStyle { name: "Preview".into(), ..style.clone() }];
+        doc.text_styles = vec![TextStyle { name: "Preview".into(), ..style.clone() }].into();
         doc.linetypes.clone_from(&d.linetypes);
         let text = Text {
             insert: Default::default(),

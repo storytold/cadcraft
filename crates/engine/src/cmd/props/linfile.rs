@@ -59,7 +59,7 @@ fn put(d: &mut Drawing, lt: Linetype, reload: bool, out: &mut Loaded) {
             break;
         }
     }
-    match d.linetypes.iter_mut().find(|l| l.name.eq_ignore_ascii_case(&lt.name)) {
+    match d.linetypes.by_name_mut(&lt.name) {
         Some(old) if reload => {
             out.reloaded.push(old.name.clone());
             // The drawing keeps the name as it had it (objects refer to it).

@@ -68,27 +68,46 @@ pub fn polygon_from_edge(p1: Vec2, p2: Vec2, sides: usize) -> Vec<PolyVertex> {
 /// chamfer distances at every corner, in AutoCAD 2024's order: from `a` along X to `b`'s X, then
 /// `b`, then back along Y. A chamfer cuts the edge into each corner by its first distance and the
 /// edge out of it by its second; each fillet arc starts on the edge into its corner. A fillet or
-/// chamfer that doesn't fit leaves the corners square.
+/// chamfer too large for the shorter side leaves the corners square, each as two coincident
+/// vertices, as AutoCAD stores them.
 pub fn rect_with_corners(a: Vec2, b: Vec2, fillet: f64, chamfer: (f64, f64)) -> Vec<PolyVertex> {
     let corners = [a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y)];
-    let short = (b.x - a.x).abs().min((b.y - a.y).abs());
-    let (d_in, d_out, bulge) = if fillet > 0.0 && fillet * 2.0 <= short + 1e-12 {
-        // Counter-clockwise round the corners (a positive bulge) when `b` is up and right of `a`, or
-        // down and left.
-        let sign = if (b.x - a.x) * (b.y - a.y) >= 0.0 { 1.0 } else { -1.0 };
-        (fillet, fillet, sign * cadcraft_geom::arc_to_bulge(std::f64::consts::FRAC_PI_2))
-    } else if chamfer.0 > 0.0 && chamfer.1 > 0.0 && chamfer.0 + chamfer.1 <= short + 1e-12 {
-        (chamfer.0, chamfer.1, 0.0)
-    } else {
-        return corners.into_iter().map(PolyVertex::new).collect();
-    };
+    let Some((d_in, d_out)) = rect_corner_cuts(fillet, chamfer) else { return corners.into_iter().map(PolyVertex::new).collect() };
+    let fits = rect_corners_fit(b - a, fillet, chamfer);
+    // Counter-clockwise round the corners (a positive bulge) when `b` is up and right of `a`, or
+    // down and left.
+    let sign = if (b.x - a.x) * (b.y - a.y) >= 0.0 { 1.0 } else { -1.0 };
+    let bulge = if fillet > 0.0 { sign * cadcraft_geom::arc_to_bulge(std::f64::consts::FRAC_PI_2) } else { 0.0 };
     let mut out = Vec::with_capacity(8);
     for (i, cur) in corners.iter().enumerate() {
         let (Some(prev), Some(next)) = (corners.get((i + 3) % 4), corners.get((i + 1) % 4)) else { continue };
-        out.push(PolyVertex::with_bulge(*cur + (*prev - *cur).normalized() * d_in, bulge));
-        out.push(PolyVertex::new(*cur + (*next - *cur).normalized() * d_out));
+        if fits {
+            out.push(PolyVertex::with_bulge(*cur + (*prev - *cur).normalized() * d_in, bulge));
+            out.push(PolyVertex::new(*cur + (*next - *cur).normalized() * d_out));
+        } else {
+            out.extend([PolyVertex::new(*cur), PolyVertex::new(*cur)]);
+        }
     }
     out
+}
+
+/// How far a rectangle's fillet or chamfer cuts into the edges into and out of each corner, if
+/// one is set: the fillet radius on both, or the two chamfer distances. A fillet wins over a
+/// chamfer.
+fn rect_corner_cuts(fillet: f64, chamfer: (f64, f64)) -> Option<(f64, f64)> {
+    if fillet > 0.0 {
+        Some((fillet, fillet))
+    } else if chamfer.0 > 0.0 && chamfer.1 > 0.0 {
+        Some(chamfer)
+    } else {
+        None
+    }
+}
+
+/// Whether a fillet or chamfer fits a rectangle of `size` (signed sides): its two cuts together
+/// no longer than the shorter side. True when neither is set.
+pub fn rect_corners_fit(size: Vec2, fillet: f64, chamfer: (f64, f64)) -> bool {
+    rect_corner_cuts(fillet, chamfer).is_none_or(|(d_in, d_out)| d_in + d_out <= size.x.abs().min(size.y.abs()) + 1e-12)
 }
 
 // ---------- the user's support files ----------

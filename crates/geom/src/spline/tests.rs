@@ -550,22 +550,39 @@ fn fits_are_bit_identical_to_the_dense_solver() {
     let tolerant = FitOptions { tolerance: 0.5, ..FitOptions::default() };
     let tangents = FitOptions { start_tangent: Some(Vec2::new(0.0, 1.0)), end_tangent: Some(Vec2::new(1.0, -1.0)), ..FitOptions::default() };
     let chord = FitOptions { knots: crate::KnotParam::Chord, ..FitOptions::default() };
+    // Chord-length knots fit open curves with `chord_interpolate` and closed ones with
+    // `chord_closed`; the others with `interpolate`, whose end tangents add rows of their own, and
+    // with the cyclic matrix.
+    let sqrt = FitOptions { knots: crate::KnotParam::SqrtChord, ..FitOptions::default() };
+    let uniform = FitOptions { knots: crate::KnotParam::Uniform, ..FitOptions::default() };
+    let sqrt_tangents = FitOptions { knots: crate::KnotParam::SqrtChord, ..tangents };
     for n in [3, 4, 5, 7, 12, 30, 100] {
         for round in 0..4 {
             let zero_every = [0, 2, 3, 1][round];
             let pts = fit_points(n, &mut seed, zero_every);
             for closed in [false, true] {
-                for (name, opts) in [("default", FitOptions::default()), ("tolerance", tolerant), ("tangents", tangents), ("chord", chord)] {
+                for (name, opts) in [
+                    ("default", FitOptions::default()),
+                    ("tolerance", tolerant),
+                    ("tangents", tangents),
+                    ("chord", chord),
+                    ("sqrt", sqrt),
+                    ("uniform", uniform),
+                    ("sqrt tangents", sqrt_tangents),
+                ] {
                     assert_fit_unchanged(&pts, closed, opts, &format!("n={n} closed={closed} {name} zero_every={zero_every}"));
                 }
             }
         }
     }
-    // Large point sets: open interpolation (banded) and a closed one (full bandwidth), and a
-    // tolerance fit at the size the approximation search still accepts.
+    // Large point sets: open and closed interpolation with chord-length and square-root knots (the
+    // closed square-root one is the cyclic matrix, full bandwidth), and a tolerance fit at the size
+    // the approximation search still accepts.
     let big = fit_points(1000, &mut seed, 0);
     assert_fit_unchanged(&big, false, FitOptions::default(), "n=1000 open");
+    assert_fit_unchanged(&big, false, sqrt, "n=1000 open sqrt");
     assert_fit_unchanged(&big[..150], true, FitOptions::default(), "n=150 closed");
+    assert_fit_unchanged(&big[..150], true, sqrt, "n=150 closed sqrt");
     assert_fit_unchanged(&big[..300], false, tolerant, "n=300 tolerance");
     // Repeated points are kinks, which fit each piece on its own.
     let mut kinked = fit_points(40, &mut seed, 0);
