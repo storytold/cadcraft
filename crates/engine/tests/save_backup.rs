@@ -305,3 +305,36 @@ fn drawings_sharing_a_name_keep_their_own_backups() {
     assert_eq!(name("x/plan.dxf"), "x/plan.dxf.bak");
     assert_eq!(name("x/plan.dwt"), "x/plan.dwt.bak");
 }
+
+/// REFCLOSE Save writes an xref back the way SAVE writes a drawing: with ISAVEBAK off it keeps
+/// no `.bak` (and reports none), with it on it keeps the previous file.
+#[test]
+fn an_xref_written_back_by_refclose_keeps_a_backup_as_save_does() {
+    let _g = saving();
+    hooks();
+    let dir = temp_dir("refclose");
+    let site = dir.join("site.dxf");
+    let mut x = Session::new();
+    add_circle(&mut x, 0.0);
+    x.execute("saveas", &json!({ "path": site.to_string_lossy() })).unwrap();
+    let host = dir.join("host.dxf");
+    let mut s = Session::new();
+    s.execute("saveas", &json!({ "path": host.to_string_lossy() })).unwrap();
+    let insert = s.execute("xattach", &json!({ "path": "site.dxf", "at": [100, 0] })).unwrap()["handle"].as_str().unwrap().to_string();
+    let bak = backup_path(&site);
+
+    cadcraft_engine::autosave::set_isavebak(false);
+    s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    add_circle(&mut s, 110.0);
+    let out = s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    assert_eq!(circles(&site), 2, "the edit is written");
+    assert!(out["backup"].is_null() && !bak.exists(), "ISAVEBAK off keeps no backup: {out}");
+
+    cadcraft_engine::autosave::set_isavebak(true);
+    s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    add_circle(&mut s, 120.0);
+    let out = s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    assert_eq!((circles(&site), circles(&bak)), (3, 2), "{out}");
+    assert_eq!(files(&dir), ["host.dxf", "site.dxf", "site.dxf.bak"], "no staging files are left");
+    let _ = std::fs::remove_dir_all(&dir);
+}

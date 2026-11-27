@@ -130,6 +130,24 @@ struct Builder<'a> {
     points: &'a std::sync::atomic::AtomicUsize,
     /// The most points the build may hold: [`MAX_DISPLAY_POINTS`] (less in tests).
     max_points: usize,
+    /// While a reference is edited in place: what is drawn faded ([`Fade::of`]).
+    fade: Option<&'a Fade>,
+}
+
+/// While a reference is edited in place (REFEDIT), everything outside the working set is drawn
+/// faded by XFADECTL percent on screen. Built once per display list: a lookup per object drawn
+/// would scan the working set each time.
+struct Fade {
+    working: std::collections::HashSet<Handle>,
+    percent: u8,
+}
+
+impl Fade {
+    fn of(d: &Drawing) -> Option<Fade> {
+        let r = d.refedit.as_ref()?;
+        let percent = u8::try_from(d.header.i64("XFADECTL", 50).clamp(0, 90)).unwrap_or(50);
+        Some(Fade { working: r.items.iter().map(|i| i.copy).collect(), percent })
+    }
 }
 
 /// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy
@@ -380,6 +398,7 @@ impl<'a> Builder<'a> {
             transparency: self.transparency,
             points: self.points,
             max_points: self.max_points,
+            fade: self.fade,
         }
     }
     /// Take one unit of the block-expansion budget; false once it is spent, or once the build

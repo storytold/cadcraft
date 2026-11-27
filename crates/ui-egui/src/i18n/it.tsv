@@ -1367,6 +1367,12 @@ menu	Modify	Edita
 	Check for Updates…	Verifica aggiornamenti…
 	CADCraft is up to date.	CADCraft è aggiornato.
 	Could not check for updates.	Impossibile verificare gli aggiornamenti.
+	Edit Reference	Modifica riferimento
+	Saving writes {file}	Il salvataggio scrive {file}
+	{n} in the working set	{n} nel gruppo di lavoro
+	Remove from Working Set	Rimuovi dal gruppo di lavoro
+	Save Changes	Salva modifiche
+	Discard Changes	Annulla modifiche
 	Add a drawing file as a block library	Aggiungi un file di disegno come libreria di blocchi
 	Add a folder of drawings or a drawing file to use its blocks.	Aggiungi una cartella di disegni o un file di disegno per usarne i blocchi.
 	Block Libraries	Librerie di blocchi

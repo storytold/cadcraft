@@ -39,6 +39,8 @@ pub(super) fn model(expected: &Drawing, actual: &Drawing, context: &str) {
             explodable,
             units,
             array,
+            // Session state (when an xref was read), never in a file.
+            xref_stamp: _,
         } = block.as_ref();
         equal(name, &back.name, &path, "name");
         equal(annotative, &back.annotative, &path, "annotative");

@@ -279,7 +279,7 @@ fn interactive_refedit_refset_and_refclose() {
 }
 
 #[test]
-fn xrefs_are_refused_with_a_message() {
+fn an_xref_that_is_not_loaded_is_refused_with_a_message() {
     let mut s = Session::new();
     s.doc_mut().unwrap().blocks.insert(
         "X".into(),
@@ -291,5 +291,6 @@ fn xrefs_are_refused_with_a_message() {
     );
     let x = insert(&mut s, "X", (0.0, 0.0), 1.0, 0.0);
     let e = s.execute("refedit", &json!({ "handle": x })).unwrap_err();
-    assert!(e.to_string().contains("external reference"), "{e}");
+    // Xrefs are edited in place and written back (refedit_xref.rs); one not loaded can't be.
+    assert!(e.to_string().contains("not loaded"), "{e}");
 }
