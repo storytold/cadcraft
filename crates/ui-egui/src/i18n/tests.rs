@@ -560,7 +560,7 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
 #[test]
 fn interface_fonts_cover_every_letter_in_each_catalog() {
     for language in translated() {
-        let extra_font = ["ko", "zh", "ar", "vi", "ka", "ta"].contains(&language.code);
+        let extra_font = ["ko", "zh", "ar", "vi", "ka", "ta", "th"].contains(&language.code);
         if extra_font && !crate::theme::can_show(language.code) {
             continue;
         }
