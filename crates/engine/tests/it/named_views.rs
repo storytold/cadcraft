@@ -1,5 +1,5 @@
 //! Named views (#463): VIEW / -VIEW Save, Window, Restore, Delete, ? and the layer snapshot
-//! setting; Zoom Realtime and Dynamic; ZOOMFACTOR. (The DXF round trip of views is tested in
+//! setting; Zoom Realtime and Dynamic; realtime PAN and -PAN; ZOOMFACTOR. (The DXF round trip of views is tested in
 //! `cadcraft-io`'s `view_tables_roundtrip`.)
 
 use cadcraft_engine::doc::Space;
@@ -46,7 +46,7 @@ fn typed_save_restore_list_delete() {
     // Saving is an undo step; a view change is not.
     set_view(&mut s, 0.0, 0.0, 500.0);
     typed(&mut s, &["view", "r", "front"]);
-    assert_eq!(view(&s), View { center: Vec2::new(10.0, 20.0), height: 30.0 });
+    assert_eq!(view(&s), View { center: Vec2::new(10.0, 20.0), height: 30.0, twist: 0.0 });
     // Zoom Previous goes back to the view before the restore.
     s.execute("zoom.previous", &json!({})).unwrap();
     assert_eq!(view(&s).height, 500.0);
@@ -85,6 +85,20 @@ fn window_option_and_json_forms() {
 }
 
 #[test]
+fn a_window_saved_in_a_twisted_view_restores_whole() {
+    let mut s = session();
+    s.execute("view.set", &json!({ "center": [0, 0], "height": 10, "twist": 45 })).unwrap();
+    s.execute("view", &json!({ "option": "window", "name": "Turned", "p1": [0, 0], "p2": [10, 10] })).unwrap();
+    let v = s.doc().unwrap().views.first().cloned().unwrap();
+    // A 10 x 10 world square seen at 45° is 10√2 across on screen.
+    assert!(close(v.width, 200f64.sqrt()) && close(v.height, 200f64.sqrt()), "{} x {}", v.width, v.height);
+    // Corners near the number limit overflow when turned: an error, and the saved view stays.
+    let huge = json!({ "option": "window", "name": "Turned", "p1": [1.4e308, 1.4e308], "p2": [1.5e308, 1.5e308] });
+    assert!(s.execute("view", &huge).is_err());
+    assert!(close(s.doc().unwrap().views.first().unwrap().width, 200f64.sqrt()));
+}
+
+#[test]
 fn layer_snapshot_restores_layers_and_the_setting_turns_it_off() {
     let mut s = session();
     s.doc_mut().unwrap().layers.push(cadcraft_engine::doc::Layer { name: "Walls".into(), ..Default::default() });
@@ -112,7 +126,7 @@ fn paper_space_view_switches_to_its_layout() {
     s.execute("layout.set", &json!({ "name": "Model" })).unwrap();
     s.execute("view", &json!({ "option": "restore", "name": "Sheet" })).unwrap();
     assert_eq!(s.layout_space(), Space::Paper(layout));
-    assert_eq!(view(&s), View { center: Vec2::new(5.0, 4.0), height: 6.0 });
+    assert_eq!(view(&s), View { center: Vec2::new(5.0, 4.0), height: 6.0, twist: 0.0 });
 }
 
 #[test]
@@ -138,7 +152,86 @@ fn zoom_realtime_drags_and_enter_ends() {
     assert_eq!(view(&s).height, 100.0);
     // The JSON form zooms by a factor about the centre.
     s.execute("zoom.realtime", &json!({ "factor": 4 })).unwrap();
-    assert_eq!(view(&s), View { center: Vec2::ZERO, height: 25.0 });
+    assert_eq!(view(&s), View { center: Vec2::ZERO, height: 25.0, twist: 0.0 });
+}
+
+#[test]
+fn pan_realtime_drags_and_enter_ends() {
+    for start in ["pan", "p"] {
+        let mut s = session();
+        set_view(&mut s, 0.0, 0.0, 100.0);
+        s.state_mut().unwrap().view_history.clear();
+        typed(&mut s, &[start]);
+        assert!(s.realtime_pan_active(), "{}", s.prompt_text());
+        // 800 px show 100 units: right 80 px and up 40 px move the drawing with the cursor.
+        s.realtime_pan(80.0, -40.0).unwrap();
+        assert!(close(view(&s).center.x, -10.0) && close(view(&s).center.y, -5.0), "{:?}", view(&s));
+        s.realtime_pan(f64::NAN, 3.0).unwrap();
+        assert!(close(view(&s).center.x, -10.0) && close(view(&s).center.y, -5.0), "{:?}", view(&s));
+        typed(&mut s, &[""]);
+        assert!(s.running.is_none() && !s.realtime_pan_active());
+        // Outside realtime PAN a drag does nothing; Zoom Previous returns to the view before it.
+        s.realtime_pan(80.0, -40.0).unwrap();
+        assert!(close(view(&s).center.x, -10.0) && close(view(&s).center.y, -5.0));
+        s.execute("zoom.previous", &json!({})).unwrap();
+        assert_eq!(view(&s), View { center: Vec2::ZERO, height: 100.0, twist: 0.0 });
+    }
+}
+
+#[test]
+fn pan_realtime_moves_only_the_view() {
+    // A drag frame is not a change of the drawing: the revision stays, so the canvas does not
+    // rebuild the drawing's geometry on every frame (as with a middle-button drag).
+    let mut s = session();
+    set_view(&mut s, 0.0, 0.0, 100.0);
+    typed(&mut s, &["pan"]);
+    let revision = s.state().unwrap().revision;
+    s.realtime_pan(80.0, -40.0).unwrap();
+    assert!(close(view(&s).center.x, -10.0), "{:?}", view(&s));
+    assert_eq!(s.state().unwrap().revision, revision);
+}
+
+#[test]
+fn pan_realtime_in_a_twisted_view_moves_the_drawing_with_the_cursor() {
+    // A view twisted a quarter turn (DVIEW TWist) shows the drawing's -Y to the right: a drag
+    // 80 px right moves the drawing with it, so the centre moves 10 units up the drawing's Y.
+    let mut s = session();
+    set_view(&mut s, 0.0, 0.0, 100.0);
+    s.state_mut().unwrap().set_view_quiet(View { center: Vec2::ZERO, height: 100.0, twist: std::f64::consts::FRAC_PI_2 });
+    typed(&mut s, &["pan"]);
+    assert!(s.realtime_pan_active(), "{}", s.prompt_text());
+    s.realtime_pan(80.0, 0.0).unwrap();
+    let v = view(&s);
+    assert!(close(v.center.x, 0.0) && close(v.center.y, 10.0), "{v:?}");
+    assert!(close(v.twist, std::f64::consts::FRAC_PI_2), "the pan kept the twist: {v:?}");
+}
+
+#[test]
+fn dash_pan_takes_two_points_or_a_displacement() {
+    let mut s = session();
+    set_view(&mut s, 0.0, 0.0, 100.0);
+    typed(&mut s, &["-pan", "0,0", "10,5"]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(view(&s).center, Vec2::new(-10.0, -5.0));
+    typed(&mut s, &["-pan", "3,4", ""]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(view(&s).center, Vec2::new(-13.0, -9.0));
+}
+
+#[test]
+fn dash_pan_displacement_is_measured_in_the_ucs() {
+    // A UCS moved to 100,50: the displacement 0,0 does not pan, and 3,4 pans by 3,4.
+    let mut s = session();
+    set_view(&mut s, 0.0, 0.0, 100.0);
+    s.execute("ucs", &json!({ "origin": [100.0, 50.0] })).unwrap();
+    typed(&mut s, &["-pan", "0,0", ""]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(view(&s).center, Vec2::ZERO);
+    typed(&mut s, &["-pan", "3,4", ""]);
+    assert_eq!(view(&s).center, Vec2::new(-3.0, -4.0));
+    // Two points: the difference, which the UCS origin does not change.
+    typed(&mut s, &["-pan", "0,0", "10,5"]);
+    assert_eq!(view(&s).center, Vec2::new(-13.0, -9.0));
 }
 
 #[test]
@@ -158,10 +251,10 @@ fn zoom_dynamic_places_and_sizes_the_view_box() {
     assert!(close(v.height, 40.0), "{v:?}");
     // Zoom Previous skips the overview.
     s.execute("zoom.previous", &json!({})).unwrap();
-    assert_eq!(view(&s), View { center: Vec2::new(10.0, 10.0), height: 20.0 });
+    assert_eq!(view(&s), View { center: Vec2::new(10.0, 10.0), height: 20.0, twist: 0.0 });
     // JSON: like Center.
     s.execute("zoom.dynamic", &json!({ "center": [1, 2], "height": 3 })).unwrap();
-    assert_eq!(view(&s), View { center: Vec2::new(1.0, 2.0), height: 3.0 });
+    assert_eq!(view(&s), View { center: Vec2::new(1.0, 2.0), height: 3.0, twist: 0.0 });
 }
 
 #[test]

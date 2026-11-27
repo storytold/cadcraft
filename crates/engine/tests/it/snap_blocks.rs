@@ -31,6 +31,7 @@ fn insert(s: &mut Session, block: &str, at: (f64, f64), scale: (f64, f64), rotat
         rows: grid.1,
         col_spacing: grid.2,
         row_spacing: grid.3,
+        clip: None,
     });
     s.doc_mut().unwrap().add(&Space::Model, Common::default(), kind).unwrap().hex()
 }

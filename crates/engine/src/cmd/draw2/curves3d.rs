@@ -153,19 +153,17 @@ impl Interactive for HelixM {
         }
         match (self.center, self.rb, self.rt) {
             (None, ..) => Prompt::new("Specify center point of base", Accept::POINT),
-            (Some(c), None, _) => {
-                Prompt::new(if self.diameter { "Specify base diameter" } else { "Specify base radius or" }, Accept::POINT_OR_NUMBER)
-                    .kw(if self.diameter { &[] } else { &["Diameter"] })
-                    .default("1.0000")
-                    .base(c)
-            }
+            (Some(c), None, _) => Prompt::new(if self.diameter { "Specify base diameter" } else { "Specify base radius" }, Accept::POINT_OR_NUMBER)
+                .kw(if self.diameter { &[] } else { &["Diameter"] })
+                .default("1.0000")
+                .base(c),
             (Some(c), Some(rb), None) => {
-                Prompt::new(if self.diameter { "Specify top diameter" } else { "Specify top radius or" }, Accept::POINT_OR_NUMBER)
+                Prompt::new(if self.diameter { "Specify top diameter" } else { "Specify top radius" }, Accept::POINT_OR_NUMBER)
                     .kw(if self.diameter { &[] } else { &["Diameter"] })
                     .default(format!("{rb:.4}"))
                     .base(c)
             }
-            (Some(c), Some(_), Some(_)) => Prompt::new("Specify helix height or", Accept::POINT_OR_NUMBER)
+            (Some(c), Some(_), Some(_)) => Prompt::new("Specify helix height", Accept::POINT_OR_NUMBER)
                 .kw(&["Axis endpoint", "Turns", "turn Height", "tWist"])
                 .default("1.0000")
                 .base(c),
@@ -286,7 +284,7 @@ pub(super) fn run_spline_cv(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 #[derive(Default)]
-pub(super) struct SplineCvM {
+pub(in crate::cmd) struct SplineCvM {
     pts: Vec<Vec2>,
     degree: Option<usize>,
     asking_degree: bool,
@@ -314,7 +312,9 @@ impl Interactive for SplineCvM {
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if self.asking_degree {
             if let Input::Text(t) = &i {
-                let d = number(t).filter(|d| (1.0..=10.0).contains(d)).ok_or_else(|| other("Degree must be 1..10."))?;
+                let d = number(t)
+                    .filter(|d| d.fract() == 0.0 && (1.0..=10.0).contains(d))
+                    .ok_or_else(|| other("Degree must be a whole number from 1 to 10."))?;
                 self.degree = Some(d as usize);
             }
             self.asking_degree = false;
@@ -342,7 +342,7 @@ impl Interactive for SplineCvM {
                         s.add_entity(EntityKind::Spline(sp))?;
                         return Ok(Step::Done);
                     }
-                    _ => s.echo(format!("{k}: use SPLINE for fit points.")),
+                    _ => return Err(other("Invalid option keyword.")),
                 }
                 Ok(Step::Continue)
             }

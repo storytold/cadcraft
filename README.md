@@ -89,9 +89,15 @@
   line, prompts with clickable `[Keywords]`, AutoComplete, object snaps, polar tracking, ortho,
   direct distance entry, window and crossing selection, grips, and right-click-to-repeat behave
   the way decades of drafting habit expect.
-- **Open files.** DXF is read and written natively (ASCII and binary, R12 through 2018), and DWG
-  files (R13 through 2018) open and save through the open-source acadrust library. Export to SVG
-  and PNG today.
+- **Open files.** DXF is read natively (R12 through 2018, with binary support from R13) and
+  written as 2000 through 2018 (ASCII and binary). DWG files (R13 through 2018; R13 and R14
+  untested, 2018 tested only on synthetic files) open through the open-source acadrust library
+  and save as 2000 through 2018. New drawings default to
+  2018 (AC1032) in both formats. In the app's Save dialog, File ▸ Default Save Format
+  (also Options ▸ Open and Save, `saveVersion`, default 2018) sets the version for untitled
+  drawings; drawings with a file keep their own version, subject to supported-version mapping
+  and the DWG minimum. SAVEAS `version` overrides this choice and is remembered for later
+  saves. Export to SVG and PNG today.
 - **Fast and native.** Pure Rust and egui, no Electron, no web view. One binary on macOS
   (universal), Windows, Linux and FreeBSD, plus a WebAssembly build for the browser.
 - **Built for agents.** Every menu item, tool and prompt is a command. Agents can type at the
@@ -114,11 +120,11 @@ numbers):
 | Layers & properties | Layers palette and Layer Properties Manager (on/off, freeze, lock, plot, colour, linetype), layer tools (isolate, freeze, off, lock, match, previous), Properties palette with per-object editing, linetypes, lineweights, colour index and true colour |
 | Annotation | All DIM* commands with full DIMSTYLE variables, overrides and every arrowhead, associative dimensions that follow geometry, MLEADER, TABLE, TrueType fonts (`.ttf`, `.otf`, `.ttc` collections), MTEXT formatting codes (fonts, heights, colours, stacked fractions), our own single-stroke drafting font |
 | Hatch & blocks | Pick-point hatch boundaries with islands, pattern, solid and gradient fills from our own pattern library, BLOCK/INSERT, attributes and nested blocks |
-| Files | DXF read (R12–2018, ASCII and binary) and write (R2000), including dimension styles, associativity, tables and constraints; DWG read (via the acadrust library) and write (R2000); PDF plotting, SVG and PNG export. Entities CADCraft doesn't model yet are not kept on save: see [file-format parity](docs/file-format-parity.md) |
+| Files | DXF read (R12–2018, binary from R13) and write (2000–2018, ASCII and binary), including dimension styles, associativity, tables and constraints; DWG read (via the acadrust library; R13 and R14 untested, 2018 tested only on synthetic files) and write (2000–2018). New drawings save as 2018 (AC1032); opened drawings keep their supported version, except DWG defaults to at least 2004. In the app's Save dialog, File ▸ Default Save Format (also Options ▸ Open and Save, `saveVersion`, default 2018) sets the version for untitled drawings; drawings with a file keep their own version, subject to supported-version mapping and the DWG minimum. SAVEAS `version` overrides this choice and is remembered for later saves. DXF uses R2000 structure with the chosen `$ACADVER`. PDF plotting, SVG and PNG export. Entities CADCraft doesn't model yet are not kept on save: see [file-format parity](docs/file-format-parity.md) for version selection and fidelity |
 | Layouts & plotting | Paper-space layouts, viewports (scale, lock, per-viewport layer freeze), MSPACE/PSPACE through viewports, page setups, PLOT and EXPORTPDF |
 | Parametric | Geometric and dimensional constraints, AUTOCONSTRAIN, PARAMETERS with expressions, conflict detection; constraints re-solve after every edit |
 | Grips | Hot grips with Space to cycle Stretch, Move, Rotate, Scale and Mirror |
-| Interface languages | English, Ukrainian (Українська), Brazilian Portuguese (Português (Brasil)), German (Deutsch), Spanish (Español), Czech (Čeština), Russian (Русский), French (Français), Simplified Chinese (简体中文, with an installed CJK font), Italian (Italiano), Korean (한국어, with an installed Hangul font), Swedish (Svenska), Arabic (العربية, with an installed Arabic font), Hungarian (Magyar) and Turkish (Türkçe), live switching and a remembered Auto/system-language choice; [details](docs/localization.md) |
+| Interface languages | English, Ukrainian (Українська), Brazilian Portuguese (Português (Brasil)), German (Deutsch), Spanish (Español), Czech (Čeština), Russian (Русский), French (Français), Simplified Chinese (简体中文, with an installed CJK font), Italian (Italiano), Korean (한국어, with an installed Hangul font), Swedish (Svenska), Arabic (العربية, with an installed Arabic font), Hungarian (Magyar), Turkish (Türkçe), Greek (Ελληνικά), Bosnian (Bosanski), Georgian (ქართული) and Tamil (தமிழ், with an installed Tamil font), live switching and a remembered Auto/system-language choice; [details](docs/localization.md) |
 | Automation | MCP server, JSON control channel, `cadcraft-cli` (info, convert, run, commands, mcp) |
 
 ## Quick start
@@ -184,6 +190,34 @@ in the text style or set `FONTFALLBACK` (`CADCRAFT_FONTFALLBACK="Vazirmatn"`). F
 inside a word (an MTEXT colour change in the middle of a Persian word) break the joining at that
 point.
 
+### Portable Windows ZIP
+
+The Windows portable ZIP includes `portable.txt` beside `cadcraft.exe`. With that
+marker present, the desktop app's settings, logs, autosaves, workspace data,
+plotter files, and eframe preferences/window state stay in `CADCraftData` beside
+the executable. eframe saves its preferences and window state in `CADCraftData/app.ron`.
+Keep that directory when replacing the binaries. The MSI does not include the
+marker and continues to use the normal user profile.
+
+`CADCRAFT_CONFIG_DIR` takes precedence over the marker, including an empty or
+blank value that disables the settings folder. If `CADCraftData` cannot be
+created or written, CADCraft warns and uses the normal profile. Existing profile
+settings are not automatically copied into the portable directory.
+
+Before switching an existing Windows installation to portable mode, close CADCraft,
+back up `%APPDATA%\CADCraft`, and copy the settings you want to retain into
+`CADCraftData`. Include the `autosave` folder if you need to recover unsaved drawings. The
+preferences and window state are kept apart, in `%APPDATA%\ai.storyteller.cadcraft\data\app.ron`:
+copy that file to `CADCraftData\app.ron` to keep them.
+Updating a portable ZIP, including through the updater, can restore `portable.txt`;
+set `CADCRAFT_CONFIG_DIR` to your existing profile folder to keep using it across updates.
+
+`cadcraft-cli.exe` does not detect the marker. To share the desktop app's portable
+settings, pass `--config-dir` with the full path to `CADCraftData`, or set
+`CADCRAFT_CONFIG_DIR` to that path. The marker is also recognized on other desktop
+platforms, but is intended for a standalone writable installation, not inside a
+signed macOS application bundle.
+
 ### Logs
 
 The desktop app writes its `log` records to standard error and to `logs/cadcraft.log` in the
@@ -208,6 +242,8 @@ The logger is `apps/cadcraft/src/logging.rs`; the web build logs to the browser 
 cadcraft-cli mcp
 # …or bridged to the running app (start it with --control 7979):
 cadcraft-cli mcp --connect 127.0.0.1:7979
+# …or headless, with the agent confined to a work folder:
+cadcraft-cli mcp --automation-read-root ~/work --automation-write-root ~/work/out
 
 # One-shot headless runs:
 cadcraft-cli run --sample --script 'CIRCLE 22,3 1\n' --save out.dxf --export out.png
@@ -229,6 +265,11 @@ How image exports (PNG 2400×1600, SVG, PDF) are framed: `convert` fits the mode
 `view.set`, …) and otherwise fits the extents too. `--window x0,y0,x1,y1` shows exactly that
 rectangle, centred and scaled without distortion; `--view extents` or `--view current` forces
 either framing. To frame a selection set, `zoom {"mode":"object"}` after selecting.
+
+When reading a file leaves something out (records a DXF reader can't place, object records of a
+damaged DWG), `info` reports it (`skipped`, `readNotes`), `convert` warns on stderr and `run`
+prints the DWG notes with its log; the exit code stays 0. MCP `open` replies with the notes as
+`warnings`.
 
 MCP tools include `command_line` (type at the prompt), `execute` (any command with JSON),
 `inspect_drawing`, `query_entities`, `render` (returns a PNG) and, when connected to the app,
@@ -309,7 +350,9 @@ See [ROADMAP.md](ROADMAP.md) for the stage, measured parity and the estimate of 
 |---|---|---|
 | x64 (64-bit Intel/AMD) | `cadcraft-<ver>-windows-x64.msi` | `cadcraft-<ver>-windows-x64-portable.zip` |
 | arm64 (Snapdragon and other ARM PCs) | `cadcraft-<ver>-windows-arm64.msi` | `cadcraft-<ver>-windows-arm64-portable.zip` |
-| x86 (32-bit) | `cadcraft-<ver>-windows-x86.msi` | `cadcraft-<ver>-windows-x86-portable.zip` |
+
+For 32-bit Windows, [CADCraft v0.18.0](https://github.com/storytold/cadcraft/releases/tag/v0.18.0)
+was the last release with both an x86 MSI and portable ZIP.
 
 Installers and executables are code-signed.
 
@@ -346,15 +389,19 @@ and web backend defaults are unchanged.
 | Flatpak | `cadcraft-<ver>-linux-x86_64.flatpak` | `cadcraft-<ver>-linux-aarch64.flatpak` | Sandboxed; `flatpak install --user <file>` |
 | Debian/Ubuntu | `cadcraft-<ver>-linux-x86_64.deb` | `cadcraft-<ver>-linux-aarch64.deb` | |
 | Fedora/RHEL/openSUSE | `cadcraft-<ver>-linux-x86_64.rpm` | `cadcraft-<ver>-linux-aarch64.rpm` | |
+| Arch Linux | `cadcraft-<ver>-linux-x86_64.pkg.tar.zst` | `cadcraft-<ver>-linux-aarch64.pkg.tar.zst` | |
 | Tarball | `cadcraft-<ver>-linux-x86_64.tar.gz` | `cadcraft-<ver>-linux-aarch64.tar.gz` | Unpack anywhere |
 
-RISC-V (riscv64): `cadcraft-<ver>-linux-riscv64.tar.gz`, cross-compiled; needs glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+).
+RISC-V (riscv64) packages are `cadcraft-<ver>-linux-riscv64.deb`,
+`cadcraft-<ver>-linux-riscv64.rpm`, and `cadcraft-<ver>-linux-riscv64.tar.gz`. They are
+cross-compiled and need glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+).
 
 ### FreeBSD
 
 | Build | File |
 |---|---|
 | x86_64 | `cadcraft-<ver>-freebsd-x86_64.tar.gz` |
+| aarch64 (ARM64) | `cadcraft-<ver>-freebsd-aarch64.tar.gz` |
 
 ### Web (WebAssembly)
 

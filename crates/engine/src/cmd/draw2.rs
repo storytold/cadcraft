@@ -7,7 +7,7 @@ use cadcraft_geom::{Arc, Circle, Ellipse, Line, PolyVertex, Polyline, Spline, TA
 use serde_json::{Value, json};
 
 use super::curves::{self, Chain, MAX_GEN, TanObj};
-use super::helpers::{arc, circle, line, lwpoly, rect_vertices, rect_with_corners, v3};
+use super::helpers::{arc, circle, line, lwpoly, rect_corners_fit, rect_vertices, rect_with_corners, v3};
 
 use super::machines::number;
 use super::{CommandSpec, bad, bool_or, f64_or, f64_req, point_param, point_req, point_value, points_param, size_param, str_param, targets};
@@ -28,7 +28,8 @@ mod xline;
 pub(crate) use arc::arc_machine;
 use arc::{ArcContinueM, ArcV, run_arc_continue, run_arc_variant, seq};
 use centermark::{CenterM, run_centerline, run_centermark};
-use curves3d::{HelixM, Poly3dM, SplineCvM, run_3dpoly, run_helix, run_spline_cv};
+pub(super) use curves3d::SplineCvM;
+use curves3d::{HelixM, Poly3dM, run_3dpoly, run_helix, run_spline_cv};
 use divide::{DivideM, run_divide, run_measure};
 use ellipse::{run_ellipse_arc, run_ellipse_axis};
 pub(crate) use rect::{RectM2, run_rectang2};
@@ -149,7 +150,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("spline.cv", "Control Vertices", run_spline_cv)
             .menu(&["Draw", "Spline", "Control Vertices"])
             .params("{control: [[x,y],...], degree?: 1..10 (default 3), closed?}")
-            .interactive(|_| Ok(Box::new(SplineCvM::default()))),
+            .interactive(|_| Ok(Box::new(super::draw::SplineM::cv()))),
         CommandSpec::new("centermark", "Center Mark", run_centermark)
             .menu(&["Draw", "Center Mark"])
             .params("{handle | handles} (circles/arcs; lines on the CENTER linetype)")

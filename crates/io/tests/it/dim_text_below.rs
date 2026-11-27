@@ -21,6 +21,7 @@ fn the_text_below_the_dimension_line_is_a_second_mtext() {
         text_rotation: 0.0,
         user_text_pos: false,
         block: None,
+        insertion_point: Vec3::ZERO,
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),

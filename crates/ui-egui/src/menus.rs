@@ -3,17 +3,77 @@
 
 use serde_json::{Value, json};
 
-use crate::CadApp;
+use crate::{CadApp, Pick};
 
 /// The top-level menus, in order.
 pub const MENUS: &[&str] = &["File", "Edit", "View", "Insert", "Format", "Tools", "Draw", "Dimension", "Modify", "Window", "Help"];
+
+/// The reference menu tree (feature names, four spaces per level): the order every menu lists
+/// its items in. The same file is `cargo xtask parity`'s oracle.
+const REFERENCE_TREE: &str = include_str!("../../../xtask/data/menu-catalog.txt");
+
+/// A menu of the reference tree: its label and its items, in order.
+struct Reference {
+    label: &'static str,
+    children: Vec<Reference>,
+}
+
+/// The reference tree's top-level menus.
+fn reference() -> &'static [Reference] {
+    static TREE: std::sync::OnceLock<Vec<Reference>> = std::sync::OnceLock::new();
+    TREE.get_or_init(|| {
+        // The menus being read, outermost first; a line closes every menu deeper than its indent.
+        let mut open = vec![Reference { label: "", children: Vec::new() }];
+        let close = |open: &mut Vec<Reference>| {
+            if let Some(done) = open.pop()
+                && let Some(parent) = open.last_mut()
+            {
+                parent.children.push(done);
+            }
+        };
+        for line in REFERENCE_TREE.lines().filter(|l| !l.trim().is_empty()) {
+            let depth = (line.len() - line.trim_start_matches(' ').len()) / 4;
+            while open.len() > depth + 1 {
+                close(&mut open);
+            }
+            open.push(Reference { label: line.trim(), children: Vec::new() });
+        }
+        while open.len() > 1 {
+            close(&mut open);
+        }
+        open.pop().map(|root| root.children).unwrap_or_default()
+    })
+}
+
+/// Whether our item `ours` is the reference's `theirs`. The reference names Undo by what it shows
+/// at the moment, the last command ("Undo Group of commands" when the tree was read), not by a
+/// fixed label.
+fn same_item(ours: &str, theirs: &str) -> bool {
+    ours == theirs || (ours == "Undo" && theirs.starts_with("Undo "))
+}
+
+/// Put `entries` in `reference`'s order: the items the reference lists first, as it lists them,
+/// then the rest in registration order. Submenus the reference has are ordered the same way.
+fn order(entries: &mut [Entry], reference: &[Reference]) {
+    let position = |label: &str| reference.iter().position(|r| same_item(label, r.label)).unwrap_or(usize::MAX);
+    entries.sort_by_key(|e| match e {
+        Entry::Item { label, .. } | Entry::Sub { label, .. } => position(label),
+    });
+    for e in entries {
+        if let Entry::Sub { label, children } = e
+            && let Some(r) = reference.iter().find(|r| r.label == *label)
+        {
+            order(children, &r.children);
+        }
+    }
+}
 
 /// File ▸ Open Recent: one `ui.recent.<n>` item per recent file, then Clear Recent Files.
 pub const OPEN_RECENT: &str = "Open Recent";
 /// The last item of File ▸ Open Recent.
 pub const CLEAR_RECENT: &str = "Clear Recent Files";
 const RECENT_ITEM: &str = "ui.recent.";
-const RECENT_CLEAR: &str = "ui.recent.clear";
+pub const RECENT_CLEAR: &str = "ui.recent.clear";
 
 /// UI-only commands: (id, label, menu path, shortcut).
 pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
@@ -42,6 +102,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.toggle.cmdline", "Command Line", &["Window", "Command Line"], Some("Cmd+9")),
     ("ui.toggle.viewcube", "ViewCube", &["View", "ViewCube", "On"], None),
     ("ui.toggle.ucsicon", "UCS Icon", &["View", "UCS Icon", "On"], None),
+    ("ui.toggle.ucsicon.origin", "UCS Icon at Origin", &["View", "UCS Icon", "Origin"], None),
     ("ui.theme.system", "Use System Setting", &["View", "Interface Theme", "Use System Setting"], None),
     ("ui.theme.light", "Light", &["View", "Interface Theme", "Light"], None),
     ("ui.theme.dark", "Dark", &["View", "Interface Theme", "Dark"], None),
@@ -73,6 +134,8 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.cmdline.lines", "Command Line History Lines", &[], None),
     ("ui.cmdline.clear", "Clear Command History", &[], None),
     ("ui.dialog.language", "Interface Language", &["Edit", "Interface Language"], None),
+    ("ui.dialog.find", "Find and Replace", &[], Some("Cmd+F")),
+    ("ui.shortcuts", "Keyboard Shortcuts...", &["Tools", "Customize", "Keyboard Shortcuts..."], None),
     ("ui.language", "Language", &[], None),
     ("ui.noop", "", &[], None),
     ("ui.quit", "Quit CADCraft", &[], Some("Cmd+Q")),
@@ -94,11 +157,20 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
     if let Some(r) = crate::xrefs::route(app, id, params) {
         return Some(r);
     }
+    if let Some(r) = crate::blocks_palette::route(app, id, params) {
+        return Some(r);
+    }
     if let Some(r) = crate::bedit::route(app, id, params) {
+        return Some(r);
+    }
+    if let Some(r) = crate::wblock::route(app, id, params) {
         return Some(r);
     }
     if let Some(r) = crate::managers::route(app, id, params) {
         return Some(r);
+    }
+    if id == "ui.shortcuts" {
+        return Some(crate::keys::command(app, params));
     }
     if matches!(id, "ui.dock" | "ui.dock.reset") {
         return Some(crate::docking::command(app, id == "ui.dock.reset", params));
@@ -239,9 +311,16 @@ fn run_ui_toggle_command(app: &mut CadApp, id: &str, params: &Value) -> Option<R
             toggle(&mut app.ui.show_viewcube, params);
             Ok(Value::Null)
         }
-        "ui.toggle.ucsicon" => {
-            toggle(&mut app.ui.show_ucs_icon, params);
-            Ok(Value::Null)
+        // UCSICON's bits, through its command: 1 shown, 2 at the UCS origin.
+        "ui.toggle.ucsicon" | "ui.toggle.ucsicon.origin" => {
+            // The icon is a setting of the drawing: with none open there is nothing to toggle.
+            if app.session.doc().is_err() {
+                return Some(Err("No drawing open.".into()));
+            }
+            let (key, bit) = if id == "ui.toggle.ucsicon" { ("on", 1) } else { ("origin", 2) };
+            let mut on = app.session.ucsicon_bits() & bit != 0;
+            toggle(&mut on, params);
+            app.run("ucsicon", json!({ key: on }))
         }
         "ui.toggle.menubar" => {
             toggle(&mut app.ui.in_window_menu, params);
@@ -275,6 +354,8 @@ fn run_language_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
                 "No installed interface font has the Vietnamese letters, so the interface stays in English. Install one that does (Segoe UI, Arial, DejaVu Sans or Noto Sans) to use Vietnamese."
             }
             "ar" => "No Arabic font is installed, so the interface stays in English. Install one (Noto Sans Arabic, for example) to use Arabic.",
+            "ka" => "This build has no Georgian font, so the interface stays in English. Build with craft-fonts (its Geor face) to use Georgian.",
+            "ta" => "No Tamil font is installed, so the interface stays in English. Install one (Noto Sans Tamil or Lohit Tamil, for example) to use Tamil.",
             _ => "No Chinese font is installed, so the interface stays in English. Install one (Noto Sans CJK, for example) to use Chinese.",
         });
     }
@@ -332,14 +413,19 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
     if let Some(result) = run_close_command(app, id, params) {
         return Some(result);
     }
+    // FIND typed, or chosen from Edit ▸ Find..., opens the window; a JSON call carries `find`
+    // and falls through to the engine, so scripts, LISP and the MCP server keep their answer.
+    if id == "find" && params.is_null() {
+        app.ui.dialog = Some("find".to_string());
+        return Some(Ok(Value::Null));
+    }
     let r = match id {
-        "ui.open" | "open" if no_path => {
-            let picked = app.services.pick_open.as_ref().and_then(|f| f());
-            if let Some(p) = picked {
+        "ui.open" | "open" if no_path => app
+            .pick_then_open(Pick::Open, |app, p| {
                 app.open_path(std::path::Path::new(&p));
-            }
-            Ok(Value::Null)
-        }
+                Ok(Value::Null)
+            })
+            .unwrap_or(Ok(Value::Null)),
         // APPLOAD typed or chosen from a menu: the `.lsp` file picker, starting where the last
         // one came from. JSON calls carry `path` and never open one. A picked file is loaded as a
         // typed name is, through the interactive command, so a routine it starts that asks for a
@@ -351,57 +437,60 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
                 app.set_status(hint);
                 return Some(Ok(Value::Null));
             }
-            let pick = app.services.pick_lisp.as_ref()?;
             let dir = app.ui.last_lisp_dir.clone().unwrap_or_default();
-            let Some(path) = pick(&dir) else { return Some(Ok(Value::Null)) };
-            if let Some(dir) = std::path::Path::new(&path).parent().and_then(std::path::Path::to_str).filter(|d| !d.is_empty()) {
-                app.ui.last_lisp_dir = Some(dir.to_string());
-            }
-            if let Err(e) = app.session.start("appload") {
-                return Some(Err(e.to_string()));
-            }
-            app.cmdline(&path);
-            Ok(Value::Null)
+            let was_prompting = app.session.prompting();
+            return app.pick_then(Pick::Lisp(dir), move |app, path| {
+                if let Some(dir) = std::path::Path::new(&path).parent().and_then(std::path::Path::to_str).filter(|d| !d.is_empty()) {
+                    app.ui.last_lisp_dir = Some(dir.to_string());
+                }
+                app.start_after_pick("appload", was_prompting)?;
+                app.cmdline(&path);
+                Ok(Value::Null)
+            });
         }
         // Pick a template (.dwt or .dxf) and start a new drawing from it.
-        "ui.newtemplate" => {
-            if let Some(p) = app.services.pick_open.as_ref().and_then(|f| f()) {
-                return Some(app.session.execute("new", &json!({ "template": p })).map_err(|e| e.to_string()));
-            }
-            Ok(Value::Null)
-        }
+        "ui.newtemplate" => app
+            .pick_then_open(Pick::Open, |app, p| app.session.execute("new", &json!({ "template": p })).map_err(|e| e.to_string()))
+            .unwrap_or(Ok(Value::Null)),
         // RECOVER from the menu or typed: pick the file. Without a picker the engine asks for the
         // file name on the command line.
-        "recover" if no_path && app.services.pick_open.is_some() => {
-            if let Some(p) = app.services.pick_open.as_ref().and_then(|f| f()) {
+        "recover" if no_path && app.services.pick_open.is_some() => app
+            .pick_then_open(Pick::Open, |app, p| {
                 let r = app.run("recover", json!({ "path": p }));
                 app.opened(r);
-            }
-            Ok(Value::Null)
-        }
+                Ok(Value::Null)
+            })
+            .unwrap_or(Ok(Value::Null)),
         "ui.saveas" | "saveas" if no_path => {
             let title = app.session.state().map(|s| s.title.clone()).ok();
-            let name = app.ui.save_format.suggested_name(title.as_deref());
-            if let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name)) {
-                return Some(app.session.execute("saveas", &saveas_params(&app.ui, &app.session, &p)).map_err(|e| e.to_string()));
-            }
-            Ok(Value::Null)
+            // `format` ("dxf" or "dwg") is only this dialog's suggestion. Without it, Save As uses
+            // the user's default format, and neither call changes that default.
+            let format = match suggested_save_format(params, app.ui.save_format) {
+                Ok(format) => format,
+                Err(e) => return Some(Err(e)),
+            };
+            let name = format.suggested_name(title.as_deref());
+            // Bound to this drawing: the answer saves it, not whichever drawing is active then.
+            app.pick_then(Pick::Save(name), |app, p| {
+                app.session.execute("saveas", &saveas_params(&app.ui, &app.session, &p)).map_err(|e| e.to_string())
+            })
+            .unwrap_or(Ok(Value::Null))
         }
         "qsave" if no_path => return user_qsave(app),
         // EXPORTPDF from the menu or typed: ask where to save the PDF (PLOT and PRINT open the Plot
         // dialog, `managers::route`). JSON calls (scripts, control channel, MCP) always carry
         // params, never get here and never open a dialog.
         "exportpdf" if params.is_null() && app.session.state().is_ok() => {
-            let pick = app.services.pick_save.as_ref()?;
             let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
             let stem = std::path::Path::new(&title).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());
-            let Some(path) = pick(&format!("{}.pdf", stem.unwrap_or_else(|| "Drawing".into()))) else { return Some(Ok(Value::Null)) };
-            let r = app.session.execute("exportpdf", &json!({ "path": path })).map_err(|e| e.to_string());
-            app.session.echo(match &r {
-                Ok(_) => format!("Plotted to {path}"),
-                Err(e) => e.clone(),
+            return app.pick_then(Pick::Save(format!("{}.pdf", stem.unwrap_or_else(|| "Drawing".into()))), |app, path| {
+                let r = app.session.execute("exportpdf", &json!({ "path": path })).map_err(|e| e.to_string());
+                app.session.echo(match &r {
+                    Ok(_) => format!("Plotted to {path}"),
+                    Err(e) => e.clone(),
+                });
+                r
             });
-            r
         }
         "ui.sample" => {
             let d = cadcraft_engine::sample::default_sample();
@@ -410,7 +499,9 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             app.ui.start_tab = false;
             Ok(Value::Null)
         }
-        "export" | "exp" | "import" | "imp" | "publish" | "preview" | "pre" if params.is_null() && app.session.state().is_ok() => {
+        "export" | "exp" | "import" | "imp" | "pdfimport" | "pdfi" | "publish" | "preview" | "pre"
+            if params.is_null() && app.session.state().is_ok() =>
+        {
             return Some(crate::exchange::route(app, id));
         }
         "ui.hidepalettes" => {
@@ -422,6 +513,8 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             let (menu, theme, interface_language, save_format) = (app.ui.in_window_menu, app.ui.theme, app.ui.interface_language, app.ui.save_format);
             let (animations, save_version) = (app.ui.animations, std::mem::take(&mut app.ui.save_version));
             let system_cursor = app.system_cursor_default;
+            // The user's shortcuts and import folder are preferences, not palette layout.
+            let (shortcuts, last_pgp_dir) = (std::mem::take(&mut app.ui.shortcuts), app.ui.last_pgp_dir.take());
             app.ui = crate::UiState {
                 in_window_menu: menu,
                 theme,
@@ -430,6 +523,8 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
                 save_format,
                 save_version,
                 system_cursor,
+                shortcuts,
+                last_pgp_dir,
                 ..Default::default()
             };
             Ok(Value::Null)
@@ -451,12 +546,12 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         }
         "ui.dialog.language"
         | "ui.dialog.layers"
-        | "ui.dialog.blocks"
         | "ui.dialog.dsettings"
         | "ui.dialog.about"
         | "ui.dialog.commands"
         | "ui.dialog.qselect"
-        | "ui.dialog.parameters" => {
+        | "ui.dialog.parameters"
+        | "ui.dialog.find" => {
             app.ui.dialog = Some(id.trim_start_matches("ui.dialog.").to_string());
             Ok(Value::Null)
         }
@@ -508,6 +603,17 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             crate::hatchdlg::open_create(app, matches!(id, "gradient" | "gd"));
             Ok(Value::Null)
         }
+        // Typed or from a menu (no parameters): ARRAYRECT and ARRAYPOLAR start the real command and
+        // open the Array window on it. ARRAY and -ARRAY stay on the command line, and JSON calls
+        // keep the JSON form.
+        "arrayrect" if params.is_null() => {
+            crate::arraydlg::open(app, cadcraft_engine::ArrayLiveKind::Rectangular);
+            Ok(Value::Null)
+        }
+        "arraypolar" if params.is_null() => {
+            crate::arraydlg::open(app, cadcraft_engine::ArrayLiveKind::Polar);
+            Ok(Value::Null)
+        }
         // Typed or from the Tools menu: the Command Aliases dialog. JSON calls keep the JSON form.
         "aliasedit" if params.is_null() => {
             crate::aliasdlg::open(app);
@@ -523,6 +629,17 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         _ => return None,
     };
     Some(r)
+}
+
+/// The format a Save dialog suggests: `format` when the call names `dxf` or `dwg`, otherwise the
+/// user's default. Naming one does not change the default.
+fn suggested_save_format(params: &Value, default: crate::SaveFormat) -> Result<crate::SaveFormat, String> {
+    let Some(v) = params.get("format").filter(|v| !v.is_null()) else { return Ok(default) };
+    let Some(name) = v.as_str() else { return Err("save format must be \"dxf\" or \"dwg\"".into()) };
+    crate::SaveFormat::parse(name).ok_or_else(|| {
+        let shown: String = name.chars().take(40).collect();
+        format!("unknown save format \"{shown}\" (dxf or dwg)")
+    })
 }
 
 /// SAVEAS parameters for a path picked in the Save dialog: a drawing that has no file yet is saved
@@ -582,6 +699,7 @@ pub enum Entry {
 /// The full menu tree from the command registry plus UI commands, in registration order.
 pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     let mut out: Vec<(String, Vec<Entry>)> = MENUS.iter().map(|m| (m.to_string(), Vec::new())).collect();
+    let user = &app.ui.shortcuts;
     let mut add = |path: &[&str], label: &str, id: &str, shortcut: Option<&str>, enabled: bool| {
         let Some((top, rest)) = path.split_first() else { return };
         let Some((_, entries)) = out.iter_mut().find(|(m, _)| m == top) else { return };
@@ -592,7 +710,7 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
                 cur.push(Entry::Item {
                     label: if seg.is_empty() { label.to_string() } else { seg.to_string() },
                     id: id.to_string(),
-                    shortcut: shortcut.map(str::to_string),
+                    shortcut: crate::keys::shown(user, id, shortcut),
                     enabled,
                 });
             } else {
@@ -611,17 +729,24 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     };
     for c in cadcraft_engine::command_specs() {
         if !c.menu.is_empty() {
-            add(c.menu, c.label, c.id, c.shortcut, (c.enabled)(&app.session).is_ok());
+            add(c.menu, c.label, c.id, c.shortcut, crate::clipboard::offered(&app.session, c));
         }
     }
     for (id, label, menu, sc) in UI_COMMANDS {
         if !menu.is_empty() {
-            add(menu, label, id, *sc, true);
+            // The UCS icon is a setting of the drawing: off the menu's reach when none is open.
+            let enabled = !id.starts_with("ui.toggle.ucsicon") || app.session.doc().is_ok();
+            add(menu, label, id, *sc, enabled);
         }
     }
     if let Some((_, file)) = out.iter_mut().find(|(m, _)| m == "File") {
         let at = file.iter().position(|e| matches!(e, Entry::Item { id, .. } if id == "open")).map_or(0, |i| i + 1);
         file.insert(at, Entry::Sub { label: OPEN_RECENT.into(), children: recent_entries(app) });
+    }
+    for (menu, entries) in &mut out {
+        if let Some(r) = reference().iter().find(|r| r.label == menu) {
+            order(entries, &r.children);
+        }
     }
     out
 }
@@ -716,11 +841,18 @@ fn switch_on_hover(ctx: &egui::Context, titles: &[egui::Response]) {
     }
 }
 
-/// Activate a menu command. QuickCalc toggles transparently; other items clear pending
-/// command-line text and start their command interactively.
+/// Activate a menu command. QuickCalc toggles transparently, and Reference Manager closes its
+/// palette when it is open (typed XREF only opens it); other items clear pending command-line
+/// text and start their command interactively.
 pub fn activate(app: &mut CadApp, id: &str) {
     if id == "ui.toggle.quickcalc" {
         run_transparent(app, id);
+        return;
+    }
+    if id == "xref" && app.ui.docking.layout().contains(&crate::docking::Panel::ExternalRefs) {
+        if let Err(e) = crate::xrefs::close_palette(app) {
+            app.set_status(e);
+        }
         return;
     }
     app.cmd.buffer.clear();
@@ -742,14 +874,36 @@ pub fn activate_native(app: &mut CadApp, ctx: &egui::Context, id: &str) {
             app.synthetic.extend(events);
             ctx.request_repaint();
         }
-        TextCommand::Events(events) => craft_ui::docking::send_keys(ctx, window, events),
+        TextCommand::Events(events) => {
+            // The menu took the key from the floating panel's own window: it reaches that window as the key pressed.
+            let host = craft_ui::runtime::windows::WindowHost::of(ctx);
+            let platform = craft_keymap::egui::platform(ctx);
+            for equivalent in events.iter().filter_map(|event| key_equivalent(event, platform)) {
+                host.key_equivalent(window, equivalent);
+            }
+        }
     }
 }
 
-/// The window whose text field has the keyboard: a floating panel's own OS window, or the main
-/// window.
+/// The key equivalent the native menu took for `event`: a copy, a cut, or a key press as a tap of its chord.
+fn key_equivalent(event: &egui::Event, platform: craft_keymap::Platform) -> Option<craft_ui::runtime::windows::KeyEquivalent> {
+    use craft_ui::runtime::windows::KeyEquivalent;
+    match event {
+        egui::Event::Copy => Some(KeyEquivalent::Copy),
+        egui::Event::Cut => Some(KeyEquivalent::Cut),
+        egui::Event::Key { key, pressed: true, modifiers, .. } => {
+            let key = craft_keymap::Key::from_egui(*key)?;
+            Some(KeyEquivalent::Tap(craft_keymap::Chord::new(craft_keymap::Mods::from_egui(modifiers, platform), key)))
+        }
+        _ => None,
+    }
+}
+
+/// The window whose text field has the keyboard: the window that has the keys (a floating panel's own OS window, or
+/// the main window) while a text field there has the focus.
 pub fn text_field_window(ctx: &egui::Context) -> Option<egui::ViewportId> {
-    craft_ui::docking::typing_window(ctx).or_else(|| ctx.text_edit_focused().then_some(egui::ViewportId::ROOT))
+    let host = craft_ui::runtime::windows::WindowHost::of(ctx);
+    host.typing().then(|| host.key_window())
 }
 
 /// Whether a focused text field takes the menu command `id` ([`activate_native`]): a native
@@ -816,6 +970,7 @@ pub(crate) fn builtin_shortcuts() -> Vec<(egui::KeyboardShortcut, &'static str)>
         (sc(cmd, Key::S), "qsave"),
         (sc(cmd, Key::P), "plot"),
         (sc(cmd, Key::A), "selectall"),
+        (sc(cmd, Key::F), "ui.dialog.find"),
         (sc(cmd_shift, Key::C), "copybase"),
         (sc(cmd, Key::C), "copyclip"),
         (sc(cmd, Key::X), "cutclip"),
@@ -838,33 +993,67 @@ pub(crate) fn builtin_shortcuts() -> Vec<(egui::KeyboardShortcut, &'static str)>
     ]
 }
 
-/// Keyboard shortcuts and function keys.
+/// Keyboard shortcuts and function keys: the user's ([`crate::keys`]) and CADCraft's own.
 pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     use egui::{Key, KeyboardShortcut, Modifiers};
-    let sc = |m: Modifiers, k: Key| KeyboardShortcut::new(m, k);
-    let cmd = Modifiers::COMMAND;
-    let pairs = builtin_shortcuts();
+    // A recording ends with the dialog it was started in; while it lasts the keys are its own.
+    if app.ui.dialog.as_deref() != Some(crate::keys::DIALOG) {
+        crate::keys::stop_recording(ctx);
+    }
+    let float_edits = std::mem::take(&mut app.fired_edits);
+    if crate::keys::recording(ctx) {
+        return;
+    }
+    let pairs = crate::keys::effective_cached(ctx, &app.ui.shortcuts);
     crate::clipboard::mirror(app, ctx);
     if app.closing.is_some() {
         return;
     }
+    crate::clipboard::pump(app, ctx);
     // A palette toggle is global even while its expression field owns keyboard focus.
-    if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::Num8))) {
+    let quickcalc = KeyboardShortcut::new(Modifiers::COMMAND, Key::Num8);
+    if pairs.iter().any(|(s, id)| *s == quickcalc && id == "ui.toggle.quickcalc") && ctx.input_mut(|i| i.consume_shortcut(&quickcalc)) {
         run_transparent(app, "ui.toggle.quickcalc");
     }
-    if ctx.egui_wants_keyboard_input() {
+    if crate::framework::widget_has_keyboard(ctx) {
         return;
     }
     // Cmd/Ctrl+C, X and V arrive as clipboard events, not key presses.
-    let mut fire = crate::clipboard::shortcut_commands(app, ctx);
+    let mut fire: Vec<String> = Vec::new();
+    let mut pasted_table = false;
+    for action in crate::clipboard::shortcut_actions(app, ctx, float_edits) {
+        match action {
+            crate::clipboard::ShortcutAction::Command(id) => {
+                let id = id.to_string();
+                if !fire.contains(&id) {
+                    fire.push(id);
+                }
+            }
+            crate::clipboard::ShortcutAction::PasteTable(tsv) => {
+                pasted_table = true;
+                app.cmd.buffer.clear();
+                if let Err(e) = app.session.start_paste_table(&tsv, None) {
+                    app.session.echo(e.to_string());
+                }
+            }
+        }
+    }
+    // The first `read` commands come from this frame's clipboard events, whose `Paste` has been read.
+    let read = fire.len();
     ctx.input_mut(|i| {
         for (s, id) in &pairs {
-            if i.consume_shortcut(s) && !fire.contains(id) {
-                fire.push(*id);
+            if i.consume_shortcut(s) && !(pasted_table && matches!(id.as_str(), "pasteclip" | "pasteblock")) && !fire.contains(id) {
+                fire.push(id.clone());
             }
         }
     });
-    for id in fire {
+    for (n, id) in fire.into_iter().enumerate() {
+        let id = id.as_str();
+        // A paste command bound to another key has read nothing yet: it is held like a menu paste.
+        if let Some(id) = crate::clipboard::paste_id(id).filter(|_| n < read) {
+            crate::clipboard::run_read(app, id);
+            continue;
+        }
         // ISOPLANE (F5, Ctrl+E) switches the plane without cancelling the active command.
         if id == "isoplane" {
             if let Some(m) = app.session.execute(id, &json!({})).ok().and_then(|v| v.get("message").and_then(Value::as_str).map(str::to_string)) {
@@ -992,6 +1181,81 @@ mod tests {
         app.start("exportpdf");
         assert_eq!(asked.borrow().len(), 1);
         assert!(app.session.running.is_none());
+    }
+}
+
+#[cfg(test)]
+mod reference_order_tests {
+    use cadcraft_engine::Session;
+
+    use super::{Entry, Reference, reference, tree};
+    use crate::{CadApp, Services};
+
+    fn label(e: &Entry) -> &str {
+        match e {
+            Entry::Item { label, .. } | Entry::Sub { label, .. } => label,
+        }
+    }
+
+    /// Every item the reference lists comes in the reference's order, at every level, and the
+    /// items the reference lacks follow them.
+    fn check(path: &str, entries: &[Entry], reference: &[Reference], failures: &mut Vec<String>) {
+        let theirs = |e: &Entry| reference.iter().find(|r| super::same_item(label(e), r.label)).map(|r| r.label);
+        let known = |e: &Entry| theirs(e).is_some();
+        // Our items by the reference's names for them, to compare orders.
+        let listed: Vec<&str> = entries.iter().filter_map(theirs).collect();
+        let expected: Vec<&str> = reference.iter().map(|r| r.label).filter(|l| listed.contains(l)).collect();
+        if listed != expected {
+            failures.push(format!("{path}: {listed:?} should be {expected:?}"));
+        }
+        if let (Some(unlisted), Some(last)) = (entries.iter().position(|e| !known(e)), entries.iter().rposition(known))
+            && unlisted < last
+        {
+            failures.push(format!("{path}: {} comes before the reference's items", entries.get(unlisted).map_or("?", label)));
+        }
+        for e in entries {
+            if let Entry::Sub { label, children } = e
+                && let Some(r) = reference.iter().find(|r| r.label == *label)
+            {
+                check(&format!("{path} > {label}"), children, &r.children, failures);
+            }
+        }
+    }
+
+    #[test]
+    fn menus_follow_the_reference_tree() {
+        let app = CadApp::new(Session::new(), Services::default());
+        let mut failures = Vec::new();
+        for (menu, entries) in tree(&app) {
+            let r = reference().iter().find(|r| r.label == menu).unwrap_or_else(|| panic!("{menu} is not in the reference tree"));
+            check(&menu, &entries, &r.children, &mut failures);
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn reference_tree_is_nested_by_indentation() {
+        assert_eq!(reference().iter().map(|r| r.label).collect::<Vec<_>>(), super::MENUS);
+        let draw = reference().iter().find(|r| r.label == "Draw").unwrap();
+        let circle = draw.children.iter().find(|r| r.label == "Circle").unwrap();
+        assert_eq!(circle.children.first().map(|r| r.label), Some("Center, Radius"));
+    }
+
+    #[test]
+    fn open_recent_stays_after_open() {
+        let app = CadApp::new(Session::new(), Services::default());
+        let file = tree(&app).into_iter().find(|(m, _)| m == "File").map(|(_, e)| e).unwrap_or_default();
+        let open = file.iter().position(|e| matches!(e, Entry::Item { id, .. } if id == "open")).unwrap();
+        assert_eq!(file.get(open + 1).map(label), Some(super::OPEN_RECENT));
+    }
+
+    /// Edit starts with Undo and Redo, as the reference's does: its Undo is named by the last
+    /// command, so a plain label match sent Undo to the end of the menu (#2658 review).
+    #[test]
+    fn edit_starts_with_undo_and_redo() {
+        let app = CadApp::new(Session::new(), Services::default());
+        let edit = tree(&app).into_iter().find(|(m, _)| m == "Edit").map(|(_, e)| e).unwrap_or_default();
+        assert_eq!(edit.iter().take(2).map(label).collect::<Vec<_>>(), ["Undo", "Redo"]);
     }
 }
 

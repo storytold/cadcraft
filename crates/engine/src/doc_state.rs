@@ -1,5 +1,5 @@
 use super::view::{ModelTiles, View, usable_view};
-use super::{Arc, Drawing, Handle, Space, blockedit, undoctl};
+use super::{Arc, Drawing, Handle, Space, Vec2, blockedit, undoctl};
 
 #[derive(Clone, Debug)]
 pub struct Snapshot {
@@ -7,6 +7,12 @@ pub struct Snapshot {
     pub doc: Arc<Drawing>,
     pub selection: Vec<Handle>,
 }
+
+/// [`DocState::drawn_in_viewport`] looks its handles up one by one while there is fewer than one
+/// of them for every `LOOKUP_COST` objects of model space, and passes over model space once
+/// otherwise. Timed on drawings of 40,000 and of 200,000 lines, the two cost the same at about
+/// one handle for every 47 and for every 18 objects.
+const LOOKUP_COST: usize = 32;
 
 /// One open drawing.
 #[derive(Clone, Debug)]
@@ -35,6 +41,8 @@ pub struct DocState {
     /// The Block Editor (BEDIT), when it is open: `doc` is then the editor's drawing, and the
     /// drawing itself waits in it ([`DocState::drawing`]).
     pub block_edit: Option<blockedit::BlockEdit>,
+    /// The user was told that the current UCS is tilted ([`Session::note_tilted_ucs`]).
+    pub ucs_tilted_noted: bool,
     /// What the last erase removed, for OOPS.
     pub(crate) erased: crate::cmd::Erased,
     /// The fonts missing on Windows that a save last named: the next save names them again only
@@ -66,6 +74,7 @@ impl DocState {
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             binary_dxf: false,
             block_edit: None,
+            ucs_tilted_noted: false,
             erased: Default::default(),
             fonts_noted: String::new(),
         }
@@ -80,6 +89,7 @@ impl DocState {
     pub(crate) fn swap_in(&mut self, snap: Snapshot) -> Snapshot {
         let cur = Snapshot { label: snap.label, doc: std::mem::replace(&mut self.doc, snap.doc), selection: std::mem::take(&mut self.selection) };
         self.follow_layout(&cur.doc);
+        self.reconcile_untiled_twist();
         self.revision += 1;
         cur
     }
@@ -118,12 +128,64 @@ impl DocState {
     }
     /// The active MSPACE viewport, if it still exists in the current layout.
     pub fn active_viewport(&self) -> Option<(Handle, cadcraft_doc::Viewport)> {
+        self.active_viewport_ref().map(|(h, v)| (h, v.clone()))
+    }
+    /// [`DocState::active_viewport`] without copying the viewport.
+    fn active_viewport_ref(&self) -> Option<(Handle, &cadcraft_doc::Viewport)> {
         let h = self.mspace?;
         let e = self.doc.space(&self.space)?.get(h)?;
         match &e.kind {
-            cadcraft_doc::EntityKind::Viewport(v) if v.height > 1e-12 && v.view_height > 1e-12 => Some((h, v.clone())),
+            cadcraft_doc::EntityKind::Viewport(v) if v.height > 1e-12 && v.view_height > 1e-12 => Some((h, v)),
             _ => None,
         }
+    }
+    /// The layers frozen in the active MSPACE viewport (VPLAYER, "VP Freeze"): that viewport does
+    /// not draw their objects, so picks, selections and grips made through it leave them out.
+    /// Empty in paper space and on the Model tab.
+    pub fn viewport_frozen(&self) -> &[String] {
+        match self.active_viewport_ref() {
+            Some((_, v)) => &v.frozen_layers,
+            None => &[],
+        }
+    }
+    /// Whether `e` is a model-space object the active MSPACE viewport does not draw: it is on a
+    /// layer frozen in that viewport ([`DocState::viewport_frozen`]). Objects on the sheet are not
+    /// drawn through the viewport, so its frozen layers do not hide them.
+    pub fn hidden_in_viewport(&self, e: &cadcraft_doc::Entity) -> bool {
+        crate::select::on_frozen_layer(self.viewport_frozen(), e) && self.doc.model.contains(e.handle)
+    }
+    /// Whether the view being edited shows `e`: the drawing shows it ([`Drawing::is_visible`]),
+    /// and the active MSPACE viewport, if there is one, draws it
+    /// ([`DocState::hidden_in_viewport`]).
+    pub fn shows(&self, e: &cadcraft_doc::Entity) -> bool {
+        self.doc.is_visible(e) && !self.hidden_in_viewport(e)
+    }
+    /// `handles` without the objects the active MSPACE viewport does not draw
+    /// ([`DocState::hidden_in_viewport`]): a set of objects made earlier (the selection, the
+    /// Previous set) as that viewport takes it. All of them anywhere else.
+    pub(crate) fn drawn_in_viewport(&self, handles: &[Handle]) -> Vec<Handle> {
+        let frozen = self.viewport_frozen();
+        if frozen.is_empty() || handles.is_empty() {
+            return handles.to_vec();
+        }
+        let model = &self.doc.model;
+        let hidden = |e: &Arc<cadcraft_doc::Entity>| crate::select::on_frozen_layer(frozen, e);
+        // The UI asks for the selection several times a frame. A few handles are looked up one
+        // by one; beyond that, one pass over model space costs less than the lookups.
+        if handles.len().saturating_mul(LOOKUP_COST) < model.len() {
+            return handles.iter().copied().filter(|h| !model.get(*h).is_some_and(hidden)).collect();
+        }
+        let mut gone: Vec<Handle> = model.iter().filter(|e| hidden(e)).map(|e| e.handle).collect();
+        gone.sort_unstable();
+        handles.iter().copied().filter(|h| gone.binary_search(h).is_err()).collect()
+    }
+    /// The selection as the view being edited has it: [`DocState::selection`] without the objects
+    /// the active MSPACE viewport does not draw. Those stay in [`DocState::selection`] until the
+    /// selection is replaced or cleared, and count as selected again once that viewport draws
+    /// them; until then nothing that starts from the selection (a command, a grip, a palette)
+    /// edits them through that viewport.
+    pub fn shown_selection(&self) -> Vec<Handle> {
+        self.drawn_in_viewport(&self.selection)
     }
     pub fn paper_view(&self) -> View {
         self.views.iter().find(|(s, _)| *s == self.space).map(|(_, v)| *v).unwrap_or_default()
@@ -135,7 +197,8 @@ impl DocState {
         match self.active_viewport() {
             Some((_, vp)) => {
                 let k = vp.view_height / vp.height;
-                View { center: vp.view_center + (pv.center - vp.center.xy()) * k, height: pv.height * k }
+                // The viewport's twist turns the model view inside it.
+                View { center: vp.paper_to_model(pv.center), height: pv.height * k, twist: vp.view_twist() }
             }
             None => pv,
         }
@@ -150,16 +213,18 @@ impl DocState {
             if vp.locked {
                 // A locked viewport keeps its scale: pan/zoom the sheet instead.
                 let k0 = vp.view_height / vp.height;
-                let pc = vp.center.xy() + (v.center - vp.view_center) / k0;
-                let paper = View { center: pc, height: v.height / k0 };
+                let pc = vp.model_to_paper(v.center);
+                let paper = View { center: pc, height: v.height / k0, twist: pv.twist };
                 if !usable_view(&paper) {
                     return false;
                 }
                 self.put_paper_view(paper);
             } else {
-                let center = v.center - (pv.center - vp.center.xy()) * k;
+                // `v`'s twist is the one the viewport shows (a non-finite one keeps its own).
+                let twist = if v.twist.is_finite() { v.twist } else { vp.view_twist() };
+                let center = v.center - ((pv.center - vp.center.xy()) * k).rotate(-twist);
                 let height = vp.height * k;
-                if !usable_view(&View { center, height }) {
+                if !usable_view(&View { center, height, twist }) {
                     return false;
                 }
                 let doc = Arc::make_mut(&mut self.doc);
@@ -168,6 +233,7 @@ impl DocState {
                         if let cadcraft_doc::EntityKind::Viewport(x) = &mut e.kind {
                             x.view_center = center;
                             x.view_height = height;
+                            x.twist = twist;
                         }
                     });
                 }
@@ -181,6 +247,36 @@ impl DocState {
         match self.views.iter_mut().find(|(s, _)| *s == self.space) {
             Some((_, slot)) => *slot = v,
             None => self.views.push((self.space.clone(), v)),
+        }
+        if self.space == Space::Model {
+            self.keep_untiled_twist(v);
+        }
+    }
+    /// An untiled Model tab keeps its view twist in the drawing as a lone `*Active` VPORT tile
+    /// (written as that record's group 51 and read back), so it survives save and reopen. Only a
+    /// change of twist touches the drawing; an untwisted view keeps no record.
+    /// After undo or redo has put back another drawing: its untiled-twist record follows the
+    /// Model tab's live view again (views are not part of the drawing's undo).
+    pub(crate) fn reconcile_untiled_twist(&mut self) {
+        if let Some(v) = self.views.iter().find(|(s, _)| *s == Space::Model).map(|(_, v)| *v) {
+            self.keep_untiled_twist(v);
+        }
+    }
+    fn keep_untiled_twist(&mut self, v: View) {
+        use cadcraft_doc::{VportConfig, VportTile};
+        let twist = cadcraft_geom::norm_angle(v.twist);
+        let active = self.doc.vports.iter().find(|c| c.is_active());
+        if active.is_some_and(|c| c.tiles.len() > 1) {
+            return;
+        }
+        if active.and_then(|c| c.tiles.first()).map_or(0.0, |t| t.twist) == twist {
+            return;
+        }
+        let d = Arc::make_mut(&mut self.doc);
+        d.vports.retain(|c| !c.is_active());
+        if twist != 0.0 {
+            let tile = VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: v.center, height: v.height, aspect: 1.0, twist };
+            d.vports.insert(0, VportConfig { name: VportConfig::ACTIVE.into(), tiles: vec![tile] });
         }
     }
     /// Set the view, recording view history. Returns false, changing nothing, when the view (or,
@@ -210,7 +306,7 @@ impl DocState {
     /// The view ZOOM starts from: the model view of the active unlocked viewport, else [`Self::view`].
     pub fn zoom_frame(&self) -> View {
         match self.zoom_viewport() {
-            Some(v) => View { center: v.view_center, height: v.view_height },
+            Some(v) => View { center: v.view_center, height: v.view_height, twist: v.view_twist() },
             None => self.view(),
         }
     }
@@ -225,7 +321,9 @@ impl DocState {
             Some(vp) => {
                 let pv = self.paper_view();
                 let k = f.height / vp.height;
-                View { center: f.center + (pv.center - vp.center.xy()) * k, height: pv.height * k }
+                // The frame's twist turns the viewport (a non-finite one keeps the viewport's).
+                let twist = if f.twist.is_finite() { f.twist } else { vp.view_twist() };
+                View { center: f.center + ((pv.center - vp.center.xy()) * k).rotate(-twist), height: pv.height * k, twist }
             }
             None => f,
         };
@@ -233,7 +331,7 @@ impl DocState {
     }
     /// Set without recording view history (realtime pan/zoom frames).
     pub fn set_view_quiet(&mut self, v: View) {
-        if !(v.center.is_finite() && v.height.is_finite() && v.height > 1e-12) {
+        if !usable_view(&v) {
             return;
         }
         self.store_view(v);

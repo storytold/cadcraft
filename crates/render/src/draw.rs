@@ -1,6 +1,7 @@
-use super::blocks::{insert, sub_ctx};
+use super::blocks::{insert, proxy, sub_ctx};
 use super::dim_draw::{MAX_FILL_SOLIDS, MAX_FILL_TEXTS, block_text_box, dim_text_fill, dimension, dimension_in, solid_covers, starts_text_marks};
 use super::display::{Kind, NO_LAYER, VIEWPORT_CONTENT};
+use super::linetype::Layout;
 use super::props::{resolve, transparency};
 use super::text_entity::{mtext, place_text_entity};
 use super::{
@@ -19,6 +20,11 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     // Hidden by ISOLATEOBJECTS / HIDEOBJECTS (and so in viewports and plots too). A cancelled
     // build stops here (block contents come through here too).
     if ctx.d.is_hidden_object(e.handle) || b.opts.cancelled() {
+        return;
+    }
+    // Once the build holds all the points it may, nothing more is drawn (or computed).
+    if b.points_spent() {
+        b.list.truncated = true;
         return;
     }
     // The entity's named plot style and transparency (set by `entity_parts`), for everything it
@@ -43,6 +49,16 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     }
 }
 
+/// Set the transparency `e` draws with: its own (with transparency display on), at least its
+/// locked layer's `fade` on screen, which shows even when transparency display is off. Returns
+/// its own, without the fade: what a block's ByBlock children inherit.
+fn shown_transparency(b: &mut Builder, ctx: &Ctx, e: &Entity, layer_transparency: u8, fade: u8) -> u8 {
+    let fade = if b.opts.on_screen { fade } else { 0 };
+    let own = if b.opts.transparency { transparency(e.common.transparency, layer_transparency, ctx.block_transparency) } else { 0 };
+    b.transparency = own.max(fade);
+    own
+}
+
 fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     // A top-level annotative object draws at the view's annotation scale: a viewport's scale for
     // model space seen through it, else the drawing's (CANNOSCALE in model space, 1:1 on paper).
@@ -62,13 +78,11 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             cadcraft_doc::AnnoDraw::Plain => {}
         }
     }
-    let (rgb, lw, lt, ltscale, visible, layer_transparency) = resolve(ctx, e, b.plotting);
+    let (rgb, lw, lt, ltscale, visible, layer_transparency, fade) = resolve(ctx, e, b.plotting);
     if !visible {
         return;
     }
-    if b.opts.transparency {
-        b.transparency = transparency(e.common.transparency, layer_transparency, ctx.block_transparency);
-    }
+    let own = shown_transparency(b, ctx, e, layer_transparency, fade);
     // A plot style's linetype replaces the object's.
     let lt = match b.styles.and_then(|s| s.linetype(rgb, b.named)) {
         Some(over) => over,
@@ -76,11 +90,11 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     };
     let tol = b.opts.tolerance / ctx.xf.scale_factor().max(1e-12);
     let lw = if b.opts.lineweights { lw } else { 0.0 };
-    // Stroke a polyline with the entity's linetype.
-    let stroke = |b: &mut Builder, pts: &[Vec2]| match lt.as_ref().filter(|_| b.opts.linetypes) {
+    // Stroke a run with the entity's linetype, laid out as `how` says.
+    let stroke_as = |b: &mut Builder, pts: &[Vec2], how: Layout| match lt.as_ref().filter(|_| b.opts.linetypes) {
         Some(lt) => {
             let min = b.opts.min_dash / ctx.xf.scale_factor().max(1e-12);
-            for dash in linetype::apply(pts, lt, ltscale, min) {
+            for dash in linetype::apply_as(pts, lt, ltscale, min, how) {
                 if dash.len() == 1 {
                     if let Some(p) = dash.first() {
                         b.point(ctx, rgb, *p);
@@ -89,14 +103,32 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                     b.polyline(ctx, rgb, lw, &dash);
                 }
             }
-            // Text embedded in the linetype (shapes need SHX files and are not drawn).
+            // Text and shapes embedded in the linetype (shapes when their SHX file is found).
             if b.opts.text {
-                for sh in linetype_text::texts(ctx.d, pts, lt, ltscale, min) {
+                for sh in linetype_text::texts(ctx.d, pts, lt, ltscale, min, how) {
                     b.shaped(ctx, rgb, lw, &sh);
                 }
             }
         }
         None => b.polyline(ctx, rgb, lw, pts),
+    };
+    let stroke = |b: &mut Builder, pts: &[Vec2]| stroke_as(b, pts, Layout::Open);
+    // A polyline's centre line: with PLINEGEN the pattern runs along the whole of it (stretched
+    // around a closed one from its second vertex, as AutoCAD lays it); otherwise it restarts at
+    // every vertex.
+    let centre_line = |b: &mut Builder, p: &cadcraft_doc::LwPolyline| {
+        let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
+        if p.plinegen && p.closed {
+            stroke_as(b, &pl.tessellate(tol), Layout::Closed { anchor: wide::second_vertex_at(p, tol) });
+        } else if !b.opts.linetypes || p.plinegen || lt.is_none() {
+            stroke(b, &pl.tessellate(tol));
+        } else {
+            for s in pl.segments() {
+                let mut pts = Vec::new();
+                s.tessellate(tol, &mut pts);
+                stroke(b, &pts);
+            }
+        }
     };
     match &e.kind {
         EntityKind::Text(t) => {
@@ -127,8 +159,8 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 mtext(b, ctx, t, rgb, lw);
             }
         }
-        EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb),
-        EntityKind::Dimension(dm) => draw_dimension(b, ctx, e, dm, lw, lt.as_ref(), ltscale),
+        EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb, own),
+        EntityKind::Dimension(dm) => draw_dimension(b, ctx, e, dm, lw, (lt.as_ref(), ltscale), own),
         EntityKind::Hatch(h) => hatch::draw(b, ctx, e, h, rgb, lw, tol),
         EntityKind::MLine(m) => mline::draw(b, ctx, e, m, rgb, lw, tol),
         EntityKind::LwPolyline(p) if p.const_width > 0.0 || p.vertices.iter().any(|v| v.start_width > 0.0 || v.end_width > 0.0) => {
@@ -167,22 +199,11 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                     }
                 }
             } else {
-                let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
-                stroke(b, &pl.tessellate(tol));
+                // Fill off: the centre line, dashed as a polyline without width is.
+                centre_line(b, p);
             }
         }
-        EntityKind::LwPolyline(p) => {
-            let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
-            if !b.opts.linetypes || p.plinegen || lt.is_none() {
-                stroke(b, &pl.tessellate(tol));
-            } else {
-                for s in pl.segments() {
-                    let mut pts = Vec::new();
-                    s.tessellate(tol, &mut pts);
-                    stroke(b, &pts);
-                }
-            }
-        }
+        EntityKind::LwPolyline(p) => centre_line(b, p),
         EntityKind::Solid(s) | EntityKind::Trace(s) => {
             let c = &s.corners;
             let q = [c[0].xy(), c[1].xy(), c[3].xy(), c[2].xy()];
@@ -193,14 +214,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             }
         }
         EntityKind::Wipeout(w) => draw_wipeout(b, ctx, w, rgb, lw),
-        EntityKind::Image(i) => {
-            let o = i.insert.xy();
-            let u = i.u.xy() * i.size.x;
-            let v = i.v.xy() * i.size.y;
-            b.polyline(ctx, rgb, lw, &[o, o + u, o + u + v, o + v, o]);
-            b.polyline(ctx, rgb, lw, &[o, o + u + v]);
-            b.polyline(ctx, rgb, lw, &[o + u, o + v]);
-        }
+        EntityKind::Image(i) => draw_image(b, ctx, i, rgb, lw),
         EntityKind::Table(t) => table(b, ctx, t, rgb, lw),
         EntityKind::Tolerance(t) => tolerance::draw(b, ctx, e, t, lw, tol),
         EntityKind::Leader(l) => {
@@ -221,7 +235,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.tris(ctx, rgb, &g.tris);
             }
         }
-        EntityKind::MLeader(m) => draw_mleader(b, ctx, e, m, rgb, lw),
+        EntityKind::MLeader(m) => draw_mleader(b, ctx, e, m, rgb, lw, own),
         EntityKind::Point(p) => {
             // Relative sizes follow the view: undo the block / viewport scale.
             let view = b.opts.view_height / ctx.xf.scale_factor().max(1e-12);
@@ -234,6 +248,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.polyline(ctx, rgb, lw, l);
             }
         }
+        EntityKind::Unknown(u) if !u.graphics.is_empty() || u.is_ole_frame() => draw_unknown(b, ctx, e, u, rgb, lw, own),
         kind => {
             for prim in kind.prims() {
                 match prim {
@@ -242,15 +257,16 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                         s.tessellate(tol, &mut pts);
                         stroke(b, &pts);
                     }
+                    // Closed runs from angle 0 (or the ellipse's start parameter).
                     Prim::Circle(c) => {
                         let mut pts = Vec::new();
                         c.tessellate(tol, &mut pts);
-                        stroke(b, &pts);
+                        stroke_as(b, &pts, Layout::Closed { anchor: 0.0 });
                     }
                     Prim::Ellipse(el) => {
                         let mut pts = Vec::new();
                         el.tessellate(tol, &mut pts);
-                        stroke(b, &pts);
+                        stroke_as(b, &pts, if el.is_full() { Layout::Closed { anchor: 0.0 } } else { Layout::Open });
                     }
                     Prim::Spline(s) => stroke(b, &s.tessellate(tol)),
                     Prim::Point(p) => b.point(ctx, rgb, p),
@@ -265,7 +281,8 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     }
 }
 
-fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeader, rgb: Ink, lw: f32) {
+/// `own`: the leader's transparency without its locked-layer fade, for its block content.
+fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeader, rgb: Ink, lw: f32, own: u8) {
     // Straight or spline leader lines; block content draws like a block reference.
     for pts in m.leader_paths() {
         b.polyline(ctx, rgb, lw, &pts);
@@ -285,7 +302,35 @@ fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeade
             let dir = if ins.insert.x >= land.x { 1.0 } else { -1.0 };
             b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
         }
-        insert(b, ctx, e, ins, rgb);
+        insert(b, ctx, e, ins, rgb, own);
+    }
+}
+
+/// A record kept as read that draws something: a proxy its proxy graphics, and an OLE object its
+/// frame, from its two corner points (its content is not drawn). `own`: the proxy's transparency
+/// without its locked-layer fade, for its graphics.
+fn draw_unknown(b: &mut Builder, ctx: &Ctx, e: &Entity, u: &cadcraft_doc::Unknown, rgb: Ink, lw: f32, own: u8) {
+    if !u.graphics.is_empty() {
+        proxy(b, ctx, e, u, own);
+    } else if let Some(q) = cadcraft_doc::ole_frame(&u.tags) {
+        b.polyline(ctx, rgb, lw, &q);
+    }
+}
+
+fn draw_image(b: &mut Builder, ctx: &Ctx, i: &cadcraft_doc::Image, rgb: Ink, lw: f32) {
+    let o = i.insert.xy();
+    let u = i.u.xy() * i.size.x;
+    let v = i.v.xy() * i.size.y;
+    // Display flag 1: show the image. Without pixels (file not found, not loaded yet, hidden)
+    // the rectangle is crossed out.
+    let raster = if i.display & 1 != 0 { ctx.d.rasters.get(&i.path) } else { None };
+    if let Some(r) = raster {
+        b.image(ctx, rgb, i, r);
+    }
+    b.polyline(ctx, rgb, lw, &[o, o + u, o + u + v, o + v, o]);
+    if raster.is_none() {
+        b.polyline(ctx, rgb, lw, &[o, o + u + v]);
+        b.polyline(ctx, rgb, lw, &[o + u, o + v]);
     }
 }
 
@@ -309,11 +354,25 @@ fn draw_wipeout(b: &mut Builder, ctx: &Ctx, w: &cadcraft_doc::Wipeout, rgb: Ink,
     }
 }
 
-fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dimension, lw: f32, lt: Option<&cadcraft_doc::Linetype>, ltscale: f64) {
+/// `stroke`: the linetype and its scale; `own`: the dimension's transparency without its
+/// locked-layer fade, which its block's ByBlock children inherit.
+fn draw_dimension(
+    b: &mut Builder,
+    ctx: &Ctx,
+    e: &Entity,
+    dm: &cadcraft_doc::Dimension,
+    lw: f32,
+    stroke: (Option<&cadcraft_doc::Linetype>, f64),
+    own: u8,
+) {
+    let (lt, ltscale) = stroke;
     if let Some(blk) = dm.block.as_ref().and_then(|n| ctx.d.block(n))
         && ctx.depth < cadcraft_doc::MAX_BLOCK_DEPTH
     {
-        let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, Mat3::IDENTITY) };
+        // DXF group 12: a moved dimension keeps its `*D` block where it was and the offset in
+        // the insertion point, so the block draws translated by it (#2634).
+        let off = dm.insertion_point.xy();
+        let sub = Ctx { block_pstyle: b.named, block_transparency: own, ..sub_ctx(ctx, e, Mat3::translate(off)) };
         // DIMTFILL: the block's MTEXT carries no background mask here, so a background
         // around each of the block's texts is drawn before the block's first text or first
         // line of the text's marks, except for a text that a SOLID of the block covers.
@@ -333,6 +392,10 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
                 .take(MAX_FILL_TEXTS)
                 .filter(|be| !covered(be))
                 .filter_map(|be| block_text_box(ctx.d, be, gap))
+                .map(|mut corners| {
+                    corners.iter_mut().for_each(|c| *c += off);
+                    corners
+                })
                 .collect()
         };
         let mut fill_pending = !boxes.is_empty();

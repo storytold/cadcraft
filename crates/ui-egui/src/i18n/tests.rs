@@ -40,6 +40,17 @@ fn catalog_is_valid_and_preserves_placeholders_and_ellipses() {
     assert_eq!(tr("unknown", "Open"), "Open");
 }
 
+/// A prompt with options is translated without its own "or": the command line adds the
+/// translated " or [" before the options ("Select polyline or [Multiple]").
+#[test]
+fn prompts_with_options_leave_or_to_the_command_line() {
+    assert_eq!(format!("{}{}", tr("de", "Select polyline"), tr("de", " or [")), "Wählen Sie eine Polylinie oder [");
+    assert_eq!(format!("{}{}", tr("ko", "Specify helix height"), tr("ko", " or [")), "나선 높이 지정 또는 [");
+    assert_eq!(format!("{}{}", tr("zh", "Enter delta length"), tr("zh", " or [")), "输入增量长度 或 [");
+    assert_eq!(format!("{}{}", tr("vi", "Select polyline"), tr("vi", " or [")), "Chọn polyline hoặc [");
+    assert_eq!(format!("{}{}", tr("vi", "Specify base radius"), tr("vi", " or [")), "Chỉ định bán kính đáy hoặc [");
+}
+
 /// What each language shows in English for now. Missing translations never fail a build:
 /// `cargo xtask i18n`, a step of `cargo xtask ci`, runs this to print the list.
 #[test]
@@ -48,6 +59,7 @@ fn translation_gaps() {
     for language in translated() {
         let mut missing: BTreeSet<String> = missing_commands_menus_tools_and_snap_labels(language.code).into_iter().collect();
         missing.extend(missing_marked_ui_literals(language.code));
+        missing.extend(missing_property_labels(language.code));
         if missing.is_empty() {
             println!("{}: nothing missing", language.code);
             continue;
@@ -57,6 +69,48 @@ fn translation_gaps() {
             println!("  {source}");
         }
     }
+}
+
+/// The labels the engine gives the Properties palette (`properties.describe`) for text, fit
+/// text, mtext and dimensions: group names, row labels and the labels of choices. Part of the
+/// report above.
+fn missing_property_labels(language: &str) -> Vec<String> {
+    use cadcraft_engine::properties::{Kind, describe};
+    let catalog = catalog(language).unwrap();
+    let mut s = Session::new();
+    for (cmd, p) in [
+        ("text", json!({ "at": [0, 0], "text": "A", "height": 1 })),
+        ("text", json!({ "at": [0, 5], "text": "B", "height": 1, "justify": "Fit" })),
+        ("mtext", json!({ "at": [0, 10], "text": "C", "height": 1 })),
+        ("dimlinear", json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 3] })),
+    ] {
+        s.execute(cmd, &p).unwrap();
+    }
+    let d = s.doc().unwrap();
+    let mut labels = BTreeSet::new();
+    for e in d.model.iter() {
+        for g in describe(d, &[e.handle], None).groups {
+            labels.insert(g.name.to_string());
+            for r in g.rows {
+                labels.insert(r.label.to_string());
+                if r.kind == Kind::Choice {
+                    labels.extend(r.options.into_iter().map(|o| o.label));
+                }
+            }
+        }
+    }
+    labels.extend(["Yes", "No"].map(String::from));
+    // The Dimension Style dialog edits every dimension variable, the style's own ones too.
+    for p in cadcraft_engine::properties::DIM_PROPS {
+        labels.insert(p.label.to_string());
+        labels.extend(p.kind.options().into_iter().map(|o| o.label));
+    }
+    // Numbers (precisions, lineweights in mm) aren't words to translate.
+    labels
+        .into_iter()
+        .filter(|l| l.chars().any(char::is_alphabetic) && !l.ends_with(" mm"))
+        .filter(|l| !catalog.contains_key(&("", l.as_str())))
+        .collect()
 }
 
 fn missing_commands_menus_tools_and_snap_labels(language: &str) -> Vec<String> {
@@ -87,21 +141,28 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
     let catalog = catalog(language).unwrap();
     let modules = [
         "xrefs",
+        "blocks_palette",
         "canvas",
         "chrome",
         "cmdline",
         "credits",
+        "docking",
         "dialogs",
         "hatchdlg",
+        "arraydlg",
         "aliasdlg",
+        "keys",
         "mtext_editor",
         "layers",
         "bedit",
         "palettes",
+        "managers/dimstyle",
         "parametric",
         "quick",
         "vpscale",
         "options/dialog",
+        "finddlg",
+        "textdlg",
     ];
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
@@ -147,13 +208,25 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
 
 /// Every `.rs` file under `dir`, at any depth, so code split into submodules stays scanned.
 fn module_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    if !std::fs::symlink_metadata(dir).is_ok_and(|metadata| metadata.file_type().is_dir()) {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else { return };
-    let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
-    paths.sort();
-    for path in paths {
-        if path.is_dir() {
+    // `file_type` doesn't follow links, so a symlink (a directory alias or a file) is skipped,
+    // not walked again as a new subtree.
+    // An unreadable entry must fail the scan, not silently shrink the translation report.
+    let mut paths: Vec<_> = entries
+        .map(|e| {
+            let e = e.expect("read module directory entry");
+            let kind = e.file_type().expect("read module entry type");
+            (e.path(), kind)
+        })
+        .collect();
+    paths.sort_by(|a, b| a.0.cmp(&b.0));
+    for (path, kind) in paths {
+        if kind.is_dir() {
             module_files(&path, files);
-        } else if path.extension().is_some_and(|x| x == "rs") {
+        } else if kind.is_file() && path.extension().is_some_and(|x| x == "rs") {
             files.push(path);
         }
     }
@@ -169,12 +242,20 @@ fn assert_primary_locale_aliases() {
     for (tag, code) in [("ru", "ru"), ("ru-RU", "ru"), ("ru_RU.UTF-8", "ru"), ("fr", "fr"), ("fr-FR", "fr"), ("fr_CA.UTF-8", "fr")] {
         assert_eq!(locale_language(tag), Some(code), "{tag}");
     }
+
+    for tag in ["ua", "ukulele", "xx-XX", "", "garbage", "💙"] {
+        assert_eq!(locale_language(tag), None, "{tag}");
+    }
+    assert_eq!(locale_language("pl-PL"), Some("pl"));
+    assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), "pt-BR".into()]), "pl");
+    assert_eq!(Preference::Auto.resolve(&["fr-FR".into(), "pt-BR".into()]), "fr");
 }
 
 fn assert_portuguese_and_spanish_aliases() {
     for tag in ["pt", "pt-BR", "pt_BR.UTF-8", "PT-br", "pt-PT"] {
         assert_eq!(locale_language(tag), Some("pt-BR"), "{tag}");
     }
+
     for tag in ["es", "es-ES", "es_MX.UTF-8", "ES-ar"] {
         assert_eq!(locale_language(tag), Some("es"), "{tag}");
     }
@@ -191,6 +272,8 @@ fn assert_additional_locale_aliases() {
         ("bs", &["bs", "bs-BA", "bs_BA.UTF-8", "BS-ba", " bs-BA ", "bs-Latn-BA"]),
         ("vi", &["vi", "vi-VN", "vi_VN.UTF-8", "VI-vn", " vi-VN "]),
         ("el", &["el", "el-GR", "el_GR.UTF-8", "EL-cy"]),
+        ("ka", &["ka", "ka-GE", "ka_GE.UTF-8", "KA-ge", " ka-GE "]),
+        ("ta", &["ta", "ta-IN", "ta_IN.UTF-8", "TA-in", " ta-LK ", "ta-SG", "ta_MY.UTF-8"]),
         ("zh", &["zh", "zh-CN"]),
     ] {
         for tag in tags {
@@ -201,18 +284,20 @@ fn assert_additional_locale_aliases() {
 
 fn assert_unrecognized_locale_tags() {
     // Look-alike codes, three-letter codes and endonyms pick nothing: `se` is Northern Sami.
-    let look_alikes = ["ua", "ukulele", "pl-PL", "", "garbage", "💙", "ptolemy", "cz", "csharp", "csomething", "italic"];
-    let others = ["kr", "korean", "kotlin", "se", "swe", "svenska", "hun", "magyar", "tur", "türkçe", "elvish"];
-    for tag in look_alikes.into_iter().chain(others) {
+    let look_alikes = ["ua", "ukulele", "nl-NL", "", "garbage", "💙", "ptolemy", "cz", "csharp", "csomething", "italic"];
+    let others = ["kr", "korean", "kotlin", "se", "swe", "svenska", "hun", "magyar", "tur", "türkçe", "elvish", "kat", "geo", "kab", "kartuli"];
+    let tamil = ["tam", "tamil", "தமிழ்"];
+    for tag in look_alikes.into_iter().chain(others).chain(tamil) {
         assert_eq!(locale_language(tag), None, "{tag}");
     }
 }
 
 fn assert_auto_locale_precedence() {
-    assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), "pt-BR".into()]), "pt-BR");
+    assert_eq!(Preference::Auto.resolve(&["nl-NL".into(), "pt-BR".into()]), "pt-BR");
+    assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), "pt-BR".into()]), "pl");
     assert_eq!(Preference::Auto.resolve(&["fr-FR".into(), "pt-BR".into()]), "fr");
     assert_eq!(Preference::Auto.resolve(&["es-ES".into(), "pt-BR".into()]), "es");
-    let locales = vec!["pl-PL".into(), "uk-UA".into(), "en-US".into()];
+    let locales = vec!["nl-NL".into(), "uk-UA".into(), "en-US".into()];
     assert_eq!(Preference::Auto.resolve(&locales), "uk");
     assert_eq!(Preference::English.resolve(&locales), "en");
     assert_eq!(Preference::Auto.resolve(&["en-US".into(), "uk-UA".into()]), "en");
@@ -235,7 +320,7 @@ fn assert_preference_resolution(preference: Preference) {
     // A chosen language wins over the system's; Auto takes the first system language there is.
     assert_eq!(preference.resolve(&["uk-UA".into()]), preference.code());
     if preference != Preference::English {
-        assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), preference.code().into(), "en-US".into()]), preference.code());
+        assert_eq!(Preference::Auto.resolve(&["nl-NL".into(), preference.code().into(), "en-US".into()]), preference.code());
     }
 }
 
@@ -252,6 +337,8 @@ fn assert_saved_preference_persistence(preference: Preference) {
 #[test]
 fn locale_and_saved_preference_resolution() {
     assert_primary_locale_aliases();
+    assert_eq!(locale_language("pl-PL"), Some("pl"));
+    assert_eq!(Preference::parse("pl"), Some(Preference::Polish));
     assert_portuguese_and_spanish_aliases();
     assert_additional_locale_aliases();
     assert_unrecognized_locale_tags();
@@ -311,6 +398,7 @@ fn the_wcs_pill_draws_its_arrow_instead_of_a_glyph_a_font_may_lack() {
     // #1541: "WCS ⌄" showed a box where the UI font had no "⌄"; the chevron is now drawn as
     // lines, so no catalog and no language paints the glyph.
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = CadApp::new(Session::new(), Services::default());
     for language in &LANGUAGES {
         assert!(!language.source.contains('\u{2304}'), "{}.tsv still has the \u{2304} glyph", language.code);
@@ -357,12 +445,43 @@ fn render(app: &mut CadApp, ctx: &egui::Context) -> String {
     text
 }
 
+/// The command line in the window draws a prompt's keywords itself; it puts the same words before
+/// them as the engine's prompt text: " [" after a prompt for an option ("Enter an option [?/Make/…")
+/// and after a question ("Fix any errors detected? [Yes/No]"), " or [" where the keywords are
+/// offered besides what is asked ("Specify next point or [Undo]"), " or [" translated.
+#[test]
+fn the_command_line_says_or_before_keywords_as_the_prompt_does() {
+    let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
+    for lang in ["en", "de"] {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.run("ui.language", json!({ "lang": lang })).unwrap();
+        app.logic(&ctx);
+        app.session.cmdline("-layer").unwrap();
+        let text = render(&mut app, &ctx);
+        let option = format!("\n{}\n [\n", tr(lang, "Enter an option"));
+        assert!(text.contains(&option), "{lang}: {option:?} in {text:?}");
+        app.session.cancel();
+        app.session.cmdline("line").unwrap();
+        app.session.cmdline("0,0").unwrap();
+        let text = render(&mut app, &ctx);
+        let besides = format!("\n{}\n{}\n", tr(lang, "Specify next point"), tr(lang, " or ["));
+        assert!(text.contains(&besides), "{lang}: {besides:?} in {text:?}");
+        app.session.cancel();
+        app.session.cmdline("audit").unwrap();
+        let text = render(&mut app, &ctx);
+        let question = format!("\n{}\n [\n", tr(lang, "Fix any errors detected?"));
+        assert!(text.contains(&question), "{lang}: {question:?} in {text:?}");
+    }
+}
+
 #[test]
 fn live_switch_translates_the_shell_without_mutating_drawing_or_automation() {
     let mut app = CadApp::new(Session::new(), Services::default());
     app.ui.in_window_menu = true;
     app.session.state_mut().unwrap().title = "Open".into();
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     app.logic(&ctx);
     assert!(render(&mut app, &ctx).contains("Properties"));
     let commands = crate::control::all_commands(&app);
@@ -414,7 +533,6 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
             ("dsettings", "Drafting Settings"),
             ("about", "About CADCraft"),
             ("commands", "Command Reference"),
-            ("blocks", "Blocks"),
             ("layers", "Layer Properties Manager"),
             ("qselect", "Quick Select"),
             ("parameters", "Parameters Manager"),
@@ -426,6 +544,7 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
             app.ui.interface_language = Preference::parse(language.code).unwrap();
             app.ui.dialog = Some(dialog.into());
             let ctx = egui::Context::default();
+            crate::framework::install_headless(&ctx);
             app.logic(&ctx);
             let text = render(&mut app, &ctx);
             assert!(text.contains(tr(app.language(), heading)), "{}: {dialog}: {text}", language.code);
@@ -441,11 +560,12 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
 #[test]
 fn interface_fonts_cover_every_letter_in_each_catalog() {
     for language in translated() {
-        let extra_font = ["ko", "zh", "ar", "vi"].contains(&language.code);
+        let extra_font = ["ko", "zh", "ar", "vi", "ka", "ta"].contains(&language.code);
         if extra_font && !crate::theme::can_show(language.code) {
             continue;
         }
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         if extra_font {
             crate::theme::install_fonts(&ctx, language.code);
         }
@@ -516,6 +636,7 @@ fn korean_ui_fonts_cover_the_language_picker_in_both_families() {
     // The picker shows 한국어 in an English interface only when the CJK fonts loaded in every
     // language cover Hangul; the Korean interface itself always does, with a fallback font.
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let english = crate::theme::cjk_covers_hangul();
     assert_eq!(with_language("en", || Preference::Korean.name()), if english { "한국어" } else { "Korean" });
     assert_eq!(with_language("ko", || Preference::Korean.name()), "한국어");
@@ -537,6 +658,22 @@ fn korean_ui_fonts_cover_the_language_picker_in_both_families() {
     assert!(missing.is_empty(), "missing Korean picker glyphs: {}", missing.join(", "));
 }
 
+/// A Georgian noun stays singular after a numeral, so one count form; the Dimension menu and the
+/// dimension object take different words. Mtavruli (U+1C90–U+1CBF) is a display style, not upper
+/// case: never in the catalog.
+#[test]
+fn georgian_counts_menu_headings_and_no_mtavruli() {
+    with_language("ka", || {
+        for n in [0, 1, 2, 5, 21, u64::MAX] {
+            assert_eq!(count(n, "{n} commit", "{n} commits"), format!("{n} კომიტი"));
+        }
+        assert_eq!(menu("Dimension"), "ზომების დატანა");
+        assert_eq!(t("Dimension"), "ზომა");
+    });
+    let mtavruli: Vec<char> = include_str!("ka.tsv").chars().filter(|c| ('\u{1c90}'..='\u{1cbf}').contains(c)).collect();
+    assert!(mtavruli.is_empty(), "{mtavruli:?}");
+}
+
 /// The production font chain covers alphanumeric ASCII in proportional and monospace, plus ⌘ ⇧ ↩ … − in proportional and ⇧ in monospace.
 #[test]
 fn production_font_chain_covers_latin_and_shortcut_symbols() {
@@ -544,6 +681,7 @@ fn production_font_chain_covers_latin_and_shortcut_symbols() {
     // `default_fonts` and `monochrome_emoji_fonts` in production, so web and native builds
     // always start with bounded Latin and monochrome icon faces instead of an empty family.
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     crate::theme::install_fonts(&ctx, "en");
     let mut output = ctx.run_ui(Default::default(), |_| {});
     output.textures_delta.clear();
@@ -578,6 +716,36 @@ fn bosnian_counts_take_one_few_other() {
     assert_eq!(Preference::Bosnian.native_name(), "Bosanski");
 }
 
+/// Tamil counts take the English forms (one, other). Tamil shows only with a font that has its
+/// letters, an installed Tamil font or the craft-fonts Tamil face, and only the Tamil interface
+/// loads one, so the picker writes தமிழ் there and Tamil in every other. Without a font the
+/// interface stays English and choosing Tamil says why.
+#[test]
+fn tamil_takes_two_forms_and_needs_a_tamil_font() {
+    assert_eq!(Preference::parse("ta"), Some(Preference::Tamil));
+    assert_eq!(Preference::Tamil.native_name(), "தமிழ்");
+    let ta = LANGUAGES.iter().find(|l| l.code == "ta").unwrap();
+    assert_eq!(ta.plural_forms, 2);
+    with_language("ta", || {
+        assert_eq!(count(1, "{n} commit", "{n} commits"), "1 கமிட்");
+        assert_eq!(count(5, "{n} commit", "{n} commits"), "5 கமிட்கள்");
+        assert_eq!(t("Layers"), "அடுக்குகள்");
+    });
+    assert_eq!(with_language("en", || Preference::Tamil.name()), "Tamil");
+    let mut app = CadApp::new(Session::new(), Services::default());
+    let r = app.run("ui.language", json!({"lang": "ta"})).unwrap();
+    let shown = crate::theme::can_show("ta");
+    assert_eq!(r["interfaceLanguage"], "ta");
+    assert_eq!(r["shown"], if shown { "ta" } else { "en" });
+    assert_eq!(app.ui.interface_language, Preference::Tamil);
+    if shown {
+        assert_eq!(with_language("ta", || Preference::Tamil.name()), "தமிழ்");
+    } else {
+        assert!(app.status.as_ref().is_some_and(|(s, _)| s.contains("No Tamil font")));
+        assert_eq!(with_language("ta", || Preference::Tamil.name()), "Tamil");
+    }
+}
+
 /// Vietnamese has one form for every count, and shows only with an interface font that has its
 /// tone-marked letters; without one it stays English and says why.
 #[test]
@@ -594,5 +762,34 @@ fn vietnamese_takes_one_form_and_needs_a_font_with_its_letters() {
     if !shown {
         assert!(app.status.as_ref().is_some_and(|(s, _)| s.contains("Vietnamese letters")));
         assert_eq!(Preference::Vietnamese.name(), "Vietnamese");
+    }
+}
+
+#[test]
+fn polish_plural_forms() {
+    for (n, expected) in [(0, 2), (1, 0), (2, 1), (4, 1), (5, 2), (12, 2), (14, 2), (21, 2), (22, 1), (24, 1), (25, 2), (101, 2), (102, 1), (112, 2)]
+    {
+        assert_eq!(plural_pl(n), expected, "n={n}");
+    }
+}
+
+/// Arabic gives Stretch, Trim and Point words of their own: Stretch read «تمديد» like Extend,
+/// Trim's prompts said «قص» like Cut, and Point read «تأشير», the catalog's word for dimensioning.
+#[test]
+fn arabic_tells_stretch_trim_and_point_from_their_neighbours() {
+    // The words themselves: a pair that merely differs also differs when a row is missing and both
+    // fall back to English, and Point and Dimension already differed before.
+    for (key, word) in [("Stretch", "تمطيط"), ("Trim", "تشذيب"), ("Point", "نقطة")] {
+        assert_eq!(tr("ar", key), word, "{key}");
+    }
+    for (a, b) in [("Stretch", "Extend"), ("Trim", "Cut"), ("Point", "Dimension")] {
+        assert_ne!(tr("ar", a), tr("ar", b), "{a} and {b} share a word");
+    }
+    for (prompt, verb) in [
+        ("Select object to trim or shift-select to extend", "تشذيب"),
+        ("Select object to extend or shift-select to trim", "تشذيب"),
+        ("Select objects to stretch by crossing-window or crossing-polygon...", "تمطيط"),
+    ] {
+        assert!(tr("ar", prompt).contains(verb), "{prompt}");
     }
 }

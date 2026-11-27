@@ -53,6 +53,7 @@ fn faults_are_recorded_autosaved_and_shown() {
     app.enable_autosave(&dir);
     app.run("circle", serde_json::json!({"center": [0, 0], "radius": 1})).unwrap();
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
 
     app.gpu_fault_tick(&ctx);
     assert!(app.gpu_notice.is_none(), "no fault, no notice");
