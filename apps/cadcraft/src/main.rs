@@ -493,6 +493,21 @@ fn main() -> eframe::Result {
     } else {
         control_port
     };
+    // The folders the control channel may read and write. A folder that can't be used stops the
+    // start, so a mistyped root never leaves the channel unconfined. Without a control channel
+    // there is nothing to confine.
+    let automation_roots = if control_port.is_some() {
+        cadcraft_engine::file_access::AutomationRoots::new(launch.automation_read_root.as_deref(), launch.automation_write_root.as_deref())
+            .unwrap_or_else(|e| {
+                eprintln!("CADCraft: {e}");
+                std::process::exit(2)
+            })
+    } else {
+        if launch.automation_read_root.is_some() || launch.automation_write_root.is_some() {
+            eprintln!("CADCraft: --automation-read-root and --automation-write-root confine the control channel; without one they are ignored");
+        }
+        None
+    };
     // The log file lives under the settings directory; opened after the arguments, so `--version`
     // leaves no file behind. Records logged until now are written to it first.
     if let Some(logger) = logger {
@@ -675,7 +690,7 @@ fn main() -> eframe::Result {
             }
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
-                app = app.with_control(rx);
+                app = app.with_control(rx).with_automation_roots(automation_roots);
             }
             if sample {
                 let _ = app.run("ui.sample", serde_json::json!({}));

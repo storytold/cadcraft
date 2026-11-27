@@ -95,9 +95,12 @@ configuration works across the suite) keep the agent to the folders you give it:
 - The roots must be existing folders; a missing one stops the server with an error. Each flag is
   given once (`--flag <dir>` or `--flag=<dir>`).
 
-The flags confine the headless server. `--connect` with them is an error, since the server would
-otherwise talk to an app that isn't confined; the app's control channel does not take them yet
-(#1585). Without `--connect` the server writes the files itself, so every check happens here.
+The flags confine the headless server. `--connect` with them is an error: over `--connect` the
+app opens and saves the files, so a boundary passed here would confine nothing. Start the app with
+the same two flags instead (`cadcraft --control 7979 --automation-read-root DIR
+--automation-write-root DIR`, see [Confining file access](control-protocol.md#confining-file-access)),
+and every client that connects to it is confined. Without `--connect` the server writes the files
+itself, so every check happens here.
 
 A path is checked, then opened: another program on the computer that swaps in a link between the two
 can still win that race, and a hard link can't be told from a file. Use the operating system's

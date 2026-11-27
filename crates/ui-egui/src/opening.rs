@@ -4,10 +4,12 @@
 //! on the UI thread. The web build has no threads and opens synchronously.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 use cadcraft_engine::cmd::file::{ReadFile, read_file};
+use cadcraft_engine::file_access::{self, AutomationRoots};
 
 use crate::theme::Tokens;
 
@@ -33,7 +35,13 @@ struct Job {
     path: PathBuf,
     started: Instant,
     rx: Receiver<Outcome>,
+    /// The automation roots in force where the read was asked for (#1585): the worker thread
+    /// reads under them, and so does the step that adds the drawing to the session.
+    roots: Option<Arc<AutomationRoots>>,
 }
+
+/// A read that has finished: the file, how it went, and the roots it was asked for under.
+pub(crate) type Finished = (PathBuf, Outcome, Option<Arc<AutomationRoots>>);
 
 /// The files being read in the background, oldest first.
 #[derive(Default)]
@@ -50,17 +58,19 @@ impl Opening {
         }
         let (tx, rx) = channel();
         let p = path.to_path_buf();
+        let roots = file_access::current();
+        let worker_roots = roots.clone();
         let spawned = std::thread::Builder::new().name("cadcraft-open".into()).spawn(move || {
-            let _ = tx.send(read_file(&p));
+            let _ = tx.send(file_access::confine_if(worker_roots.as_ref(), || read_file(&p)));
         });
         if spawned.is_err() {
             // No thread to read on: report it like any other failed open.
             let (tx, rx2) = channel();
             let _ = tx.send(Err(format!("open: {}: could not start a reader thread", path.display())));
-            self.jobs.push(Job { path: path.to_path_buf(), started: Instant::now(), rx: rx2 });
+            self.jobs.push(Job { path: path.to_path_buf(), started: Instant::now(), rx: rx2, roots });
             return;
         }
-        self.jobs.push(Job { path: path.to_path_buf(), started: Instant::now(), rx });
+        self.jobs.push(Job { path: path.to_path_buf(), started: Instant::now(), rx, roots });
     }
 
     /// Whether any file is still being read.
@@ -68,17 +78,17 @@ impl Opening {
         !self.jobs.is_empty()
     }
 
-    /// The finished reads, as (path, result). A reader that died without answering is an error.
-    pub fn poll(&mut self) -> Vec<(PathBuf, Outcome)> {
+    /// The finished reads. A reader that died without answering is an error.
+    pub(crate) fn poll(&mut self) -> Vec<Finished> {
         let mut done = Vec::new();
         self.jobs.retain(|j| match j.rx.try_recv() {
             Ok(r) => {
-                done.push((j.path.clone(), r));
+                done.push((j.path.clone(), r, j.roots.clone()));
                 false
             }
             Err(TryRecvError::Empty) => true,
             Err(TryRecvError::Disconnected) => {
-                done.push((j.path.clone(), Err(format!("open: {}: the file could not be read", j.path.display()))));
+                done.push((j.path.clone(), Err(format!("open: {}: the file could not be read", j.path.display())), j.roots.clone()));
                 false
             }
         });

@@ -1699,3 +1699,59 @@ fn append_checks_the_cell_cap_before_building_its_result() {
     assert!(super::value::live_cells() < before + 50_000, "no oversized result was built");
     assert_eq!(ok(&mut s, "(setq l nil m nil) (length (append '(1) '(2 3)))"), "3");
 }
+
+/// A scratch folder with an `inside` and an `outside` folder: (the scratch folder, inside, outside).
+#[cfg(not(target_arch = "wasm32"))]
+fn roots_folders(tag: &str) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    let base = std::env::temp_dir().join(format!("cadcraft-lisp-roots-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (inside, outside) = (base.join("inside"), base.join("outside"));
+    std::fs::create_dir_all(&inside).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    (base, inside, outside)
+}
+
+/// A routine that started under automation roots carries on under them in the frames after, which
+/// a host gives it from outside any roots: what the agent started stays held to them (#1585).
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_routine_keeps_the_roots_it_started_under_across_frames() {
+    use crate::file_access::{AutomationRoots, confine};
+    let (base, inside, outside) = roots_folders("routine");
+    let roots = AutomationRoots::new(None, Some(&inside)).unwrap();
+    let lisp = |dir: &std::path::Path| dir.join("made.txt").to_string_lossy().replace('\\', "/");
+    // Past a slice before it writes, so the writes happen in a later frame.
+    let code = format!(
+        "(setq i 0) (while (< i 500000) (setq i (1+ i))) (foreach p '(\"{}\" \"{}\") (if (setq f (open p \"w\")) (close f)))",
+        lisp(&inside),
+        lisp(&outside)
+    );
+    let mut s = session();
+    let started = confine(roots.as_ref(), || s.lisp_eval(&code, false, false, Vec::new()).unwrap());
+    assert!(started.is_none() && s.lisp_busy(), "the routine gave the interface a frame");
+    for _ in 0..100 {
+        if !s.lisp_busy() {
+            break;
+        }
+        s.lisp_tick();
+    }
+    assert!(!s.lisp_running());
+    assert!(inside.join("made.txt").exists(), "inside the write root");
+    assert!(!outside.join("made.txt").exists(), "outside it, in a frame the routine did not start in");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+/// The startup files are the person's: a frame held to automation roots loads them all the same.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn startup_files_load_in_a_frame_held_to_roots() {
+    use crate::file_access::{AutomationRoots, confine};
+    let (base, inside, outside) = roots_folders("startup");
+    std::fs::write(outside.join("acad.lsp"), "(setq cc-startup-ran 7)").unwrap();
+    let roots = AutomationRoots::new(None, Some(&inside)).unwrap();
+    let mut s = session();
+    s.set_lisp_support_dir(Some(outside));
+    confine(roots.as_ref(), || s.lisp_tick());
+    assert_eq!(to_text(&s.lisp_var("CC-STARTUP-RAN"), true), "7");
+    let _ = std::fs::remove_dir_all(base);
+}

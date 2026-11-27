@@ -82,9 +82,11 @@ pub mod wblock;
 pub mod exchange;
 
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 use cadcraft_engine::Session;
+use cadcraft_engine::file_access::{self, AutomationRoots};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -314,6 +316,9 @@ pub struct CadApp {
     pub opening: opening::Opening,
     pub integrated_titlebar: bool,
     control_rx: Option<Receiver<ControlRequest>>,
+    /// The folders the control channel may read and write (`--automation-read-root`,
+    /// `--automation-write-root`); `None`: it is not confined. The person at the keyboard never is.
+    automation_roots: Option<Arc<AutomationRoots>>,
     /// Fresh surface and identity snapshot (see [`capture`]).
     pub(crate) capture_geometry: Option<capture::CaptureGeometry>,
     /// Monotonic surface epoch, bumped whenever the window/viewport geometry changes.
@@ -419,6 +424,7 @@ impl CadApp {
             opening: opening::Opening::default(),
             integrated_titlebar: false,
             control_rx: None,
+            automation_roots: None,
             capture_geometry: None,
             capture_epoch: 0,
             capture_identity_epoch: 0,
@@ -612,6 +618,23 @@ impl CadApp {
     pub fn with_control(mut self, rx: Receiver<ControlRequest>) -> Self {
         self.control_rx = Some(rx);
         self
+    }
+
+    /// Hold what the control channel does to these folders (#1585): every control request, and
+    /// every frame that carries input one injected (`ui.click`, `ui.key`, `ui.text`…), reads and
+    /// writes files only under them, as `cadcraft-cli mcp` held to the same roots does. A drawing
+    /// being read in the background, or a LISP routine carrying on over several frames, stays
+    /// under the roots it was started under. What the person does with their own mouse, keyboard
+    /// and file dialogs is not held to them. `None` confines nothing.
+    pub fn with_automation_roots(mut self, roots: Option<Arc<AutomationRoots>>) -> Self {
+        self.automation_roots = roots;
+        self
+    }
+
+    /// The roots this frame is held to: those of the control channel while a batch of input it
+    /// injected is being processed ([`Self::raw_input_hook`] to the end of the first pass).
+    fn frame_roots(&self) -> Option<Arc<AutomationRoots>> {
+        self.automation_roots.clone().filter(|_| self.synthetic_injected)
     }
 
     /// Run a command programmatically (or a UI command).
@@ -877,7 +900,7 @@ impl CadApp {
     /// Add the files whose background read has finished; report the ones that failed as a failed
     /// OPEN is reported. Called every frame.
     pub fn finish_opening(&mut self) {
-        for (path, outcome) in self.opening.poll() {
+        for (path, outcome, roots) in self.opening.poll() {
             // A drawing may have been opened or saved at this path while the read was pending.
             if self.select_open_drawing(&path) {
                 continue;
@@ -888,8 +911,10 @@ impl CadApp {
                 let path = path.to_string_lossy();
                 self.ui.recent_files.retain(|p| *p != path);
             }
+            // Adding the drawing loads what it names (references, images): under the roots the
+            // read was asked for.
             let r = match outcome {
-                Ok(f) => self.session.finish_open(f).map_err(|e| e.to_string()),
+                Ok(f) => file_access::confine_if(roots.as_ref(), || self.session.finish_open(f)).map_err(|e| e.to_string()),
                 Err(e) => Err(e),
             };
             if let Err(e) = &r {
@@ -1002,7 +1027,15 @@ impl CadApp {
     /// pass of a multi-pass frame, and also on hidden logic-only ticks where no pass runs and the
     /// pass index is zero. `current_pass_index() == 0` is therefore the frame guard: true on the
     /// first pass and every hidden tick, false on later passes.
+    ///
+    /// A frame that carries input the control channel injected is held to its automation roots.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        let roots = self.frame_roots();
+        file_access::confine_if(roots.as_ref(), || self.logic_pass(ctx));
+    }
+
+    /// [`Self::logic`] under the roots of the frame, if any.
+    fn logic_pass(&mut self, ctx: &egui::Context) {
         // Consume-based queues: each item is handled once, whichever callback delivers it. A
         // reply arriving during a later pass is never starved until the next frame.
         self.drain_control(ctx);
@@ -1109,8 +1142,15 @@ impl CadApp {
         self.synthetic_injected = true;
     }
 
-    /// Lay out the whole window. This is the only place with a real UI pass.
+    /// Lay out the whole window. This is the only place with a real UI pass. A frame that carries
+    /// input the control channel injected is held to its automation roots.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        let roots = self.frame_roots();
+        file_access::confine_if(roots.as_ref(), || self.ui_pass(ui));
+    }
+
+    /// [`Self::ui`] under the roots of the frame, if any.
+    fn ui_pass(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let first_pass = ctx.current_pass_index() == 0;
         if first_pass {

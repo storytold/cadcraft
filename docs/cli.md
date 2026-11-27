@@ -32,9 +32,10 @@ unset and the flag wins over the variable, except for `CADCRAFT_CONFIG_DIR` (see
 | `CADCRAFT_FONTALT` | `--fontalt` (FONTALT) | `convert`, `run`, `mcp`, `sample` |
 | `CADCRAFT_FONTFALLBACK` | `--fontfallback` (FONTFALLBACK) | `convert`, `run`, `mcp`, `sample` |
 
-The desktop app's are listed by `cadcraft --help`; its one flag fallback is
-`CADCRAFT_CONTROL_PORT` for `--control`, where a bad value is a usage error that names the
-variable.
+The desktop app's are listed by `cadcraft --help`; its flag fallbacks are `CADCRAFT_CONTROL_PORT`
+for `--control`, where a bad value is a usage error that names the variable, and
+`CADCRAFT_AUTOMATION_READ_ROOT` / `CADCRAFT_AUTOMATION_WRITE_ROOT` for `--automation-read-root` /
+`--automation-write-root`.
 
 One variable is not a flag fallback: **`CADCRAFT_CAP_HEIGHT`** pins the cap height a
 metric-compatible substitute font is scaled by, so text on a substitute keeps the size of the

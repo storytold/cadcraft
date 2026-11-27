@@ -135,6 +135,44 @@ value disables all settings reads and writes (workspace, logs, autosave, plotter
 reported and left untouched, with persistence disabled for that launch. Repair or move that
 file before restarting to resume saving workspace choices.
 
+## Confining file access
+
+```sh
+cadcraft --control 7979 --automation-read-root /work/project --automation-write-root /work/project/out
+```
+
+`--automation-read-root DIR` and `--automation-write-root DIR` (or `CADCRAFT_AUTOMATION_READ_ROOT` /
+`CADCRAFT_AUTOMATION_WRITE_ROOT`) take the app's side of what `cadcraft-cli mcp` takes for the headless
+server: the same flags, the same rules and the same refusals (see [Confining file access](mcp.md#confining-file-access)
+for them: paths made absolute with their links followed, whole-folder comparison, a read root grants
+reads, the write root grants writes and reads back, a root left out grants none of its own access). A
+refused path is an ordinary error reply (`automation path rejected: …`) and nothing is read or
+written. The roots must be existing folders or the app does not start (exit 2). Each flag is given
+once. Without `--control` there is no channel to confine and they are ignored, with a note on
+standard error.
+
+What is held to the roots:
+
+- every request: a command's files (`engine.execute`, `cmdline.input`, `cmdline.script`, `app.open`,
+  `app.save`, `ui.menu.invoke`…), AutoLISP and scripts they run, and the `path` of `ui.render` and
+  `ui.screenshot`;
+- the frames that carry input a request injected (`ui.click`, `ui.key`, `ui.text`, `ui.drag`,
+  `ui.pointer`…), since a typed `OPEN` or `SAVEAS` there is the same thing as `cmdline.input`;
+- a drawing being read in the background and an AutoLISP routine that carries on over several frames
+  stay under the roots they were started under.
+
+What is not: the person at the keyboard. Files opened from the command line, by a file dialog,
+by a drop or from the recent list, and what they type and click, work as usual. The app's own background work (autosave, startup LISP) is not held either.
+
+Limits: the roots decide which **files** the channel reaches, not which drawing it sees. An agent
+connected to a running window sees and edits the drawings open in it (and their paths, and the recent
+files list in `ui.inspect`), whether or not they lie under the roots. A frame that carries an agent's
+input also holds the app's own file reads to the roots: a dialog that lists files elsewhere shows
+none of them to a UI-driving agent. A path is checked, then opened: another program that swaps in a
+link between the two can still win that race. The person's own keystrokes in the same frame as an
+injected batch are held to the roots too, and what the person types into a command the agent left
+waiting is the person's own.
+
 ## Panel docking
 
 Tool Sets, Layers, and Properties can be regrouped, split, floated within the app window, closed, and reopened. The drawing canvas stays visible and cannot be closed or turned into a tab. The document/session view is protected. Layouts, active tabs, panel visibility, and floating rectangles are saved with the app's existing UI preferences. These operations do not edit document contents.

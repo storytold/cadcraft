@@ -21,6 +21,12 @@ pub(crate) struct LaunchArgs {
     // allow_negative_numbers makes `--control -1` a bad value rather than a missing one.
     #[arg(long, value_name = "PORT", env = "CADCRAFT_CONTROL_PORT", value_parser = control_port, allow_negative_numbers = true)]
     pub(crate) control: Option<u16>,
+    /// With --control: the folder the control channel may read files in. Left out, it reads only under the write root
+    #[arg(long, value_name = "DIR", env = "CADCRAFT_AUTOMATION_READ_ROOT")]
+    pub(crate) automation_read_root: Option<PathBuf>,
+    /// With --control: the folder the control channel may write files in, and read back. Left out, it writes nothing
+    #[arg(long, value_name = "DIR", env = "CADCRAFT_AUTOMATION_WRITE_ROOT")]
+    pub(crate) automation_write_root: Option<PathBuf>,
     /// Open with the sample drawing
     #[arg(long)]
     pub(crate) sample: bool,
@@ -88,6 +94,19 @@ mod tests {
         let parsed = parse_args(&["--new-window", "a.dwg"]).unwrap();
         assert!(parsed.new_window);
         assert_eq!(parsed.files, [PathBuf::from("a.dwg")]);
+    }
+
+    /// A root that is missing its folder is a usage error, never a flag that is silently dropped
+    /// and leaves the control channel unconfined.
+    #[test]
+    fn automation_roots_are_parsed_and_a_missing_folder_is_a_usage_error() {
+        let parsed = parse_args(&["--control", "1", "--automation-read-root", "/work", "--automation-write-root=/work/out"]).unwrap();
+        assert_eq!(parsed.automation_read_root, Some(PathBuf::from("/work")));
+        assert_eq!(parsed.automation_write_root, Some(PathBuf::from("/work/out")));
+        assert!(parse_args(&[]).unwrap().automation_read_root.is_none());
+        assert!(usage_error(&["--automation-read-root"]).contains("a value is required for '--automation-read-root <DIR>'"));
+        assert!(usage_error(&["--automation-write-root", "--control", "1"]).contains("a value is required for '--automation-write-root <DIR>'"));
+        assert!(usage_error(&["--automation-read-root", "/a", "--automation-read-root", "/b"]).contains("cannot be used multiple times"));
     }
 
     #[test]
