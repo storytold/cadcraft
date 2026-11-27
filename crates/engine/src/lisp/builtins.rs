@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use super::eval::{Ctx, Flow, Special};
 use super::value::{Builtin, BuiltinKind, Sym, Value, charge_bytes, check_string_len, eq, equal, real_text, to_text};
-use super::{Env, LispError, drawing, input, objects, read};
+use super::{Env, LispError, drawing, input, layerstates, objects, read};
 
 macro_rules! cxrs {
     ($($name:ident $path:literal),*) => {
@@ -260,6 +260,18 @@ static BUILTINS: &[Builtin] = &[
     ctx!("SSMEMB", drawing::ssmemb),
     ctx!("SSSETFIRST", drawing::sssetfirst),
     ctx!("SSGETFIRST", drawing::ssgetfirst),
+    ctx!("LAYERSTATE-SAVE", layerstates::save),
+    ctx!("LAYERSTATE-RESTORE", layerstates::restore),
+    ctx!("LAYERSTATE-HAS", layerstates::has),
+    ctx!("LAYERSTATE-DELETE", layerstates::delete),
+    ctx!("LAYERSTATE-RENAME", layerstates::rename),
+    ctx!("LAYERSTATE-GETNAMES", layerstates::getnames),
+    ctx!("VL-LAYERSTATES-SAVE", layerstates::save),
+    ctx!("VL-LAYERSTATES-RESTORE", layerstates::vl_restore),
+    ctx!("VL-LAYERSTATES-HAS", layerstates::has),
+    ctx!("VL-LAYERSTATES-DELETE", layerstates::delete),
+    ctx!("VL-LAYERSTATES-RENAME", layerstates::rename),
+    ctx!("VL-LAYERSTATES-LIST", layerstates::getnames),
     ctx!("TBLSEARCH", drawing::tblsearch),
     ctx!("TBLNEXT", drawing::tblnext),
     ctx!("TBLOBJNAME", objects::tblobjname),
