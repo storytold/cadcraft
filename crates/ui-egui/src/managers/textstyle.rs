@@ -31,6 +31,8 @@ enum After {
 
 #[derive(Clone, Default)]
 struct State {
+    /// The drawing whose pending edits and field buffers this state belongs to.
+    doc_uid: u64,
     /// The style chosen in the list.
     selected: String,
     in_use_only: bool,
@@ -110,7 +112,7 @@ fn is_builtin(font: &str) -> bool {
 }
 
 fn is_shx(font: &str) -> bool {
-    font.trim().to_ascii_lowercase().ends_with(".shx")
+    cadcraft_fonts::is_shx_name(font)
 }
 
 /// The installed face a style's font names: by file name ("arialbd.ttf", "arialbd"), else by
@@ -131,11 +133,15 @@ fn face_of<'a>(font: &str, fonts: &'a [FontEntry]) -> Option<&'a FontEntry> {
 pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> super::Action {
     let used = in_use(ctx, app);
     let fonts = fonts(ctx);
-    let Ok(d) = app.session.doc() else {
+    let Ok(doc_state) = app.session.state() else {
         super::no_drawing(ctx, crate::tl!("Text Style"), open);
         return None;
     };
+    let d = &*doc_state.doc;
     let mut st: State = super::temp(ctx, STATE).unwrap_or_default();
+    if st.doc_uid != doc_state.uid {
+        st = State { doc_uid: doc_state.uid, ..State::default() };
+    }
     let current = d.header.str("TEXTSTYLE", "Standard");
     if d.text_style(&st.selected).is_none() {
         st.selected = current.clone();
@@ -281,12 +287,13 @@ fn main_page(
     let mut v = st.edit.clone().unwrap_or_else(|| saved.clone());
     let before = st.selected.clone();
     let mut deleted = false;
+    let mut pending = None;
     ui.horizontal_top(|ui| {
         // The styles and the preview.
         ui.vertical(|ui| {
             ui.set_width(200.0);
             ui.label(RichText::new(crate::tl!("Styles")).strong());
-            style_list(ui, d, st, current, used, actions, open);
+            style_list(ui, d, st, current, used, actions, &mut pending);
             let filter = egui::ComboBox::from_id_salt("textstyle_list_filter")
                 .selected_text(if st.in_use_only { crate::tl!("Styles in use") } else { crate::tl!("All styles") })
                 .show_ui(ui, |ui| {
@@ -304,18 +311,18 @@ fn main_page(
             ui.set_width(330.0);
             font_group(ui, st, &mut v, fonts);
             ui.add_space(6.0);
-            size_group(ui, d, &mut v);
+            size_group(ui, d, &mut v, st.doc_uid);
             ui.add_space(6.0);
-            effects_group(ui, &mut v);
+            effects_group(ui, &mut v, st.doc_uid);
         });
         // The buttons.
         ui.vertical(|ui| {
             let w = vec2(110.0, 22.0);
             if ui.add_enabled(!st.selected.eq_ignore_ascii_case(current), egui::Button::new(crate::tl!("Set Current")).min_size(w)).clicked() {
-                request(d, st, After::SetCurrent, actions, open);
+                pending = Some(After::SetCurrent);
             }
             if ui.add(egui::Button::new(crate::tl!("New...")).min_size(w)).clicked() {
-                request(d, st, After::New, actions, open);
+                pending = Some(After::New);
             }
             if ui.add_enabled(deletable(&st.selected, current, used), egui::Button::new(crate::tl!("Delete")).min_size(w)).clicked() {
                 actions.push(("style.delete", json!({ "name": st.selected })));
@@ -329,6 +336,9 @@ fn main_page(
         st.edit = None;
     } else if st.selected == before && st.confirm.is_none() && st.new_name.is_none() {
         st.edit = (v != *saved).then_some(v);
+    }
+    if let Some(after) = pending {
+        request(d, st, after, actions, open);
     }
     ui.separator();
     ui.horizontal(|ui| {
@@ -350,7 +360,7 @@ fn style_list(
     current: &str,
     used: &[String],
     actions: &mut Vec<(&'static str, Value)>,
-    open: &mut bool,
+    pending: &mut Option<After>,
 ) {
     egui::Frame::group(ui.style()).show(ui, |ui| {
         egui::ScrollArea::vertical().id_salt("textstyle_list").max_height(170.0).auto_shrink([false, true]).show(ui, |ui| {
@@ -371,7 +381,7 @@ fn style_list(
                     }
                     let resp = ui.selectable_label(st.selected == s.name, label);
                     if resp.clicked() && st.selected != s.name {
-                        request(d, st, After::Select(s.name.clone()), actions, open);
+                        *pending = Some(After::Select(s.name.clone()));
                     }
                     resp.context_menu(|ui| {
                         if ui.add_enabled(!is_current, egui::Button::new(crate::tl!("Set Current"))).clicked() {
@@ -511,7 +521,7 @@ fn font_group(ui: &mut egui::Ui, st: &mut State, v: &mut TextStyle, fonts: &[Fon
     }
 }
 
-fn size_group(ui: &mut egui::Ui, d: &Drawing, v: &mut TextStyle) {
+fn size_group(ui: &mut egui::Ui, d: &Drawing, v: &mut TextStyle, doc_uid: u64) {
     heading(ui, crate::tl!("Size"));
     ui.checkbox(&mut v.annotative, crate::tl!("Annotative"));
     ui.add_enabled(false, egui::Checkbox::new(&mut false, crate::tl!("Match text orientation to layout")))
@@ -520,7 +530,7 @@ fn size_group(ui: &mut egui::Ui, d: &Drawing, v: &mut TextStyle) {
     ui.horizontal(|ui| {
         let label = ui.label(if v.annotative { crate::tl!("Paper Text Height") } else { crate::tl!("Height") });
         let shown = cadcraft_engine::units::format_distance(v.height, lu, lp);
-        if let Some(h) = expr_field(ui, egui::Id::unique(("textstyle_height", &v.name)), &shown, Some(label.id))
+        if let Some(h) = expr_field(ui, egui::Id::unique(("textstyle_height", doc_uid, &v.name)), &shown, Some(label.id))
             .and_then(|t| cadcraft_engine::units::parse_distance(&t))
             .filter(|h| h.is_finite() && *h >= 0.0)
         {
@@ -538,13 +548,13 @@ fn trimmed(v: f64) -> String {
     if s == "-0" { "0".into() } else { s.to_string() }
 }
 
-fn effects_group(ui: &mut egui::Ui, v: &mut TextStyle) {
+fn effects_group(ui: &mut egui::Ui, v: &mut TextStyle, doc_uid: u64) {
     heading(ui, crate::tl!("Effects"));
     egui::Grid::new("textstyle_effects").num_columns(2).spacing(vec2(16.0, 6.0)).show(ui, |ui| {
         ui.checkbox(&mut v.upside_down, crate::tl!("Upside down"));
         ui.horizontal(|ui| {
             let label = ui.label(crate::tl!("Width Factor"));
-            if let Some(w) = expr_field(ui, egui::Id::unique(("textstyle_width", &v.name)), &trimmed(v.width_factor), Some(label.id))
+            if let Some(w) = expr_field(ui, egui::Id::unique(("textstyle_width", doc_uid, &v.name)), &trimmed(v.width_factor), Some(label.id))
                 .and_then(|t| t.trim().parse::<f64>().ok())
                 .filter(|w| w.is_finite() && *w > 0.0 && *w <= 100.0)
             {
@@ -555,9 +565,10 @@ fn effects_group(ui: &mut egui::Ui, v: &mut TextStyle) {
         ui.checkbox(&mut v.backwards, crate::tl!("Backwards"));
         ui.horizontal(|ui| {
             let label = ui.label(crate::tl!("Oblique Angle"));
-            if let Some(a) = expr_field(ui, egui::Id::unique(("textstyle_oblique", &v.name)), &trimmed(v.oblique.to_degrees()), Some(label.id))
-                .and_then(|t| t.trim().parse::<f64>().ok())
-                .filter(|a| a.is_finite() && a.abs() <= 85.0)
+            if let Some(a) =
+                expr_field(ui, egui::Id::unique(("textstyle_oblique", doc_uid, &v.name)), &trimmed(v.oblique.to_degrees()), Some(label.id))
+                    .and_then(|t| t.trim().parse::<f64>().ok())
+                    .filter(|a| a.is_finite() && a.abs() <= 85.0)
             {
                 v.oblique = a.to_radians();
             }

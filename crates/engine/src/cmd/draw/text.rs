@@ -194,9 +194,7 @@ impl TextM {
     /// justification, as Enter at AutoCAD's start point does. False when there is none.
     fn continue_below(&mut self, s: &Session) -> bool {
         let Ok(d) = s.doc() else { return false };
-        let last = d
-            .space(&s.space())
-            .and_then(|st| st.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.clone()) } else { None }).last());
+        let last = d.space(&s.space()).and_then(|st| st.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t) } else { None }).last());
         let Some(t) = last else { return false };
         let h = if t.height.is_finite() && t.height > 0.0 { t.height } else { d.header.f64("TEXTSIZE", 0.2) };
         let r = if t.rotation.is_finite() { t.rotation } else { 0.0 };

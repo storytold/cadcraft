@@ -3,6 +3,8 @@
 //! backwards and upside-down text (and vertical text for SHX fonts), which then becomes the
 //! current style. Also `style.fonts`, the installed fonts a style can name, by family and style
 //! (the Text Style dialog's font lists).
+//! Behavior reference: <https://help.autodesk.com/cloudhelp/2023/ENU/AutoCAD-Core/files/GUID-0496BC60-0D07-4982-A395-B83E39EA5CF4.htm>
+//! and <https://help.autodesk.com/cloudhelp/2024/ENU/AutoCAD-Customization/files/GUID-FF206F73-AC7E-4DB0-B9C7-E182DE613A23.htm>.
 
 use cadcraft_doc::{Drawing, TextStyle};
 use serde_json::{Value, json};
@@ -34,7 +36,7 @@ fn other(m: impl Into<String>) -> EngineError {
 
 /// Whether `font` names an SHX font (the only kind with a vertical form).
 fn is_shx(font: &str) -> bool {
-    font.trim().to_ascii_lowercase().ends_with(".shx")
+    cadcraft_fonts::is_shx_name(font)
 }
 
 fn yes(text: Option<&str>, default: bool) -> bool {
@@ -227,15 +229,27 @@ impl Interactive for DashStyle {
                     s.echo(l);
                 }
                 s.echo(format!("Current text style: {current}"));
-                self.ask = Ask::Name;
+                return Ok(Step::Done);
             }
             Ask::Font => {
                 if let Some(f) = t {
-                    let f: String = f.trim_matches('"').chars().take(255).collect();
-                    if cadcraft_fonts::ttf::find(&f).is_none() && !is_shx(&f) && !f.eq_ignore_ascii_case(cadcraft_fonts::BUILTIN_FONT) {
-                        s.echo(format!("Font {f} is not installed; text is drawn with a substitute."));
+                    let (normal, big) = f.split_once(',').map_or((f, None), |(normal, big)| (normal, Some(big)));
+                    let clean = |name: &str| name.trim().trim_matches('"').trim().chars().take(255).collect::<String>();
+                    let normal = clean(normal);
+                    if !normal.is_empty() {
+                        if cadcraft_fonts::ttf::find(&normal).is_none()
+                            && !is_shx(&normal)
+                            && !normal.eq_ignore_ascii_case(cadcraft_fonts::BUILTIN_FONT)
+                        {
+                            s.echo(format!("Font {normal} is not installed; text is drawn with a substitute."));
+                        }
+                        self.style.font = normal;
                     }
-                    self.style.font = f;
+                    match big {
+                        Some(big) if !big.trim().is_empty() => self.style.big_font = clean(big),
+                        None => self.style.big_font.clear(),
+                        _ => {}
+                    }
                 }
                 self.ask = Ask::Height;
             }

@@ -36,6 +36,20 @@ pub use craft_fonts::{CRAFT_FONTS, CraftFont};
 /// Name of the built-in font.
 pub const BUILTIN_FONT: &str = "CADCraft Stroke";
 
+/// Whether a style font name denotes an SHX font. An extensionless installed outline font keeps
+/// its outline behavior; an unrecognized bare name is treated as an SHX name without `.shx`.
+pub fn is_shx_name(name: &str) -> bool {
+    let name = name.trim();
+    if name.is_empty() || name.eq_ignore_ascii_case(BUILTIN_FONT) {
+        return false;
+    }
+    let file = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    if let Some((_, extension)) = file.rsplit_once('.') {
+        return extension.eq_ignore_ascii_case("shx");
+    }
+    ttf::find(name).is_none()
+}
+
 /// One laid-out run of text: strokes in local coordinates (baseline at y = 0, x from 0).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Run {

@@ -140,6 +140,34 @@ fn a_new_style_keeps_the_current_styles_big_font() {
 }
 
 #[test]
+fn shx_font_answers_select_the_right_fonts_and_prompt() {
+    let mut s = Session::new();
+    s.execute("style", &json!({ "name": "Existing", "font": "old.shx", "bigFont": "old-big.shx" })).unwrap();
+    lines(&mut s, &["-STYLE", "Existing", "romans,new-big.shx", "", "", "", "", ""]);
+    assert!(s.prompt_text().contains("Vertical?"), "{}", s.prompt_text());
+    s.cmdline("Y").unwrap();
+    let st = style(&s, "Existing");
+    assert_eq!((st.font.as_str(), st.big_font.as_str(), st.vertical), ("romans", "new-big.shx", true));
+
+    lines(&mut s, &["-STYLE", "Existing", ",other-big.shx", "", "", "", "", "", ""]);
+    let st = style(&s, "Existing");
+    assert_eq!((st.font.as_str(), st.big_font.as_str()), ("romans", "other-big.shx"));
+
+    lines(&mut s, &["-STYLE", "Existing", "romans,", "", "", "", "", "", ""]);
+    assert_eq!(style(&s, "Existing").big_font, "other-big.shx");
+    lines(&mut s, &["-STYLE", "Existing", "romans", "", "", "", "", "", ""]);
+    assert!(style(&s, "Existing").big_font.is_empty());
+}
+
+#[test]
+fn extensionless_installed_outline_font_does_not_ask_for_vertical_text() {
+    cadcraft_fonts::ttf::register("cadcraft-outline-regression.ttf", font_with_names("CADCraft Outline Regression", "Regular"));
+    let mut s = Session::new();
+    lines(&mut s, &["-STYLE", "Outline", "cadcraft-outline-regression", "", "", "", "", ""]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+}
+
+#[test]
 fn bad_answers_ask_again() {
     let mut s = Session::new();
     let still = |s: &mut Session, answer: &str, prompt: &str| {
@@ -169,7 +197,9 @@ fn question_mark_lists_styles() {
     let listed: Vec<&String> = s.log[before..].iter().collect();
     assert!(listed.iter().any(|l| l.contains("Style name: \"Title\"") && l.contains("Height: 5.0000")), "{listed:?}");
     assert!(!listed.iter().any(|l| l.contains("\"Standard\"")), "{listed:?}");
-    assert!(s.prompt_text().contains("Enter name of text style"), "back to the name");
+    assert!(s.running.is_none(), "listing ends the command");
+    s.cmdline("LINE").unwrap();
+    assert!(s.prompt_text().contains("first point"), "the next command starts: {}", s.prompt_text());
     s.cancel();
 }
 
