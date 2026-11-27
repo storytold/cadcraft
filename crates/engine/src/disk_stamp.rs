@@ -26,8 +26,8 @@ impl DiskStamp {
 }
 
 /// Whether the file at `path` no longer holds `stamp`. A file that is gone has nothing to lose, so
-/// it counts as unchanged; one that can't be read, or is larger than `max` (it can't be what was
-/// read), counts as changed.
+/// it counts as unchanged; one that can't be read counts as changed. Only a file of the stamp's
+/// length is read, up to `max` or that length if this session wrote more.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn changed(path: &std::path::Path, stamp: DiskStamp, max: usize) -> bool {
     match std::fs::metadata(path) {
@@ -36,7 +36,8 @@ pub fn changed(path: &std::path::Path, stamp: DiskStamp, max: usize) -> bool {
         Ok(meta) if meta.len() != stamp.len => return true,
         Ok(_) => {}
     }
-    match crate::capped_read::read_capped(path, max) {
+    let cap = max.max(usize::try_from(stamp.len).unwrap_or(usize::MAX));
+    match crate::capped_read::read_capped(path, cap) {
         Ok(bytes) => DiskStamp::of(&bytes) != stamp,
         Err(e) => e.kind() != std::io::ErrorKind::NotFound,
     }

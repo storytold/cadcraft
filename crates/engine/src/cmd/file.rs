@@ -606,6 +606,13 @@ fn overwrite_param(cmd: &str, p: &Value) -> Result<bool> {
     }
 }
 
+/// Whether `a` and `b` name the same file: the same text, or the same file once resolved
+/// (`./plan.dxf` and `plan.dxf`, a relative and an absolute path, a link).
+#[cfg(not(target_arch = "wasm32"))]
+fn same_file(a: &str, b: &str) -> bool {
+    a == b || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
+}
+
 /// Refuse to save over the drawing's own file when it no longer holds what was opened or last
 /// saved here: another program or person wrote it, and a save would silently replace their work.
 fn check_disk(s: &Session, cmd: &str, path: &str, overwrite: bool) -> Result<()> {
@@ -613,7 +620,7 @@ fn check_disk(s: &Session, cmd: &str, path: &str, overwrite: bool) -> Result<()>
     {
         let st = s.state()?;
         let Some(stamp) = st.disk else { return Ok(()) };
-        if overwrite || st.path.as_deref() != Some(path) || !is_drawing_file(path) {
+        if overwrite || !is_drawing_file(path) || !st.path.as_deref().is_some_and(|own| same_file(own, path)) {
             return Ok(());
         }
         if crate::disk_stamp::changed(std::path::Path::new(path), stamp, MAX_DRAWING_BYTES) {

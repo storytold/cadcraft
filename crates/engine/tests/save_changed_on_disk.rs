@@ -53,6 +53,8 @@ fn qsave_refuses_a_file_someone_else_saved_and_overwrite_replaces_it() {
     assert_eq!(std::fs::read(&file).unwrap(), theirs, "their work stays");
     assert!(s.state().unwrap().is_dirty(), "the drawing still has its unsaved changes");
     assert!(s.execute("saveas", &json!({ "path": path })).is_err(), "SAVEAS onto its own file checks too");
+    let spelled = dir.join(".").join("plan.dxf").to_string_lossy().to_string();
+    assert!(s.execute("saveas", &json!({ "path": spelled })).is_err(), "the same file under another spelling");
 
     // A copy under another name is always possible, and leaves their file alone.
     let copy = dir.join("plan-mine.dxf").to_string_lossy().to_string();
