@@ -50,6 +50,22 @@ fn layout_svg_follows_display_plot_styles() {
 }
 
 #[test]
+fn layout_svg_plot_follows_display_plot_styles() {
+    let mut d = layout_with_red_line();
+    d.layouts[0].page.plot_style_table = "monochrome.ctb".into();
+    let space = Space::Paper("Layout1".into());
+    for show in [false, true, false] {
+        d.layouts[0].page.show_plot_styles = show;
+        let bytes = cadcraft_io::plotter::plot(&d, &space, &json!({"output": "svg"})).unwrap();
+        let svg = String::from_utf8(bytes).unwrap();
+        assert_eq!(svg.contains("#ff0000"), !show, "Display plot styles {show}: {svg}");
+        if show {
+            assert!(svg.contains("#000000"), "monochrome layout plot: {svg}");
+        }
+    }
+}
+
+#[test]
 fn page_setup_table_and_display_flag_round_trip() {
     let mut d = layout_with_red_line();
     d.layouts[0].page.plot_style_table = "grayscale.ctb".into();

@@ -128,7 +128,8 @@ fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
         // that helper builds with `render::build`, which draws what a plot leaves out (IMAGEFRAME
         // 2 hides the frame only when plotting). PDF, PNG and model-space SVG plot what this list
         // holds.
-        let ropts = cadcraft_render::Options { transparency, ..cadcraft_render::Options::default() };
+        let table = if page.show_plot_styles { cadcraft_doc::plot_style_table(d, &page.plot_style_table).map(Arc::new) } else { None };
+        let ropts = cadcraft_render::Options { transparency, plot_style_table: table, ..cadcraft_render::Options::default() };
         let list = cadcraft_render::build_plot(d, space, &ropts);
         return Ok(crate::svg::export_list(&list, Some(sheet.bounds())).into_bytes());
     };
