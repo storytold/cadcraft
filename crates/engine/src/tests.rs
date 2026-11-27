@@ -533,6 +533,240 @@ fn scale_reference_typed_and_picked() {
 }
 
 #[test]
+fn scale_reference_points_and_copy() {
+    fn line_ends(s: &Session) -> Vec<Vec2> {
+        s.doc()
+            .unwrap()
+            .model
+            .iter()
+            .filter_map(|e| match &e.kind {
+                EntityKind::Line(l) => Some(l.b.xy()),
+                _ => None,
+            })
+            .collect()
+    }
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    // Reference 10 via two points, then Points option with two points of length 30 -> (30, 0).
+    for t in ["scale", "all", "", "0,0", "r", "0,0", "10,0"] {
+        s.cmdline(t).unwrap();
+    }
+    let p = s.current_prompt().unwrap();
+    assert_eq!(p.message, "Specify new length");
+    assert!(p.keywords.contains(&"Points".to_string()));
+    assert!(p.keywords.contains(&"Copy".to_string()));
+    s.cmdline("p").unwrap();
+    assert_eq!(s.current_prompt().unwrap().message, "Specify first point");
+    s.cmdline("5,5").unwrap();
+    assert_eq!(s.current_prompt().unwrap().message, "Specify second point");
+    s.cmdline("5,35").unwrap();
+    assert!(s.running.is_none());
+    assert!(line_ends(&s)[0].near(Vec2::new(30.0, 0.0), 1e-9));
+
+    // Coinciding Points are rejected without leaving the second-point prompt; a valid point completes.
+    for t in ["scale", "all", "", "0,0", "r", "30", "p", "5,5", "5,5"] {
+        s.cmdline(t).unwrap();
+    }
+    assert!(s.running.is_some());
+    assert_eq!(s.current_prompt().unwrap().message, "Specify second point");
+    s.cmdline("5,25").unwrap();
+    assert!(s.running.is_none());
+    assert!(line_ends(&s)[0].near(Vec2::new(20.0, 0.0), 1e-9));
+
+    // Copy entered inside Reference mode before reference length keeps the original and adds a scaled copy.
+    for t in ["scale", "all", "", "0,0", "r", "c", "20", "40"] {
+        s.cmdline(t).unwrap();
+    }
+    assert!(s.running.is_none());
+    let ends = line_ends(&s);
+    assert_eq!(ends.len(), 2);
+    assert!(ends.iter().any(|p| p.near(Vec2::new(20.0, 0.0), 1e-9)));
+    assert!(ends.iter().any(|p| p.near(Vec2::new(40.0, 0.0), 1e-9)));
+
+    // Copy entered at "Specify new length" combined with Points scales a copy.
+    for t in ["scale", "l", "", "0,0", "r", "40", "c", "p", "0,0", "10,0"] {
+        s.cmdline(t).unwrap();
+    }
+    assert!(s.running.is_none());
+    let ends = line_ends(&s);
+    assert_eq!(ends.len(), 3);
+    assert!(ends.iter().any(|p| p.near(Vec2::new(10.0, 0.0), 1e-9)));
+}
+
+#[test]
+fn hot_grip_scale_scales_heights_and_thickness() {
+    let mut s = Session::new();
+    let r = s.execute("text", &json!({"at": [10, 0], "height": 2.0, "text": "H"})).unwrap();
+    let h = cadcraft_doc::Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            e.common.thickness = 3.0;
+            if let EntityKind::Text(t) = &mut e.kind {
+                t.insert.z = 5.0;
+            }
+        })
+        .unwrap();
+    s.set_selection(vec![h]);
+    s.start_grip_edit(&[(h, 0)]).unwrap();
+    // STRETCH -> MOVE -> ROTATE -> SCALE
+    for _ in 0..3 {
+        s.input(Input::Enter).unwrap();
+    }
+    assert!(s.current_prompt().unwrap().message.contains("** SCALE **"));
+    s.cmdline("2").unwrap();
+    assert!(s.running.is_none());
+    let e = s.doc().unwrap().entity(h).unwrap();
+    assert_eq!(e.common.thickness, 6.0);
+    let EntityKind::Text(t) = &e.kind else { panic!("expected text") };
+    assert_eq!(t.height, 4.0);
+    assert_eq!(t.insert.z, 10.0);
+}
+
+#[test]
+fn scale_reference_preview_and_drag() {
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+
+    // Plain SCALE preview and drag.
+    for t in ["scale", "all", "", "0,0"] {
+        s.cmdline(t).unwrap();
+    }
+    assert_eq!(s.preview(Vec2::new(2.0, 0.0)).len(), 2);
+    let (d, extra) = s.drag(Vec2::new(2.0, 0.0)).unwrap();
+    assert!(d.matrix.apply(Vec2::new(10.0, 0.0)).near(Vec2::new(20.0, 0.0), 1e-9));
+    assert_eq!(extra.len(), 1);
+
+    // Enter accepts default reference length 1.0, then drag/preview at new length, then Points option.
+    for t in ["r", ""] {
+        s.cmdline(t).unwrap();
+    }
+    assert_eq!(s.current_prompt().unwrap().message, "Specify new length");
+    let (d, extra) = s.drag(Vec2::new(3.0, 0.0)).unwrap();
+    assert!(d.matrix.apply(Vec2::new(10.0, 0.0)).near(Vec2::new(30.0, 0.0), 1e-9));
+    assert!(matches!(&extra[0].kind, EntityKind::Line(l) if l.a.xy().near(Vec2::ZERO, 1e-9) && l.b.xy().near(Vec2::new(3.0, 0.0), 1e-9)));
+    assert_eq!(s.preview(Vec2::new(3.0, 0.0)).len(), 2);
+
+    s.cmdline("p").unwrap();
+    assert!(s.drag(Vec2::new(5.0, 0.0)).is_none());
+    assert!(s.preview(Vec2::new(5.0, 0.0)).is_empty());
+    s.cmdline("5,5").unwrap();
+    let (d, extra) = s.drag(Vec2::new(5.0, 7.0)).unwrap();
+    assert!(d.matrix.apply(Vec2::new(10.0, 0.0)).near(Vec2::new(20.0, 0.0), 1e-9));
+    assert!(matches!(&extra[0].kind, EntityKind::Line(l) if l.a.xy().near(Vec2::new(5.0, 5.0), 1e-9) && l.b.xy().near(Vec2::new(5.0, 7.0), 1e-9)));
+    assert_eq!(s.preview(Vec2::new(5.0, 7.0)).len(), 2);
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none());
+}
+
+#[test]
+fn select_then_reference_cancel_and_previews() {
+    fn line_end(s: &Session) -> Vec2 {
+        let e = s.doc().unwrap().model.iter().next().unwrap();
+        let EntityKind::Line(l) = &e.kind else { panic!("expected line") };
+        l.b.xy()
+    }
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+
+    // Reference before length is given: no drag/preview; after first point, only rubber-band preview; Enter cancels.
+    for t in ["scale", "all", "", "0,0", "r"] {
+        s.cmdline(t).unwrap();
+    }
+    assert!(s.drag(Vec2::new(5.0, 0.0)).is_none());
+    assert!(s.preview(Vec2::new(5.0, 0.0)).is_empty());
+    s.cmdline("0,0").unwrap();
+    let pv = s.preview(Vec2::new(5.0, 0.0));
+    assert_eq!(pv.len(), 1);
+    assert!(matches!(&pv[0].kind, EntityKind::Line(l) if l.a.xy().near(Vec2::ZERO, 1e-9) && l.b.xy().near(Vec2::new(5.0, 0.0), 1e-9)));
+    assert!(s.drag(Vec2::new(5.0, 0.0)).is_none());
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none());
+    assert!(line_end(&s).near(Vec2::new(10.0, 0.0), 1e-9));
+
+    // COPY and ROTATE previews also emit transformed geometry plus rubber-band.
+    for cmd in ["copy", "rotate"] {
+        let mut s = Session::new();
+        s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+        for t in [cmd, "all", "", "0,0"] {
+            s.cmdline(t).unwrap();
+        }
+        assert_eq!(s.preview(Vec2::new(4.0, 3.0)).len(), 2);
+        s.input(Input::Cancel).unwrap();
+    }
+}
+
+#[test]
+fn hot_grip_scale_and_reference_point_picks() {
+    let mut s = Session::new();
+    let rl = s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let l = cadcraft_doc::Handle::parse_hex(rl["handles"][0].as_str().unwrap()).unwrap();
+    let rt = s.execute("text", &json!({"at": [10, 0], "height": 2.0, "text": "H"})).unwrap();
+    let t = cadcraft_doc::Handle::parse_hex(rt["handle"].as_str().unwrap()).unwrap();
+    s.doc_mut().unwrap().modify_entity(t, |e| e.common.thickness = 3.0).unwrap();
+
+    // Hot-grip SCALE: coincident point is rejected; valid point scales line, text height, and thickness.
+    s.set_selection(vec![l, t]);
+    s.start_grip_edit(&[(l, 0)]).unwrap();
+    for _ in 0..3 {
+        s.input(Input::Enter).unwrap();
+    }
+    s.cmdline("0,0").unwrap();
+    assert!(s.running.is_some());
+    s.cmdline("2,0").unwrap();
+    assert!(s.running.is_none());
+    let EntityKind::Line(ln) = &s.doc().unwrap().entity(l).unwrap().kind else { panic!("expected line") };
+    assert!(ln.b.xy().near(Vec2::new(20.0, 0.0), 1e-9));
+    let te = s.doc().unwrap().entity(t).unwrap();
+    assert_eq!(te.common.thickness, 6.0);
+    let EntityKind::Text(tx) = &te.kind else { panic!("expected text") };
+    assert_eq!(tx.height, 4.0);
+
+    // Hot-grip SCALE Reference: zero new length point is rejected; valid point scales back by 0.5.
+    s.set_selection(vec![l, t]);
+    s.start_grip_edit(&[(l, 0)]).unwrap();
+    for _ in 0..3 {
+        s.input(Input::Enter).unwrap();
+    }
+    for cmd in ["r", "20", "0,0"] {
+        s.cmdline(cmd).unwrap();
+    }
+    assert!(s.running.is_some());
+    s.cmdline("10,0").unwrap();
+    assert!(s.running.is_none());
+    let EntityKind::Line(ln) = &s.doc().unwrap().entity(l).unwrap().kind else { panic!("expected line") };
+    assert!(ln.b.xy().near(Vec2::new(10.0, 0.0), 1e-9));
+    let te = s.doc().unwrap().entity(t).unwrap();
+    assert_eq!(te.common.thickness, 3.0);
+    let EntityKind::Text(tx) = &te.kind else { panic!("expected text") };
+    assert_eq!(tx.height, 2.0);
+
+    // Hot-grip ROTATE Reference with picked new-angle point.
+    s.set_selection(vec![l]);
+    s.start_grip_edit(&[(l, 0)]).unwrap();
+    for _ in 0..2 {
+        s.input(Input::Enter).unwrap();
+    }
+    for cmd in ["r", "0", "0,10"] {
+        s.cmdline(cmd).unwrap();
+    }
+    assert!(s.running.is_none());
+    let EntityKind::Line(ln) = &s.doc().unwrap().entity(l).unwrap().kind else { panic!("expected line") };
+    assert!(ln.b.xy().near(Vec2::new(0.0, 10.0), 1e-9));
+
+    // Hot-grip MIRROR with coincident point is rejected; eXit ends cleanly.
+    s.set_selection(vec![l]);
+    s.start_grip_edit(&[(l, 0)]).unwrap();
+    for _ in 0..4 {
+        s.input(Input::Enter).unwrap();
+    }
+    s.cmdline("0,0").unwrap();
+    assert!(s.running.is_some());
+    s.cmdline("x").unwrap();
+    assert!(s.running.is_none());
+}
+
+#[test]
 fn layers_and_properties() {
     let mut s = Session::new();
     s.execute("layer.new", &json!({"name": "Walls", "color": "red", "current": true})).unwrap();
