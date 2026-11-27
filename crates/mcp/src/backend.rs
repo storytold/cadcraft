@@ -254,7 +254,8 @@ impl Remote {
         }
     }
     /// Send `req` and parse the reply, refreshing the token before a safe retry after a transport
-    /// error. A mutation that may have reached the server is never resent automatically.
+    /// error. A mutation that may have reached the server is never resent automatically, and when
+    /// its reply is lost (on the first attempt or the retry) the error says so.
     fn exchange(&mut self, method: &str, req: &mut Value) -> Result<Value, String> {
         let reply = match self.sign_and_send(req) {
             Ok(r) => r,
@@ -263,16 +264,13 @@ impl Remote {
                 self.conn = None;
                 // A mutation whose reply was lost must never be sent twice.
                 if sent && !is_read_only(method) {
-                    return Err(format!(
-                        "CADCraft at {}: {e}; the reply was lost, so `{method}` may or may not have been applied. Inspect the drawing first",
-                        self.addr
-                    ));
+                    return Err(maybe_applied(&self.addr, method, &e));
                 }
                 // A restarted server may have rotated its token before dropping the old socket.
-                self.sign_and_send(req).map_err(|(e, _)| {
+                self.sign_and_send(req).map_err(|(e, sent)| {
                     self.token = None;
                     self.conn = None;
-                    format!("CADCraft at {}: {e}", self.addr)
+                    if sent && !is_read_only(method) { maybe_applied(&self.addr, method, &e) } else { format!("CADCraft at {}: {e}", self.addr) }
                 })?
             }
         };
@@ -280,6 +278,11 @@ impl Remote {
         self.authed |= past_the_token_check(&v);
         Ok(v)
     }
+}
+
+/// The error for a mutation that may have reached the app but whose reply was lost.
+fn maybe_applied(addr: &str, method: &str, e: &std::io::Error) -> String {
+    format!("CADCraft at {addr}: {e}; the reply was lost, so `{method}` may or may not have been applied. Inspect the drawing first")
 }
 
 /// An `unauthorized` reply (the app also closes the connection).
@@ -902,6 +905,28 @@ mod tests {
         assert_eq!(got, [full.clone(), full, Ok(json!("engine.execute"))]);
         let methods: Vec<(usize, &str)> = seen.iter().map(|(c, m, _)| (*c, m.as_str())).collect();
         assert_eq!(methods, [(0, "ping"), (1, "engine.execute"), (2, "ping"), (2, "engine.execute")]);
+    }
+
+    /// When the retry after a lost `ping` reply sends the long request and its reply is lost too,
+    /// a mutation is reported as maybe applied (and not sent again); a read-only request isn't.
+    #[test]
+    fn a_lost_reply_on_the_retry_still_says_a_mutation_may_have_been_applied() {
+        for (method, warned) in [("engine.execute", true), ("drawing.inspect", false)] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let token = crate::control_token::issue(addr.port()).unwrap();
+            // The first `ping` and then the request on the retry's connection go unanswered.
+            let server = strict_app(listener, move |n| if n == 1 { Ok(token.clone()) } else { Err(Value::Null) });
+            let mut remote = Remote::lazy(&addr.to_string(), false);
+            let got = remote.call(method, long_params());
+            drop(remote);
+            let seen = server.join().unwrap();
+            crate::control_token::revoke(addr.port());
+            let err = got.unwrap_err();
+            assert_eq!(err.contains("may or may not have been applied"), warned, "{method}: {err}");
+            let methods: Vec<(usize, &str)> = seen.iter().map(|(c, m, _)| (*c, m.as_str())).collect();
+            assert_eq!(methods, [(0, "ping"), (1, "ping"), (1, method)], "sent once");
+        }
     }
 
     /// A `ping` that passed the token check but timed out in the app (it may have run) still lets
