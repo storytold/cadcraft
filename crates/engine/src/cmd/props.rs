@@ -556,6 +556,7 @@ fn run_style_rename(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let st = d.text_styles.by_name_mut(&from).ok_or_else(|| bad("style.rename", "no such style"))?;
     st.name = to.clone();
+    cadcraft_doc::foreign::Foreign::rename_shared(&mut d.foreign, &["STYLE"], &from, &to);
     // References follow the new name.
     let fix = |n: &mut String| {
         if n.eq_ignore_ascii_case(&from) {
@@ -794,6 +795,7 @@ fn run_dimstyle_rename(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let st = d.dim_styles.by_name_mut(&from).ok_or_else(|| bad("dimstyle.rename", "no such dimension style"))?;
     st.name = to.clone();
+    cadcraft_doc::foreign::Foreign::rename_shared(&mut d.foreign, &["DIMSTYLE"], &from, &to);
     if d.header.str("DIMSTYLE", "Standard").eq_ignore_ascii_case(&from) {
         d.header.set_str("DIMSTYLE", &to);
     }
@@ -1017,6 +1019,7 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
             }
             let st = d.linetypes.by_name_mut(&from).ok_or_else(|| bad("rename", "no such linetype"))?;
             st.name = to.clone();
+            cadcraft_doc::foreign::Foreign::rename_shared(&mut d.foreign, &["LTYPE"], &from, &to);
             // References follow the new name.
             let fix = |n: &mut String| {
                 if n.eq_ignore_ascii_case(&from) {
