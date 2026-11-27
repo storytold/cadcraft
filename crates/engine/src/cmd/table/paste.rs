@@ -1,6 +1,6 @@
 //! Paste tabular clipboard data (TSV from Excel or other spreadsheets) as a native `ACAD_TABLE`.
 
-use cadcraft_doc::{EntityKind, Table, TableCell, TableStyle};
+use cadcraft_doc::{CellStyle, EntityKind, Table, TableCell, TableStyle};
 use cadcraft_geom::Vec2;
 use serde_json::{Value, json};
 
@@ -88,30 +88,52 @@ pub fn is_tsv_table(text: &str) -> bool {
 fn build_table(st: &TableStyle, at: Vec2, data: &[Vec<String>], text_height: Option<f64>) -> Table {
     let cols = data.first().map_or(1, Vec::len).max(1);
     let th = text_height.unwrap_or_else(|| if st.text_height.is_finite() && st.text_height > 0.0 { st.text_height } else { 2.5 });
-    let margin = if st.text_height.is_finite() && st.text_height > 0.0 { st.margin * (th / st.text_height) } else { th * 0.5 };
+    // Why: `cadcraft_render::table::layout` scales the resolved `Data` cell style's text height
+    // and horizontal/vertical margins by `th / st.text_height`, so sizing widths, wrap width, and
+    // row heights with the same scaled `Data` metrics keeps wrapped text inside custom-styled cells.
+    let scale = if st.text_height.is_finite() && st.text_height > 0.0 { th / st.text_height } else { 1.0 };
+    let data_cs = st.cell_style(CellStyle::DATA);
+    let cell_th = Some(data_cs.text_height * scale).filter(|v| v.is_finite() && *v > 0.0).unwrap_or(th);
+    let margin_h = Some(data_cs.margin_h * scale).filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(th * 0.5);
+    let margin_v = Some(data_cs.margin_v * scale).filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(th * 0.5);
 
     let mut col_chars = vec![1usize; cols];
-    let mut row_heights = Vec::with_capacity(data.len());
     let mut cells = Vec::with_capacity(data.len());
 
     for row in data {
-        let mut max_lines = 1usize;
         let mut table_row = Vec::with_capacity(cols);
         for (c, raw) in row.iter().enumerate() {
-            let line_count = raw.split('\n').count().clamp(1, 50);
-            max_lines = max_lines.max(line_count);
             let max_chars = raw.split('\n').map(|line| line.chars().count()).max().unwrap_or(0).clamp(1, 60);
             if let Some(slot) = col_chars.get_mut(c) {
                 *slot = (*slot).max(max_chars);
             }
             table_row.push(TableCell { text: cadcraft_doc::mtext_literal(raw), ..TableCell::default() });
         }
-        row_heights.push(th * (max_lines as f64 * 5.0 / 3.0) + 2.0 * margin);
         cells.push(table_row);
     }
 
-    let min_col_w = (th * 4.0 + 2.0 * margin).max(th * 5.0);
-    let col_widths: Vec<f64> = col_chars.into_iter().map(|chars| (0.75 * th * chars as f64 + 2.0 * margin + 0.5 * th).max(min_col_w)).collect();
+    let min_col_w = (cell_th * 4.0 + 2.0 * margin_h).max(cell_th * 5.0);
+    let col_widths: Vec<f64> =
+        col_chars.into_iter().map(|chars| (0.95 * cell_th * chars as f64 + 2.0 * margin_h + 0.5 * cell_th).max(min_col_w)).collect();
+
+    let mut row_heights = Vec::with_capacity(cells.len());
+    for row in &cells {
+        let mut max_lines = 1usize;
+        for (c, cell) in row.iter().enumerate() {
+            if cell.text.is_empty() {
+                continue;
+            }
+            // Why: size each row to the exact wrapped line count from `layout_mtext_with` (without an
+            // arbitrary line cap, as input size is already bounded by `MAX_TSV_BYTES`/`MAX_PASTE_CELLS`)
+            // so cells wrapping past 50 lines match the renderer and do not spill into the next row.
+            let inner_w = col_widths.get(c).copied().unwrap_or(0.0) - 2.0 * margin_h;
+            let wrap_w = if inner_w.is_finite() && inner_w > 0.0 { inner_w } else { 0.0 };
+            let mp = cadcraft_fonts::MTextParams { width: wrap_w, ..cadcraft_fonts::MTextParams::new(Vec2::ZERO, cell_th) };
+            let line_count = cadcraft_fonts::layout_mtext_with(&cell.text, &mp).lines.len().max(1);
+            max_lines = max_lines.max(line_count);
+        }
+        row_heights.push(cell_th * (max_lines as f64 * 5.0 / 3.0) + 2.0 * margin_v);
+    }
 
     Table { insert: v3(at), col_widths, row_heights, cells, style: st.name.clone(), text_height: th, title: false, header: false, ..Table::default() }
 }
@@ -300,5 +322,84 @@ mod tests {
         s.start_paste_table("A\tB\n1\t2\n", None).unwrap();
         assert_eq!(s.commands_started, before_started + 1);
         assert_eq!(s.last_command.as_deref(), Some("pastetable"));
+    }
+
+    #[test]
+    fn long_wrapped_cells_cap_col_width_and_grow_row_height() {
+        let mut s = Session::new();
+        let long_cell = "Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega";
+        assert!(long_cell.chars().count() > 60);
+        let tsv = format!("Short\t{long_cell}\n\"First line\n{long_cell}\"\t\nA\tB",);
+        let res = s.execute("pastetable", &json!({ "tsv": tsv, "at": [0, 0], "text_height": 2.0 })).unwrap();
+        let h = cadcraft_doc::Handle::parse_hex(res["handle"].as_str().unwrap()).unwrap();
+        let e = s.doc().unwrap().entity(h).unwrap();
+        let EntityKind::Table(t) = &e.kind else { panic!("expected table") };
+
+        // Column 1 width is capped at 60 characters rather than growing unboundedly.
+        let st = style_of(&s);
+        let expected_cap_w = 0.95 * 2.0 * 60.0 + 2.0 * (st.margin * (2.0 / st.text_height)) + 0.5 * 2.0;
+        assert!((t.col_widths[1] - expected_cap_w).abs() < 1e-9);
+        // Row 0 wraps into multiple lines and is taller than single-line Row 2.
+        assert!(t.row_heights[0] > t.row_heights[2]);
+        // Row 1 combines a hard newline and a long wrapped line, making it taller than Row 0.
+        assert!(t.row_heights[1] > t.row_heights[0]);
+    }
+
+    #[test]
+    fn custom_data_cell_style_sizes_wrapped_rows_and_columns() {
+        let long_cell = "Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega";
+        let tsv = format!("Short\t{long_cell}\nA\tB");
+
+        let mut base = Session::new();
+        let r_base = base.execute("pastetable", &json!({ "tsv": tsv, "at": [0, 0] })).unwrap();
+        let h_base = cadcraft_doc::Handle::parse_hex(r_base["handle"].as_str().unwrap()).unwrap();
+        let EntityKind::Table(t_base) = &base.doc().unwrap().entity(h_base).unwrap().kind else { panic!("expected table") };
+
+        let mut custom = Session::new();
+        custom.doc_mut().unwrap().table_styles.iter_mut().find(|ts| ts.name.eq_ignore_ascii_case("Standard")).unwrap().set_cell_style(CellStyle {
+            name: CellStyle::DATA.into(),
+            text_height: 5.0,
+            margin_h: 4.0,
+            margin_v: 3.0,
+            ..CellStyle::default()
+        });
+        let r_custom = custom.execute("pastetable", &json!({ "tsv": tsv, "at": [0, 0] })).unwrap();
+        let h_custom = cadcraft_doc::Handle::parse_hex(r_custom["handle"].as_str().unwrap()).unwrap();
+        let EntityKind::Table(t_custom) = &custom.doc().unwrap().entity(h_custom).unwrap().kind else { panic!("expected table") };
+
+        assert!(t_custom.col_widths[1] > t_base.col_widths[1]);
+        assert!(t_custom.row_heights[0] > t_base.row_heights[0]);
+        assert!(t_custom.row_heights[0] > t_custom.row_heights[1]);
+
+        let g = cadcraft_render::table_geometry(custom.doc().unwrap(), t_custom);
+        let tx = g.texts.iter().find(|tx| tx.row == 0 && tx.col == 1).unwrap();
+        let laid = cadcraft_fonts::layout_mtext_with(
+            &tx.text,
+            &cadcraft_fonts::MTextParams { width: tx.wrap_width, ..cadcraft_fonts::MTextParams::new(Vec2::ZERO, tx.height) },
+        );
+        assert!(laid.lines.len() > 1);
+        assert!(t_custom.row_heights[0] >= laid.lines.len() as f64 * tx.height * 5.0 / 3.0 + 2.0 * 3.0 - 1e-6);
+    }
+
+    #[test]
+    fn cell_wrapping_past_fifty_lines_is_not_clamped() {
+        let mut s = Session::new();
+        let long_cell = vec!["word"; 800].join(" ");
+        let res = s.execute("pastetable", &json!({ "tsv": format!("A\t{long_cell}\n1\t2"), "at": [0, 0], "text_height": 2.0 })).unwrap();
+        let h = cadcraft_doc::Handle::parse_hex(res["handle"].as_str().unwrap()).unwrap();
+        let EntityKind::Table(t) = &s.doc().unwrap().entity(h).unwrap().kind else { panic!("expected table") };
+
+        let g = cadcraft_render::table_geometry(s.doc().unwrap(), t);
+        let tx = g.texts.iter().find(|tx| tx.row == 0 && tx.col == 1).unwrap();
+        let laid = cadcraft_fonts::layout_mtext_with(
+            &tx.text,
+            &cadcraft_fonts::MTextParams { width: tx.wrap_width, ..cadcraft_fonts::MTextParams::new(Vec2::ZERO, tx.height) },
+        );
+        assert!(laid.lines.len() > 50, "expected >50 wrapped lines, got {}", laid.lines.len());
+        let st = style_of(&s);
+        let margin_v = st.margin * (2.0 / st.text_height);
+        let fifty_line_h = 2.0 * (50.0 * 5.0 / 3.0) + 2.0 * margin_v;
+        assert!(t.row_heights[0] > fifty_line_h);
+        assert!((t.row_heights[0] - (2.0 * (laid.lines.len() as f64 * 5.0 / 3.0) + 2.0 * margin_v)).abs() < 1e-9);
     }
 }
