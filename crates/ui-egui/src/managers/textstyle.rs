@@ -111,15 +111,12 @@ fn is_builtin(font: &str) -> bool {
     font.trim().is_empty() || font.trim().eq_ignore_ascii_case(BUILTIN_FONT)
 }
 
-fn is_shx(font: &str) -> bool {
-    cadcraft_fonts::is_shx_name(font)
-}
-
 /// The installed face a style's font names: by file name ("arialbd.ttf", "arialbd"), else by
 /// family (its Regular face, or its first).
 fn face_of<'a>(font: &str, fonts: &'a [FontEntry]) -> Option<&'a FontEntry> {
     let f = font.trim().to_ascii_lowercase();
-    if f.is_empty() || is_shx(&f) {
+    // The catalog resolves bare outline names. Explicit SHX names must not match by stem.
+    if f.is_empty() || f.ends_with(".shx") {
         return None;
     }
     // Any case: font files are often named in capitals (ARIALN.TTF), and the renderer finds them so.
@@ -505,7 +502,7 @@ fn font_group(ui: &mut egui::Ui, st: &mut State, v: &mut TextStyle, fonts: &[Fon
         ui.end_row();
     });
     // A big font extends an SHX font with Asian characters.
-    let shx = is_shx(&v.font);
+    let shx = face.is_none() && cadcraft_fonts::is_shx_name(&v.font);
     let mut use_big = shx && (!v.big_font.is_empty() || st.big_font_on);
     if ui.add_enabled(shx, egui::Checkbox::new(&mut use_big, crate::tl!("Use Big Font"))).changed() {
         st.big_font_on = use_big;
@@ -649,10 +646,11 @@ mod tests {
 
     #[test]
     fn a_font_named_without_its_extension_is_found_in_any_case() {
-        let fonts = [FontEntry { family: "Arial Narrow".into(), style: "Regular".into(), file: "ARIALN.TTF".into() }];
-        for name in ["arialn", "ARIALN", "arialn.ttf", "Arial Narrow"] {
-            assert_eq!(face_of(name, &fonts).map(|e| e.file.as_str()), Some("ARIALN.TTF"), "{name}");
+        let fonts = [FontEntry { family: "CADCraft Test Narrow".into(), style: "Regular".into(), file: "CADCRAFT-TEST-NARROW.TTF".into() }];
+        for name in ["cadcraft-test-narrow", "CADCRAFT-TEST-NARROW", "cadcraft-test-narrow.ttf", "CADCraft Test Narrow"] {
+            assert_eq!(face_of(name, &fonts), fonts.first(), "{name}");
         }
-        assert!(face_of("arial", &fonts).is_none());
+        assert!(face_of("cadcraft-test", &fonts).is_none());
+        assert!(face_of("cadcraft-test-narrow.SHX", &fonts).is_none());
     }
 }
