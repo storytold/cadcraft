@@ -1,4 +1,4 @@
-use super::{DimStyle, Dimension, NumFormat, TextFont, format_decimal, format_linear};
+use super::{DimKind, DimStyle, Dimension, NumFormat, TextFont, format_decimal, format_linear};
 
 /// Format a linear measurement per the style (plain text).
 pub fn format_linear_value(v: f64, st: &DimStyle) -> String {
@@ -17,6 +17,11 @@ pub(super) fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str)
         let lo = format_linear(v - st.tol_minus, &nf).1;
         format!("{{\\H{};\\S{up}^{lo};}}", tol_height_code(st))
     } else {
+        // An authored DIMPOST prefix replaces the default radius or diameter symbol.
+        let prefix = match d.kind {
+            DimKind::Radius | DimKind::Diameter if st.post.find("<>").is_some_and(|marker| marker > 0) => "",
+            _ => prefix,
+        };
         format!("{prefix}{}", format_linear(v, &nf).1)
     };
     let mut s = post(&st.post, &main);
