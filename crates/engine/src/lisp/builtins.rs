@@ -40,6 +40,7 @@ macro_rules! special {
 }
 
 mod args;
+mod dialogs;
 mod files;
 mod functions;
 mod geometry;
@@ -51,6 +52,7 @@ mod wcmatch;
 
 use args::R;
 pub use args::args_err;
+use dialogs::{load_dialog, unload_dialog};
 pub use files::{LispFile, read_text_file};
 use files::{close, findfile, open, read_line, write_line};
 pub use functions::catch_all_error;
@@ -226,6 +228,8 @@ static BUILTINS: &[Builtin] = &[
     ctx!("EXIT", exit),
     ctx!("QUIT", exit),
     ctx!("LOAD", load),
+    ctx!("LOAD_DIALOG", load_dialog),
+    ctx!("UNLOAD_DIALOG", unload_dialog),
     ctx!("AUTOLOAD", autoload),
     ctx!("INITGET", input::initget),
     ctx!("GETPOINT", input::getpoint),

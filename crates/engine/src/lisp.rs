@@ -9,6 +9,8 @@
 pub type BlockSlots = HashMap<Handle, (Arc<cadcraft_doc::Entity>, Option<Handle>)>;
 
 pub mod builtins;
+pub mod dcl;
+mod dcl_load;
 mod drawing;
 pub mod eval;
 pub mod input;
@@ -56,6 +58,10 @@ pub struct Env {
     pub next_pickset: u32,
     pub files: HashMap<u32, builtins::LispFile>,
     pub next_file: u32,
+    /// DCL files `load_dialog` has loaded, by the positive handle returned to Lisp.
+    dialogs: HashMap<i32, dcl_load::LoadedDialog>,
+    /// Next handle to try. Unload frees a handle so a later load can reuse it.
+    next_dialog: i32,
     /// Entities `entdel` deleted (it brings them back when called again), with their space.
     pub deleted: HashMap<Handle, (cadcraft_doc::Space, Arc<cadcraft_doc::Entity>)>,
     /// Every entity's handle in creation order (`entlast`, `entnext`), with clones of the spaces
@@ -86,6 +92,8 @@ impl Default for Env {
             next_pickset: 1,
             files: HashMap::new(),
             next_file: 1,
+            dialogs: HashMap::new(),
+            next_dialog: 1,
             deleted: HashMap::new(),
             order: None,
             block_next: None,
@@ -805,3 +813,6 @@ mod ucs_tests;
 
 #[cfg(test)]
 mod block_tests;
+
+#[cfg(test)]
+mod dcl_tests;
