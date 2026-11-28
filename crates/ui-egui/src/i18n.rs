@@ -43,6 +43,8 @@ pub enum Preference {
     Swedish,
     #[serde(rename = "ar")]
     Arabic,
+    #[serde(rename = "he")]
+    Hebrew,
     #[serde(rename = "hu")]
     Hungarian,
     #[serde(rename = "tr")]
@@ -57,7 +59,7 @@ pub enum Preference {
     Tamil,
 }
 impl Preference {
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::Auto,
         Self::English,
         Self::Greek,
@@ -74,6 +76,7 @@ impl Preference {
         Self::Korean,
         Self::Swedish,
         Self::Arabic,
+        Self::Hebrew,
         Self::Hungarian,
         Self::Turkish,
         Self::Georgian,
@@ -85,8 +88,8 @@ impl Preference {
     /// Every preference in the order the Interface Language dialog lists them: Auto, then English
     /// (the source language), then the rest by the language's own name with accents folded, so
     /// Čeština sits under C and Magyar under M. Names in other scripts follow the Latin ones in
-    /// code point order: Greek, Cyrillic, Arabic, Tamil, Georgian, then the CJK languages. The
-    /// order follows the registry's native name even where the dialog shows an English label
+    /// code point order: Greek, Cyrillic, Hebrew, Arabic, Tamil, Georgian, then the CJK languages.
+    /// The order follows the registry's native name even where the dialog shows an English label
     /// instead (Korean without a Hangul face), so the list does not reorder when a font appears.
     pub fn for_picker() -> Vec<Self> {
         let mut rest: Vec<Self> = Self::ALL.into_iter().filter(|p| !matches!(p, Self::Auto | Self::English)).collect();
@@ -126,6 +129,7 @@ impl Preference {
             Self::Korean => "ko",
             Self::Swedish => "sv",
             Self::Arabic => "ar",
+            Self::Hebrew => "he",
             Self::Hungarian => "hu",
             Self::Turkish => "tr",
             Self::Georgian => "ka",
@@ -159,6 +163,13 @@ impl Preference {
             }
             Self::Swedish => "Svenska",
             Self::Arabic => "العربية",
+            Self::Hebrew => {
+                if crate::theme::can_show("he") {
+                    "עברית"
+                } else {
+                    "Hebrew"
+                }
+            }
             Self::Hungarian => "Magyar",
             Self::Turkish => "Türkçe",
             // Georgian letters come from the craft-fonts Georgian face; a build without it shows
@@ -217,6 +228,7 @@ impl Preference {
             Self::Korean => "ko",
             Self::Swedish => "sv",
             Self::Arabic => "ar",
+            Self::Hebrew => "he",
             Self::Hungarian => "hu",
             Self::Turkish => "tr",
             Self::Georgian => "ka",
@@ -239,7 +251,7 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 21] = [
+pub static LANGUAGES: [Language; 22] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     Language { code: "pl", name: "Polski", source: include_str!("i18n/pl.tsv"), plural: plural_pl, plural_forms: 3, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
@@ -283,6 +295,10 @@ pub static LANGUAGES: [Language; 21] = [
     Language {
         code: "ar", name: "العربية", source: include_str!("i18n/ar.tsv"), plural: plural_arabic, plural_forms: 6, catalog: OnceLock::new()
     },
+    // עברית (Hebrew) is right-to-left; an installed Hebrew font (`theme::hebrew_font`) or
+    // embedded `Hebr` face covers its glyphs, and the shell keeps egui's left-to-right run order.
+    // Three integer plural forms: one (1), two (2), other (0, 3+).
+    Language { code: "he", name: "עברית", source: include_str!("i18n/he.tsv"), plural: plural_he, plural_forms: 3, catalog: OnceLock::new() },
     // Hungarian uses the singular after a numeral, so one form covers every count (the Korean rule).
     Language { code: "hu", name: "Magyar", source: include_str!("i18n/hu.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
     // Turkish keeps a noun singular after a number ("3 commit"), so like Korean it has one form.
@@ -310,6 +326,9 @@ pub static LANGUAGES: [Language; 21] = [
 /// A catalog is chosen by the tag's primary language, so any `pt-*` tag selects `pt-BR`.
 pub fn locale_language(tag: &str) -> Option<&'static str> {
     let primary = tag.trim().split(['-', '_', '.', '@']).next()?;
+    if primary.eq_ignore_ascii_case("iw") {
+        return Some("he");
+    }
     LANGUAGES.iter().find(|l| l.code.split('-').next().is_some_and(|p| p.eq_ignore_ascii_case(primary))).map(|l| l.code)
 }
 
@@ -453,6 +472,15 @@ pub fn plural_cs(n: u64) -> usize {
     match n {
         1 => 0,
         2..=4 => 1,
+        _ => 2,
+    }
+}
+
+/// Hebrew integer plurals: one (1), two (2), other (0 and 3 or more).
+pub fn plural_he(n: u64) -> usize {
+    match n {
+        1 => 0,
+        2 => 1,
         _ => 2,
     }
 }
