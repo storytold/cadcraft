@@ -195,6 +195,9 @@ pub struct Session {
     /// ([`Session::input_object`]): a pick at exactly that point picks that object
     /// ([`Session::pick_object`]).
     pick_hint: Option<(Handle, Vec2)>,
+    /// The Attribute Definition dialog's answers for the ATTDEF it starts to pick the start point
+    /// on screen (everything but the point); the command takes them when it begins.
+    pub attdef_answers: Option<Value>,
 }
 
 impl Default for Session {
@@ -257,6 +260,7 @@ impl Session {
             bars_shown: Default::default(),
             bars_request: Default::default(),
             pick_hint: None,
+            attdef_answers: None,
         }
     }
 

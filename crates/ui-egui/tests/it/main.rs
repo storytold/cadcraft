@@ -1,4 +1,5 @@
 mod animation_effects;
+mod attdef_dialog;
 mod block_description_palette;
 mod chrome_geometry;
 mod clipboard_between_drawings;
@@ -53,6 +54,7 @@ mod style_dialogs;
 mod system_cursor;
 mod text_double_click;
 mod text_edit_in_place;
+mod text_properties_rows;
 mod toolsets_gear;
 mod toolsets_parametric;
 mod typed_open;

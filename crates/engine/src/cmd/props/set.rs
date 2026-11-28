@@ -134,12 +134,15 @@ impl Prepared {
         for h in hs {
             let Some(e) = d.entity(*h) else { continue };
             match &e.kind {
-                EntityKind::Text(t) if two_points => {
+                EntityKind::Text(t) | EntityKind::AttDef(cadcraft_doc::Attrib { text: t, .. }) if two_points => {
                     // The text as this call leaves it: its contents, style, height, width factor
                     // and rotation, where the call sets them too.
                     let num = |k: &str| p.get(k).and_then(Value::as_f64).filter(|v| v.is_finite());
                     let style = str_param(p, "style").and_then(|n| d.text_style(n)).map_or(t.style.as_str(), |s| s.name.as_str());
-                    let value = str_param(p, "text").unwrap_or(&t.value);
+                    let value = match &e.kind {
+                        EntityKind::AttDef(a) => str_param(p, "tag").unwrap_or(&a.tag),
+                        _ => str_param(p, "text").unwrap_or(&t.value),
+                    };
                     let height = num("height").filter(|x| *x > 0.0).unwrap_or(t.height);
                     let width_factor = num("widthFactor").filter(|x| *x > 0.0).unwrap_or(t.width_factor);
                     let rotation = num("rotation").map_or(t.rotation, f64::to_radians);
@@ -167,6 +170,12 @@ fn set_justify(t: &mut Text, h: HAlign, v: VAlign, end: Option<Vec2>) {
     let at = t.justify_point();
     let z = t.insert.z;
     let was_two_points = matches!(t.halign, HAlign::Aligned | HAlign::Fit) && t.align_pt.is_some();
+    if was_two_points
+        && let Some(end) = t.align_pt
+        && t.insert.xy().dist(end.xy()) > 1e-9
+    {
+        t.rotation = t.insert.xy().angle_to(end.xy());
+    }
     let two_points = matches!(h, HAlign::Aligned | HAlign::Fit);
     t.halign = h;
     t.valign = if two_points { VAlign::Baseline } else { v };
@@ -323,6 +332,17 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     let text_style = str_param(p, "style")
         .map(|n| d.text_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("text style `{n}` not found"))))
         .transpose()?;
+    if let Some(tag) = str_param(p, "tag")
+        && (tag.trim().is_empty() || tag.trim().contains(' '))
+    {
+        return Err(bad("properties.set", "an attribute tag must not be empty or contain spaces"));
+    }
+    if let Some(j) = str_param(p, "justify")
+        && crate::cmd::draw::justify(j).is_none()
+        && hs.iter().any(|h| matches!(d.entity(*h).map(|e| &e.kind), Some(EntityKind::Text(_) | EntityKind::AttDef(_))))
+    {
+        return Err(bad("properties.set", "unknown text justification"));
+    }
     let dim_vars = DimVars::new(d, p)?;
     // A pattern must be one each hatch can take, as HATCHEDIT refuses others.
     if let Some(v) = str_param(p, "pattern").filter(|v| !v.trim().is_empty())
@@ -355,6 +375,30 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                 EntityKind::Text(t) => {
                     text(t, &c, h, &mut used);
                     text_position(t, &c, &mut used);
+                }
+                EntityKind::AttDef(a) => {
+                    if let Some(tag) = str_param(p, "tag") {
+                        a.tag = tag.trim().to_ascii_uppercase();
+                        used.insert("tag");
+                    }
+                    if let Some(prompt) = str_param(p, "prompt") {
+                        a.prompt = prompt.to_string();
+                        used.insert("prompt");
+                    }
+                    text(&mut a.text, &c, h, &mut used);
+                    text_position(&mut a.text, &c, &mut used);
+                    for (key, flag) in [
+                        ("invisible", &mut a.invisible),
+                        ("constant", &mut a.constant),
+                        ("verify", &mut a.modes.verify),
+                        ("preset", &mut a.modes.preset),
+                        ("lockPosition", &mut a.modes.lock_position),
+                    ] {
+                        if let Some(v) = p.get(key).and_then(Value::as_bool) {
+                            *flag = v;
+                            used.insert(key);
+                        }
+                    }
                 }
                 EntityKind::MText(t) => mtext(t, &c, &mut used),
                 EntityKind::MLeader(m) => mleader(m, &c, &mut used),

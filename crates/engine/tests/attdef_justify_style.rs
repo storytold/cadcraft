@@ -72,11 +72,13 @@ fn a_bad_justification_or_style_is_refused() {
     let n = s.doc().unwrap().model.len();
     assert!(s.execute("attdef", &json!({"tag": "T", "at": [0, 0], "justify": "XX"})).is_err());
     assert!(s.execute("attdef", &json!({"tag": "T", "at": [0, 0], "style": "NOPE"})).is_err());
-    // Align and Fit need a second baseline point, which attdef has no way to take.
-    for j in ["A", "ALIGN", "F", "fit"] {
-        assert!(s.execute("attdef", &json!({"tag": "T", "at": [0, 0], "justify": j})).is_err(), "{j}");
-    }
     assert_eq!(s.doc().unwrap().model.len(), n, "nothing added");
+    // Align and Fit now take a baseline, with a default endpoint when none is given.
+    for (j, expected) in [("A", HAlign::Aligned), ("ALIGN", HAlign::Aligned), ("F", HAlign::Fit), ("fit", HAlign::Fit)] {
+        let a = add(&mut s, json!({"tag": "T", "at": [0, 0], "justify": j}));
+        assert_eq!(a.text.halign, expected);
+        assert!(a.text.align_pt.is_some());
+    }
 }
 
 /// The issue's use: a block built from the definition gives its attributes the same placement,
@@ -175,16 +177,15 @@ fn typed_justify_then_a_point_justifies_the_definition() {
 }
 
 #[test]
-fn typed_justify_refuses_align_fit_and_unknown_codes_and_asks_again() {
+fn typed_justify_refuses_unknown_codes_and_asks_again() {
     let mut s = session();
     typed_to_start_point(&mut s);
     s.cmdline("J").unwrap();
-    for bad in ["A", "Fit", "XX"] {
-        s.cmdline(bad).unwrap();
-        assert!(s.log.iter().any(|l| l.contains("Invalid option") || l.contains("Align and Fit")), "{bad}: {:?}", s.log);
-        s.log.clear();
-        assert!(s.prompt_text().contains("Enter an option"), "{bad}: {}", s.prompt_text());
-    }
+    let bad = "XX";
+    s.cmdline(bad).unwrap();
+    assert!(s.log.iter().any(|l| l.contains("Invalid option") || l.contains("Align and Fit")), "{bad}: {:?}", s.log);
+    s.log.clear();
+    assert!(s.prompt_text().contains("Enter an option"), "{bad}: {}", s.prompt_text());
     s.cmdline("TR").unwrap();
     s.cmdline("0,0").unwrap();
     s.cmdline("").unwrap();
@@ -231,19 +232,18 @@ fn justify_options(s: &Session) -> Vec<String> {
     inner.split('/').map(str::to_string).collect()
 }
 
-/// `-ATTDEF`'s Justify prompt doesn't list Align and Fit, which it would only refuse (they run
-/// between two points), while TEXT's still offers every option (#1720).
+/// Both commands offer Align and Fit; ATTDEF asks for the second baseline point.
 #[test]
-fn attdef_justify_prompt_leaves_out_align_and_fit_but_text_keeps_them() {
+fn attdef_and_text_justify_prompts_offer_align_and_fit() {
     let mut s = session();
     typed_to_start_point(&mut s);
     s.cmdline("J").unwrap();
     let opts = justify_options(&s);
     assert!(opts.iter().any(|o| o == "Left") && opts.iter().any(|o| o == "MC"), "{opts:?}");
-    assert!(!opts.iter().any(|o| o == "Align" || o == "Fit"), "{opts:?}");
-    // A typed A or F is still refused.
+    assert!(opts.iter().any(|o| o == "Align") && opts.iter().any(|o| o == "Fit"), "{opts:?}");
     s.cmdline("A").unwrap();
-    assert!(s.log.iter().any(|l| l.contains("Align and Fit")), "{:?}", s.log);
+    s.cmdline("0,0").unwrap();
+    assert!(s.prompt_text().contains("second endpoint"), "{}", s.prompt_text());
     s.cmdline("*Cancel*").ok();
 
     let mut t = session();

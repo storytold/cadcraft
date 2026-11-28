@@ -1434,6 +1434,33 @@
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+	Mode	Режим
+	Invisible	Невидимий
+	Constant	Постійний
+	Verify	Перевірка
+	Preset	Попередньо заданий
+	Lock position	Зафіксувати положення
+	Tag	Тег
+	Prompt	Підказка
+	Insertion Point	Точка вставки
+	Specify on-screen	Вказати на екрані
+	Text Settings	Параметри тексту
+	Justification	Вирівнювання
+	Align below previous attribute definition	Вирівняти під попереднім визначенням атрибута
+	The tag must not be empty or contain spaces	Тег не може бути порожнім або містити пробіли
+	Not a positive height: {text}	Не додатна висота: {text}
+	Not an angle: {text}	Не кут: {text}
+	Not a point: {text}	Не точка: {text}
+	ATTDEF could not start	Не вдалося запустити ATTDEF
+	Middle	Посередині
+	Fit	Вписування
+	Top center	Угорі по центру
+	Middle left	Посередині ліворуч
+	Middle center	Посередині по центру
+	Middle right	Посередині праворуч
+	Bottom center	Унизу по центру
+justify	Center	По центру
+justify	Align	Вирівняно
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Креслення змінилося. Закрийте вікно та відкрийте його знову.
@@ -1474,13 +1501,11 @@
 	{property}: that value can't be used here.	{property}: це значення тут не можна використати.
 	Misc	Інше
 	Lines & Arrows	Лінії та стрілки
-	Fit	Вписування
 	Primary Units	Основні одиниці
 	Alternate Units	Альтернативні одиниці
 	Tolerances	Допуски
 	Style	Стиль
 	Annotative	Анотативний
-	Justification	Вирівнювання
 	Obliquing	Кут нахилу
 	Text alignment X	Точка вирівнювання X
 	Text alignment Y	Точка вирівнювання Y
@@ -1490,12 +1515,6 @@
 	Line space style	Тип міжрядкового інтервалу
 	At least	Не менше
 	Exactly	Точно
-	Middle	Посередині
-	Top center	Угорі по центру
-	Middle left	Посередині ліворуч
-	Middle center	Посередині по центру
-	Middle right	Посередині праворуч
-	Bottom center	Унизу по центру
 	Top	Угорі
 	Bottom	Унизу
 	Arrow 1	Стрілка 1
