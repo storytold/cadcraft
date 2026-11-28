@@ -164,6 +164,7 @@ mod trim_extend_options;
 mod undo_count;
 mod undo_layout_tab;
 mod viewport_clip;
+mod viewport_ucs_copy;
 mod vplayer_prompts;
 mod vports;
 mod wipeout_grips;

@@ -81,5 +81,6 @@ mod user_lin_pat_roundtrip;
 mod view_tables_roundtrip;
 mod view_target;
 mod viewport_clip_roundtrip;
+mod viewport_ucs_roundtrip;
 mod xclip_roundtrip;
 mod xref_roundtrip;
