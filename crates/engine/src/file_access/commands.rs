@@ -57,6 +57,7 @@ pub const FILES: &[&str] = &[
     "stylesmanager",
     "tableexport",
     "wblock",
+    "whohas",
     "xattach",
     "xbind",
     "xopen",
