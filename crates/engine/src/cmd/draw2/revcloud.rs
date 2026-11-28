@@ -26,6 +26,10 @@ fn default_max_arc_len(s: &Session, min: f64) -> f64 {
     s.doc().ok().map_or(min, |d| d.header.f64("CADCRAFT_REVCLOUDMAXARCLEN", min)).max(min)
 }
 
+/// The bulge of every arc of a revision cloud (an arc of about 110°). Readers that check
+/// `RevcloudProps` xdata and bulge accept a closed polyline whose bulges are within 0.02 of this.
+const CLOUD_BULGE: f64 = 0.520567050552;
+
 /// Bulged closed polyline vertices for a revision cloud around `boundary`.
 pub(crate) fn cloud_vertices(boundary: &[Vec2], arc_len: f64, per_edge: bool, reverse: bool) -> Option<Vec<PolyVertex>> {
     let mut pts: Vec<Vec2> = Vec::new();
@@ -69,7 +73,7 @@ pub(crate) fn cloud_vertices(boundary: &[Vec2], arc_len: f64, per_edge: bool, re
             out.extend(chain.at_length_in(&ends, perim * j as f64 / k as f64).map(|x| x.0));
         }
     }
-    let b = if reverse { -0.5 } else { 0.5 };
+    let b = if reverse { -CLOUD_BULGE } else { CLOUD_BULGE };
     Some(out.into_iter().map(|p| PolyVertex::with_bulge(p, b)).collect())
 }
 

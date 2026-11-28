@@ -157,6 +157,7 @@ mod rectang_polygon_order;
 mod refedit;
 mod region;
 mod rename_cmdline;
+mod revcloud_recognised;
 mod rotate_reference;
 mod rotation_grip_input;
 mod scale_offset_z;
