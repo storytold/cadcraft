@@ -111,6 +111,7 @@ impl Session {
         let Some(snap) = st.undo.pop() else { return Ok(None) };
         let cur = st.swap_in(snap);
         let label = cur.label.clone();
+        st.selection_windows.clear();
         st.redo.push(cur);
         self.lisp_rebase();
         Ok(Some(label))
@@ -125,6 +126,7 @@ impl Session {
         let Some(snap) = st.redo.pop() else { return Ok(None) };
         let cur = st.swap_in(snap);
         let label = cur.label.clone();
+        st.selection_windows.clear();
         st.undo.push(cur);
         self.lisp_rebase();
         Ok(Some(label))
