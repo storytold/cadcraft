@@ -797,6 +797,24 @@ fn many_multilines_naming_missing_styles_save_quickly() {
     assert!(offsets.len() == N + 1 && !offsets.contains(&0.25), "a later multiline does not change the style");
 }
 
+/// A multiline style whose name has spaces around it in the file is read with the name trimmed, so
+/// its multilines, whose lookup trims, find it: a save writes it once and points them at it.
+#[test]
+fn a_padded_multiline_style_name_is_saved_once() {
+    let t = "0\nSECTION\n2\nENTITIES\n0\nMLINE\n5\n100\n100\nAcDbEntity\n8\n0\n100\nAcDbMline\n2\n Road \n40\n1\n70\n0\n71\n1\n72\n2\n73\n2\n\
+             10\n0\n20\n0\n30\n0\n11\n0\n21\n0\n31\n0\n12\n1\n22\n0\n32\n0\n13\n0\n23\n1\n33\n0\n74\n2\n41\n0\n41\n0\n75\n0\n74\n2\n41\n0\n41\n0\n75\n0\n\
+             11\n1\n21\n0\n31\n0\n12\n1\n22\n0\n32\n0\n13\n0\n23\n1\n33\n0\n74\n2\n41\n0\n41\n0\n75\n0\n74\n2\n41\n0\n41\n0\n75\n0\n\
+             0\nENDSEC\n0\nSECTION\n2\nOBJECTS\n0\nMLINESTYLE\n5\n200\n100\nAcDbMlineStyle\n2\n Road \n70\n0\n3\npadded\n71\n2\n\
+             49\n0.25\n62\n256\n6\nBYLAYER\n49\n-0.25\n62\n256\n6\nBYLAYER\n0\nENDSEC\n0\nEOF\n";
+    let d = read(t.as_bytes(), "padded.dxf").unwrap();
+    assert_eq!(d.mline_styles.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["STANDARD", "Road"]);
+    let p = pairs(&write_dxf(&d));
+    let entries = entry_names(&p);
+    assert_eq!(first_groups(&p, "MLINESTYLE", "2"), ["STANDARD", "Road"], "one Road style");
+    let styles: Vec<&str> = first_groups(&p, "MLINE", "340").iter().filter_map(|h| entries.get(h)).map(String::as_str).collect();
+    assert_eq!(styles, ["Road"]);
+}
+
 /// Many layouts with every paper-space object in one of the last of them read in linear time.
 /// Each object goes to the first layout of its exact name, as before: not to an earlier one whose
 /// name differs only in case, nor to a later one of the same name (#1924).

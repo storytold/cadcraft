@@ -286,7 +286,9 @@ fn read_style(tags: &[Tag]) -> Option<MLineStyle> {
     let mut fill = Color::ByLayer;
     for t in body {
         match t.code {
-            2 => st.name = t.str(),
+            // Trimmed, as the writer writes it and as multilines look it up: a padded name kept
+            // as read was missed by its multilines' lookup, so a save wrote a second style of it.
+            2 => st.name = t.str().trim().to_string(),
             3 => st.description = t.str(),
             70 => flags = t.i64(),
             51 => st.start_caps.angle = t.f64().to_radians(),
