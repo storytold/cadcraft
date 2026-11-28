@@ -1,6 +1,8 @@
 //! Hit testing and window/crossing selection.
 
-use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Prim, Space, entity_bounds};
+use std::borrow::Cow;
+
+use cadcraft_doc::{AnnoDraw, Drawing, Entity, EntityKind, Handle, Prim, Space, anno_draw, anno_scaled, entity_bounds};
 use cadcraft_geom::{Bounds2, Line, Vec2, point_in_polygon};
 
 use crate::spatial::{self, SpatialIndex};
@@ -13,8 +15,12 @@ fn draws_a_block(e: &Entity) -> bool {
 
 /// Polylines approximating an entity for hit testing, tessellated at `tol`.
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
+    hit_polylines_in(d, e, tol, &[])
+}
+
+fn hit_polylines_in(d: &Drawing, e: &Entity, tol: f64, frozen: &[String]) -> Vec<Vec<Vec2>> {
     if matches!(e.kind, EntityKind::Insert(_)) {
-        let list = insert_geometry(d, e, tol);
+        let list = insert_geometry(d, e, tol, frozen);
         return list
             .prims
             .iter()
@@ -122,8 +128,9 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
     }
 }
 
-fn insert_geometry(d: &Drawing, e: &Entity, tol: f64) -> cadcraft_render::DisplayList {
-    cadcraft_render::build_entities(d, std::iter::once(e), &cadcraft_render::Options { tolerance: tol, linetypes: false, ..Default::default() })
+fn insert_geometry(d: &Drawing, e: &Entity, tol: f64, frozen: &[String]) -> cadcraft_render::DisplayList {
+    let opts = cadcraft_render::Options { tolerance: tol, linetypes: false, ..Default::default() };
+    cadcraft_render::build_entities_with_frozen_layers(d, std::iter::once(e), &opts, frozen)
 }
 
 /// The part of an image its clips leave showing, as triangles (three points each); empty when a
@@ -142,7 +149,7 @@ fn shown_image_tris(img: &cadcraft_render::DImage) -> Vec<Vec2> {
 }
 
 fn insert_fill_hits_box(d: &Drawing, e: &Entity, bx: &Bounds2, tol: f64) -> bool {
-    let list = insert_geometry(d, e, tol);
+    let list = insert_geometry(d, e, tol, &[]);
     list.prims.iter().any(|p| {
         if let cadcraft_render::Kind::Image { index } = p.kind {
             let Some(img) = list.images.get(index as usize) else { return false };
@@ -169,7 +176,11 @@ fn dist_to_polyline(pts: &[Vec2], p: Vec2) -> f64 {
 
 /// Distance from `p` to the entity (0 inside text boxes and solid fills).
 pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
-    let polys = hit_polylines(d, e, tol);
+    entity_distance_in(d, e, p, tol, &[])
+}
+
+fn entity_distance_in(d: &Drawing, e: &Entity, p: Vec2, tol: f64, frozen: &[String]) -> f64 {
+    let polys = hit_polylines_in(d, e, tol, frozen);
     let mut best = polys.iter().map(|pl| dist_to_polyline(pl, p)).fold(f64::INFINITY, f64::min);
     let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Table(_))
         || matches!(e.kind, EntityKind::Tolerance(_));
@@ -420,7 +431,27 @@ pub fn pick(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Option<Handle
 /// in that viewport, are not drawn there and are not picked.
 pub fn pick_in(d: &Drawing, space: &Space, frozen: &[String], p: Vec2, aperture: f64) -> Option<Handle> {
     let ix = spatial::index(d, space);
-    pick_with(d, space, &ix, frozen, p, aperture)
+    pick_with(d, space, &ix, frozen, p, aperture, None)
+}
+
+/// Model-space pick at a layout viewport's annotation scale, for attribute editor double-clicks.
+pub fn pick_at_viewport_scale(d: &Drawing, frozen: &[String], scale: f64, p: Vec2, aperture: f64) -> Option<Handle> {
+    let ix = spatial::viewport_index(d, scale);
+    pick_with(d, &Space::Model, &ix, frozen, p, aperture, Some(scale))
+}
+
+/// Use the same viewport geometry for the index and the hit test. Clear the annotation scales
+/// after scaling so that the bounds and renderer use the projected entity as it is.
+pub(crate) fn entity_for_pick(e: &Entity, viewport_scale: Option<f64>, all_visible: bool) -> Option<Cow<'_, Entity>> {
+    match viewport_scale.map(|scale| anno_draw(e, scale, all_visible)) {
+        Some(AnnoDraw::Hidden) => None,
+        Some(AnnoDraw::Scaled(scale)) => {
+            let mut e = anno_scaled(e, scale);
+            e.common.anno_scales.clear();
+            Some(Cow::Owned(e))
+        }
+        _ => Some(Cow::Borrowed(e)),
+    }
 }
 
 pub(crate) fn pick_with(
@@ -430,18 +461,23 @@ pub(crate) fn pick_with(
     frozen: &[String],
     p: Vec2,
     aperture: f64,
+    viewport_scale: Option<f64>,
 ) -> Option<Handle> {
     let probe = Bounds2::new(p, p).expand(aperture);
+    let all_visible = viewport_scale.is_some() && d.anno_all_visible();
+    // The attribute editor tests visible block contents. Frozen contents can only narrow the
+    // hit geometry, so the bounds can still be shared by viewports at this annotation scale.
+    let geometry_frozen = if viewport_scale.is_some() { frozen } else { &[] };
     // Candidates come topmost first: the first within the aperture is the one.
     for (e, known) in candidates(d, space, ix, &probe.expand(aperture), true, true)? {
         if !selectable(d, e, frozen) {
             continue;
         }
-        let infinite = is_infinite(e);
-        if !infinite && !bounds_of(d, e, known).expand(aperture).intersects(&probe) {
+        let Some(e) = entity_for_pick(e, viewport_scale, all_visible) else { continue };
+        if !is_infinite(&e) && !bounds_of(d, &e, known).expand(aperture).intersects(&probe) {
             continue;
         }
-        if entity_distance(d, e, p, aperture / 4.0) <= aperture {
+        if entity_distance_in(d, &e, p, aperture / 4.0, geometry_frozen) <= aperture {
             return Some(e.handle);
         }
     }

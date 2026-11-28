@@ -52,6 +52,18 @@ fn content(s: &Session) -> Vec<Vec2> {
 const L: [[f64; 2]; 6] = [[10.0, 10.0], [110.0, 10.0], [110.0, 60.0], [60.0, 60.0], [60.0, 110.0], [10.0, 110.0]];
 
 #[test]
+fn model_space_enters_the_topmost_viewport_that_contains_the_point() {
+    let mut s = session();
+    let lower = s.execute("mview", &json!({ "p1": [10, 10], "p2": [110, 110] })).unwrap()["viewports"][0].clone();
+    let upper = s.execute("mview", &json!({ "option": "polygonal", "points": L })).unwrap()["viewport"].clone();
+
+    assert_eq!(s.execute("mspace", &json!({ "at": [20, 100] })).unwrap()["viewport"], upper);
+    s.execute("pspace", &json!({})).unwrap();
+    // The upper viewport's outline leaves this point in the notch.
+    assert_eq!(s.execute("mspace", &json!({ "at": [100, 100] })).unwrap()["viewport"], lower);
+}
+
+#[test]
 fn polygonal_viewport_clips_model_space() {
     let mut s = session();
     let r = s.execute("mview", &json!({"option": "polygonal", "points": L})).unwrap();

@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use super::super::curves::{self, handle_value};
 use super::super::helpers::{lwpoly, rect_vertices};
 use super::super::{bad, bool_or, point_param, points_param, str_param, targets};
-use super::{fit_view, layout_viewports, mview, printable, split, target_layout};
+use super::{fit_view, mview, printable, split, target_layout};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Most vertices a typed or JSON polygonal boundary may have.
@@ -348,8 +348,7 @@ pub(super) fn run_vpclip(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// The viewport (turned on) under a paper-space point, topmost first, honouring clip boundaries.
 pub(super) fn viewport_at(s: &Session, at: Vec2) -> Option<Handle> {
-    let d = s.doc().ok()?;
-    layout_viewports(s).ok()?.into_iter().rev().find(|(h, v)| contains(d, *h, v, at)).map(|(h, _)| h)
+    s.state().ok()?.viewport_at(at)
 }
 
 /// Like [`viewport_at`], also finding viewports that are turned off (MVIEW ON picks them).

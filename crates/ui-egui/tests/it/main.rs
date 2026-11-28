@@ -1,4 +1,5 @@
 mod animation_effects;
+mod block_attribute_double_click;
 mod block_description_palette;
 mod chrome_geometry;
 mod clipboard_between_drawings;

@@ -86,6 +86,52 @@ fn pairs(v: &[(&str, &str)]) -> Vec<(String, String)> {
     v.iter().map(|(t, v)| (t.to_string(), v.to_string())).collect()
 }
 
+fn repeated_tag_session(attdia: bool) -> Session {
+    let mut s = session(None, Some(attdia));
+    let block = Arc::make_mut(s.doc_mut().unwrap().blocks.get_mut("T").unwrap());
+    for handle in block.entities.handles() {
+        block.entities.modify(handle, |e| {
+            if let EntityKind::AttDef(a) = &mut e.kind {
+                a.tag = "T".into();
+            }
+        });
+    }
+    s
+}
+
+#[test]
+fn repeated_tag_prompts_keep_each_answers_value_through_verify() {
+    let mut s = repeated_tag_session(false);
+    insert_up_to_the_attributes(&mut s);
+    s.cmdline("X").unwrap();
+    s.cmdline("Y").unwrap();
+    assert_eq!(s.prompt_text(), "INSERT First <X>:");
+    s.cmdline("Verified").unwrap();
+
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(values(&s), pairs(&[("T", "Verified"), ("T", "two"), ("T", "Y")]));
+}
+
+#[test]
+fn repeated_tag_dialog_rows_keep_their_own_answers() {
+    let mut s = repeated_tag_session(true);
+    insert_up_to_the_attributes(&mut s);
+    let entry = s.attribute_entry().expect("the dialog's rows");
+    for answer in entry.answers(&["X".into(), "Y".into()]) {
+        s.input(Input::Text(answer)).unwrap();
+    }
+
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(values(&s), pairs(&[("T", "X"), ("T", "two"), ("T", "Y")]));
+}
+
+#[test]
+fn repeated_tags_in_json_insertion_take_the_same_value() {
+    let mut s = repeated_tag_session(true);
+    s.execute("insert", &json!({ "name": "T", "at": [100, 0], "attribs": { "t": "shared" } })).unwrap();
+    assert_eq!(values(&s), pairs(&[("T", "shared"), ("T", "shared"), ("T", "shared")]));
+}
+
 #[test]
 fn a_fresh_session_reads_attdia_1() {
     // AutoCAD 2026's ATTDIA page: Type Integer, Saved in Registry, Initial value 1.

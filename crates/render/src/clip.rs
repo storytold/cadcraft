@@ -228,6 +228,26 @@ pub fn boundary_polygon(k: &EntityKind) -> Option<Vec<Vec2>> {
     clean_polygon(pts)
 }
 
+/// Whether `p` is inside the clip polygon `poly`, with the same cleaning and even-odd rule as
+/// [`PolyClip::new`] and [`PolyClip::contains`], without building its edge bands or fill
+/// triangles: a pick tests one point, so it pays for the outline only. `None` where
+/// [`PolyClip::new`] makes no region (a degenerate outline), which clips nothing.
+pub fn polygon_contains(poly: &[Vec2], p: Vec2) -> Option<bool> {
+    let poly = clean_polygon(poly.to_vec())?;
+    if !p.is_finite() || !Bounds2::from_points(poly.iter().copied()).contains(p) {
+        return Some(false);
+    }
+    let n = poly.len();
+    let mut inside = false;
+    for i in 0..n {
+        let (Some(a), Some(b)) = (poly.get(i), poly.get((i + 1) % n)) else { continue };
+        if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+            inside = !inside;
+        }
+    }
+    Some(inside)
+}
+
 /// Finite points without repeats or the closing duplicate, thinned to [`MAX_CLIP_POINTS`];
 /// `None` without at least three points and some area.
 fn clean_polygon(pts: Vec<Vec2>) -> Option<Vec<Vec2>> {
@@ -601,6 +621,31 @@ mod tests {
         assert!(c.polygon().len() <= MAX_CLIP_POINTS);
         assert!(c.contains(Vec2::ZERO));
         assert!(c.clip_polyline(&[Vec2::new(f64::NAN, 0.0), Vec2::new(1.0, 1.0)]).is_empty());
+    }
+
+    #[test]
+    fn the_point_only_test_matches_the_draw_path_region() {
+        // A self-touching outline (a square with a notch) and a rectangle, tested at the same
+        // points the draw path clips against: the pick's point test must agree with it.
+        let notch =
+            [Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0), Vec2::new(5.0, 10.0), Vec2::new(5.0, 5.0), Vec2::new(0.0, 5.0)];
+        let rect = [Vec2::new(-2.0, -2.0), Vec2::new(3.0, -2.0), Vec2::new(3.0, 4.0), Vec2::new(-2.0, 4.0)];
+        for poly in [notch.as_slice(), rect.as_slice()] {
+            let region = PolyClip::new(poly).unwrap();
+            for x in [-3.0, 0.0, 1.0, 2.5, 5.0, 7.0, 10.0, 11.0] {
+                for y in [-3.0, 0.0, 2.0, 5.0, 8.0, 10.0, 12.0] {
+                    let p = Vec2::new(x, y);
+                    assert_eq!(polygon_contains(poly, p), Some(region.contains(p)), "{p:?} in {poly:?}");
+                }
+            }
+        }
+        // A hostile point is outside; a degenerate outline makes no region (it clips nothing),
+        // as `PolyClip::new` makes none.
+        assert_eq!(polygon_contains(notch.as_slice(), Vec2::new(f64::NAN, 1.0)), Some(false));
+        let flat = [Vec2::ZERO, Vec2::new(1.0, 1.0), Vec2::new(2.0, 2.0)];
+        assert!(PolyClip::new(&flat).is_none());
+        assert_eq!(polygon_contains(&flat, Vec2::new(0.5, 0.5)), None);
+        assert_eq!(polygon_contains(&[Vec2::ZERO, Vec2::new(1.0, 1.0)], Vec2::new(0.5, 0.5)), None);
     }
 
     #[test]

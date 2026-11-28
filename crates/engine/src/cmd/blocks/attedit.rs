@@ -3,7 +3,7 @@
 //! time or by replacing a string in all of them. Attribute tags match in any case, as in AutoCAD.
 
 use cadcraft_doc::color::Color;
-use cadcraft_doc::{AttribProps, Common, EntityKind, HAlign, Handle, Text, VAlign};
+use cadcraft_doc::{Attrib, AttribProps, Common, EntityKind, HAlign, Handle, Text, VAlign};
 use cadcraft_geom::Vec3;
 use serde_json::{Map, Value, json};
 
@@ -15,12 +15,13 @@ use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, St
 
 /// Longest attribute value a string replacement may produce (bytes).
 const MAX_VALUE: usize = 65_536;
+const LOCKED_REFERENCE: &str = "the reference is on a locked layer";
 
 pub(super) fn attedit_spec() -> CommandSpec {
     CommandSpec::new("attedit", "Single...", run)
         .menu(&["Modify", "Object", "Attribute", "Single..."])
         .alias(&["ate", "eattedit"])
-        .params("{handle, values: {TAG: value} (tags in any case)} → {changed, unknownTags?}")
+        .params("{handle, values?: {TAG: value} (tags in any case; every attribute with the tag), at?: {index: value} (one attribute, by its place in the reference, for repeated tags); constant attributes are left alone} → {changed, unknownTags?, constantTags?}")
         .interactive(|_| Ok(Box::new(AtteditM::default())))
 }
 
@@ -35,7 +36,11 @@ pub(super) fn dash_attedit_spec() -> CommandSpec {
 /// The value `values` gives for `tag`, matching the tag in any case. Numbers and booleans count
 /// as their text.
 pub(super) fn value_for(values: &Map<String, Value>, tag: &str) -> Option<String> {
-    let v = values.get(tag).or_else(|| values.iter().find(|(k, _)| k.eq_ignore_ascii_case(tag)).map(|(_, v)| v))?;
+    text_of(values.get(tag).or_else(|| values.iter().find(|(k, _)| k.eq_ignore_ascii_case(tag)).map(|(_, v)| v))?)
+}
+
+/// A value given for an attribute as its text (numbers and booleans count as their text).
+fn text_of(v: &Value) -> Option<String> {
     match v {
         Value::String(t) => Some(t.clone()),
         Value::Number(n) => Some(n.to_string()),
@@ -63,18 +68,103 @@ pub(super) fn with_unknown_tags(s: &Session, h: Handle, values: &Map<String, Val
 fn run(s: &mut Session, p: &Value) -> Result<Value> {
     let h = targets(s, p)?.first().copied().ok_or_else(|| bad("attedit", "`handle` is required"))?;
     let vals = p.get("values").and_then(Value::as_object).cloned().unwrap_or_default();
+    let Some(EntityKind::Insert(ins)) = s.doc()?.entity(h).map(|e| &e.kind) else {
+        return Err(bad("attedit", format!("{} is not a block reference", h.hex())));
+    };
+    if super::super::curves::is_locked(s, h) {
+        return Err(bad("attedit", LOCKED_REFERENCE));
+    }
+    // Values by place (`at`): one attribute each, where a tag repeats (a DXF reference may carry
+    // two attributes with one tag; `values` changes both).
+    let mut at: Vec<(usize, String)> = Vec::new();
+    if let Some(m) = p.get("at").filter(|v| !v.is_null()) {
+        let m = m.as_object().ok_or_else(|| bad("attedit", "`at` must be an object of {index: value}"))?;
+        for (k, v) in m {
+            let i = k
+                .trim()
+                .parse::<usize>()
+                .ok()
+                .filter(|i| *i < ins.attribs.len())
+                .ok_or_else(|| bad("attedit", format!("`at`: {k} is not the index of one of the reference's attributes")))?;
+            at.push((i, text_of(v).ok_or_else(|| bad("attedit", format!("`at`: the value for {k} must be text")))?));
+        }
+    }
+    let given = |i: usize, tag: &str| at.iter().find(|(j, _)| *j == i).map(|(_, v)| v.clone()).or_else(|| value_for(&vals, tag));
+    // Constant attributes keep their definition's value.
+    let constant: Vec<String> =
+        ins.attribs.iter().enumerate().filter(|(i, a)| a.constant && given(*i, &a.tag).is_some()).map(|(_, a)| a.tag.clone()).collect();
+    if let Some((_, a)) = ins.attribs.iter().enumerate().find(|(i, a)| given(*i, &a.tag).is_some_and(|v| v.len() > MAX_VALUE)) {
+        return Err(bad("attedit", format!("the value for {} is longer than {MAX_VALUE} bytes", a.tag)));
+    }
     let mut n = 0;
     s.doc_mut()?.modify_entity(h, |e| {
         if let EntityKind::Insert(i) = &mut e.kind {
-            for a in &mut i.attribs {
-                if let Some(v) = value_for(&vals, &a.tag) {
+            for (j, a) in i.attribs.iter_mut().enumerate().filter(|(_, a)| !a.constant) {
+                if let Some(v) = given(j, &a.tag) {
                     set_value(&mut a.text, v);
                     n += 1;
                 }
             }
         }
     })?;
-    Ok(with_unknown_tags(s, h, &vals, json!({ "changed": n })))
+    let mut r = with_unknown_tags(s, h, &vals, json!({ "changed": n }));
+    if !constant.is_empty()
+        && let Some(o) = r.as_object_mut()
+    {
+        o.insert("constantTags".into(), json!(constant));
+    }
+    Ok(r)
+}
+
+/// One attribute of a block reference, as the Properties palette and the Edit Attributes dialog
+/// list it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttributeRow {
+    pub tag: String,
+    /// The definition's prompt (the tag when it has none).
+    pub prompt: String,
+    pub value: String,
+    /// Where the attribute's text is inserted: two attributes can share a tag and a value, and a
+    /// reorder of the block's definitions moves them.
+    pub at: Vec3,
+    /// Not constant: the value can be changed.
+    pub editable: bool,
+    pub invisible: bool,
+    /// A multiline attribute: its value may hold line breaks.
+    pub multiline: bool,
+    /// The whole stored attribute this row was made from. The fields above are what a list shows;
+    /// this is what a pending edit is bound to, so a row is stale when any stored property differs
+    /// (text height, rotation, alignment point, justification, style, its own layer/colour/
+    /// linetype/lineweight overrides, its modes, …) and not only when the shown ones do.
+    pub record: Attrib,
+}
+
+/// The attributes of block reference `h`, in order (empty for other objects). The prompt comes
+/// from the attribute, else from its definition in the reference's block.
+pub fn attributes(d: &cadcraft_doc::Drawing, h: Handle) -> Vec<AttributeRow> {
+    let Some(EntityKind::Insert(ins)) = d.entity(h).map(|e| &e.kind) else { return Vec::new() };
+    let block = d.block(&ins.block);
+    let def_prompt = |tag: &str| {
+        block.and_then(|b| {
+            b.entities.iter().find_map(|e| match &e.kind {
+                EntityKind::AttDef(ad) if ad.tag.eq_ignore_ascii_case(tag) && !ad.prompt.is_empty() => Some(ad.prompt.clone()),
+                _ => None,
+            })
+        })
+    };
+    ins.attribs
+        .iter()
+        .map(|a| AttributeRow {
+            tag: a.tag.clone(),
+            prompt: if a.prompt.is_empty() { def_prompt(&a.tag).unwrap_or_else(|| a.tag.clone()) } else { a.prompt.clone() },
+            value: a.text.value.clone(),
+            at: a.text.insert,
+            editable: !a.constant,
+            invisible: a.invisible,
+            multiline: a.multiline.is_some(),
+            record: a.clone(),
+        })
+        .collect()
 }
 
 /// A block name, tag or value specification: comma-separated wildcard patterns, any case. For
@@ -309,6 +399,10 @@ impl AtteditM {
         let mut msg = "Select a block reference.";
         for h in hs {
             let Some(EntityKind::Insert(ins)) = d.entity(*h).map(|e| &e.kind) else { continue };
+            if super::super::curves::is_locked(s, *h) {
+                msg = LOCKED_REFERENCE;
+                continue;
+            }
             let atts: Vec<(usize, String, String)> =
                 ins.attribs.iter().enumerate().filter(|(_, a)| !a.constant).map(|(k, a)| (k, a.tag.clone(), a.text.value.clone())).collect();
             if atts.is_empty() {
@@ -327,6 +421,15 @@ impl Interactive for AtteditM {
     fn name(&self) -> &'static str {
         "ATTEDIT"
     }
+    /// A selected block reference is taken at once (Edit Attributes from the shortcut menu).
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        let pre = s.selection();
+        if s.settings.pickfirst && !pre.is_empty() {
+            self.pick(s, &pre)?;
+            s.set_selection(Vec::new());
+        }
+        Ok(Step::Continue)
+    }
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.attribs.get(self.values.len()) {
             Some((_, tag, cur)) if self.block.is_some() => Prompt::new(format!("Enter value for {tag}"), Accept::TEXT).default(cur.clone()),
@@ -342,17 +445,22 @@ impl Interactive for AtteditM {
                 _ => Ok(Step::Continue),
             };
         };
-        let cur = self.attribs.get(self.values.len()).map(|a| a.2.clone()).unwrap_or_default();
-        self.values.push(match i {
+        let value = match i {
             Input::Text(t) => t,
-            Input::Enter => cur,
+            Input::Enter => self.attribs.get(self.values.len()).map(|a| a.2.clone()).unwrap_or_default(),
             _ => return Ok(Step::Continue),
-        });
-        if self.values.len() < self.attribs.len() {
+        };
+        if self.values.len() + 1 < self.attribs.len() {
+            self.values.push(value);
             return Ok(Step::Continue);
         }
+        // The layer can be locked after the pick. Keep the last prompt open so it can be retried.
+        if super::super::curves::is_locked(s, h) {
+            return Err(EngineError::Other(LOCKED_REFERENCE.into()));
+        }
         // All answered: apply them together (one undo step).
-        for ((k, _, _), v) in self.attribs.iter().zip(&self.values) {
+        let answers = self.values.iter().chain(std::iter::once(&value));
+        for ((k, _, _), v) in self.attribs.iter().zip(answers) {
             edit(s, (h, *k), |_| Some(v.clone()))?;
         }
         Ok(Step::Done)
