@@ -157,13 +157,47 @@ fn mirror_text(t: &mut Text, align: Option<Vec3>, insert: Vec3) {
     }
 }
 
-/// An ATTDEF, whose multiline text is embedded MTEXT after its own groups.
-pub(super) fn attdef(tags: &[Tag], c: &Common) -> Attrib {
+/// An attribute's text (ATTRIB or ATTDEF, read by [`text_from`] from its own groups `t`) in a
+/// tilted plane, drawn as seen from above. Its insertion point, alignment point and rotation
+/// (groups 10, 11 and 50) are in the OCS of its extrusion (210): the DXF Reference gives both
+/// points as "in OCS" for ATTRIB and ATTDEF, and its "Object Coordinate Systems (OCS)" lists both
+/// among the planar entities whose axes come from the arbitrary axis algorithm. Read as world
+/// points they put the attribute millions of units from its place in a drawing near survey
+/// coordinates (#3541). `Text` cannot hold the plane, so the points are mapped to the WCS and the
+/// rotation becomes the way the plane's turned x axis runs in plan, as a tilted LWPOLYLINE or HATCH
+/// is drawn flat (#1886); a direction seen edge-on keeps the file's turn. Returns whether the text
+/// was mapped: its points are then plan coordinates, and the extrusion is spent.
+///
+/// A plane facing down (z < 0) is left to `mirror_text`, which has mapped the points already. On
+/// the Z axis (within the `Mat4::ocs` tolerance) the OCS is the WCS, and an extrusion too short for
+/// `Vec3::normalized` names no plane (`Mat4::ocs` takes it as the Z axis): nothing changes for those.
+pub(super) fn flatten_tilted(text: &mut Text, t: &T) -> bool {
+    let n = Vec3::new(t.fd(210, 0.0), t.fd(220, 0.0), t.fd(230, 1.0));
+    let unit = n.normalized();
+    if unit.z < 0.0 || (unit.x.abs() < 1e-12 && unit.y.abs() < 1e-12) {
+        return false;
+    }
+    let m = cadcraft_geom::Mat4::ocs(n);
+    text.insert = m.apply(text.insert);
+    text.align_pt = text.align_pt.map(|a| m.apply(a));
+    let along = m.apply(Vec3::new(text.rotation.cos(), text.rotation.sin(), 0.0)).xy();
+    if along.len() > 1e-9 {
+        text.rotation = cadcraft_geom::norm_angle(along.angle());
+    }
+    true
+}
+
+/// An ATTDEF, whose multiline text is embedded MTEXT after its own groups. One in a tilted plane
+/// is drawn as seen from above, and its extrusion in `c` is spent ([`flatten_tilted`]).
+pub(super) fn attdef(tags: &[Tag], c: &mut Common) -> Attrib {
     // A multiline definition has its text as embedded MTEXT after its own groups.
     let (own, embedded) = split_embedded(tags);
     let multiline = multiline_attrib(embedded, c);
     let own = T(own);
     let mut text = text_from(&own);
+    if flatten_tilted(&mut text, &own) {
+        c.extrusion = Vec3::Z;
+    }
     if let Some(m) = &multiline {
         text.value.clone_from(&m.read_as);
     }

@@ -397,6 +397,454 @@ fn many_distinct_symbol_names_read_quickly() {
     assert_eq!(d.text_style("ST0").map(|s| s.height), Some(2.0));
 }
 
+/// Many distinct dimension style names read in linear time, with the duplicate rule kept: a later
+/// record of a name in other case replaces the first, which keeps its place and takes the later
+/// record's name, also the Standard style a drawing starts with (#1924). The names share their
+/// first 200 bytes, so comparing two costs about that.
+#[test]
+fn many_distinct_dimension_style_names_read_quickly() {
+    const N: usize = 20_000;
+    let name = |i: usize| format!("D{}{i:06}", "x".repeat(199));
+    let mut t = String::from("0\nSECTION\n2\nTABLES\n");
+    for i in 0..N {
+        t.push_str(&format!("0\nDIMSTYLE\n2\n{}\n70\n0\n40\n1\n", name(i)));
+    }
+    t.push_str(&format!("0\nDIMSTYLE\n2\n{}\n70\n0\n40\n2\n", name(0).to_ascii_uppercase()));
+    t.push_str("0\nDIMSTYLE\n2\nSTANDARD\n70\n0\n40\n3\n0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "many.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let styles: Vec<(&str, f64)> = d.dim_styles.iter().map(|s| (s.name.as_str(), s.scale)).collect();
+    assert_eq!(styles.len(), N + 1);
+    assert_eq!(styles.first(), Some(&("STANDARD", 3.0)));
+    assert_eq!(styles.get(1), Some(&(name(0).to_ascii_uppercase().as_str(), 2.0)));
+    assert_eq!(styles.get(2), Some(&(name(1).as_str(), 1.0)));
+}
+
+/// Many distinct view and UCS names read in linear time, with the duplicate rule kept: a later
+/// record of a name in other case replaces the first, which keeps its place and takes the later
+/// record's name (#1924). The names share their first 200 bytes, so comparing two costs about that.
+#[test]
+fn many_distinct_view_and_ucs_names_read_quickly() {
+    const N: usize = 20_000;
+    let name = |kind: char, i: usize| format!("{kind}{}{i:06}", "x".repeat(199));
+    let view = |n: &str, height: u32| format!("0\nVIEW\n2\n{n}\n70\n0\n40\n{height}\n41\n1\n10\n0\n20\n0\n");
+    let ucs = |n: &str, x: usize| format!("0\nUCS\n2\n{n}\n70\n0\n10\n{x}\n20\n0\n30\n0\n11\n1\n21\n0\n31\n0\n12\n0\n22\n1\n32\n0\n");
+    let mut t = String::from("0\nSECTION\n2\nTABLES\n");
+    for i in 0..N {
+        t.push_str(&view(&name('V', i), 1));
+        t.push_str(&ucs(&name('U', i), i));
+    }
+    t.push_str(&view(&name('V', 0).to_ascii_uppercase(), 2));
+    t.push_str(&ucs(&name('U', 0).to_ascii_uppercase(), 7));
+    t.push_str("0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "many.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let views: Vec<(&str, f64)> = d.views.iter().map(|v| (v.name.as_str(), v.height)).collect();
+    assert_eq!(views.len(), N);
+    assert_eq!(views.first(), Some(&(name('V', 0).to_ascii_uppercase().as_str(), 2.0)));
+    assert_eq!(views.get(1), Some(&(name('V', 1).as_str(), 1.0)));
+    let ucss: Vec<(&str, f64)> = d.ucss.iter().map(|u| (u.name.as_str(), u.origin.x)).collect();
+    assert_eq!(ucss.len(), N);
+    assert_eq!(ucss.first(), Some(&(name('U', 0).to_ascii_uppercase().as_str(), 7.0)));
+    assert_eq!(ucss.get(1), Some(&(name('U', 1).as_str(), 1.0)));
+}
+
+/// Layouts that each name one of many UCSs read and save in linear time, and each keeps the name of
+/// its UCS (#1924). The names share their first 200 bytes, so comparing two costs about that.
+#[test]
+fn many_layouts_naming_many_ucss_read_and_save_quickly() {
+    const N: usize = 10_000;
+    let name = |kind: char, i: usize| format!("{kind}{}{i:06}", "x".repeat(199));
+    let mut t = String::from("0\nSECTION\n2\nTABLES\n");
+    for i in 0..N {
+        let u = name('U', i);
+        t.push_str(&format!("0\nUCS\n5\n{:X}\n2\n{u}\n70\n0\n10\n{i}\n20\n0\n30\n0\n11\n1\n21\n0\n31\n0\n12\n0\n22\n1\n32\n0\n", 0x10000 + i));
+    }
+    t.push_str("0\nENDSEC\n0\nSECTION\n2\nOBJECTS\n");
+    for i in 0..N {
+        let l = name('L', i);
+        t.push_str(&format!(
+            "0\nLAYOUT\n5\n{:X}\n100\nAcDbPlotSettings\n100\nAcDbLayout\n1\n{l}\n71\n{}\n13\n{i}\n23\n0\n33\n0\n16\n1\n26\n0\n36\n0\n17\n0\n27\n1\n37\n0\n330\n0\n345\n{:X}\n",
+            0x1000 + i,
+            i + 1,
+            0x10000 + i
+        ));
+    }
+    t.push_str("0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "ucss.dxf").unwrap();
+    let saved = write_dxf(&d);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let named = d.layouts.iter().filter(|l| l.ucs.as_ref().is_some_and(|u| u.name == name('U', l.tab_order as usize - 1))).count();
+    assert_eq!(named, N);
+    let again = read_dxf(saved.as_bytes()).unwrap();
+    assert_eq!(again.layouts.iter().filter(|l| l.ucs.as_ref().is_some_and(|u| !u.name.is_empty())).count(), N);
+}
+
+/// A layout's named UCS is the first UCS of that name, without case, whose frame is the layout's:
+/// what scanning the UCSs finds, also when a name's first UCS has another frame.
+#[test]
+fn a_layouts_named_ucs_is_the_first_of_its_name_with_its_frame() {
+    use cadcraft_geom::Vec3;
+    let ucs = |name: &str, x: f64| Ucs {
+        name: name.into(),
+        origin: Vec3::new(x, 0.0, 0.0),
+        x_axis: Vec3::new(1.0, 0.0, 0.0),
+        y_axis: Vec3::new(0.0, 1.0, 0.0),
+    };
+    let ucss = [ucs("Front", 0.0), ucs("FRONT", 1.0), ucs("front", 1.0), ucs("Side", 2.0), ucs("", 3.0), ucs(" Pad", 4.0)];
+    let names = crate::dxf_ext::UcsNames::new(&ucss);
+    let (x, y) = (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
+    for name in ["Front", "front", "FRONT", " front ", "Side", "side", "", "  ", "Pad", " Pad", "Back"] {
+        for origin in [0.0, 1.0, 2.0, 3.0, 4.0, 5.0].map(|o| Vec3::new(o, 0.0, 0.0)) {
+            let want = crate::dxf_ext::named_ucs(&ucss, name, origin, x, y).map(std::ptr::from_ref);
+            assert_eq!(names.named(name, origin, x, y).map(std::ptr::from_ref), want, "{name:?} {origin:?}");
+        }
+    }
+    assert_eq!(names.named("front", Vec3::new(1.0, 0.0, 0.0), x, y).map(|u| u.name.as_str()), Some("FRONT"));
+}
+
+/// Many distinct table and multileader style names read in linear time, with the duplicate rule
+/// kept: a later style of a name in other case replaces the first, which keeps its place and takes
+/// the later style's name, also the Standard style a drawing starts with (#1924). The names share
+/// their first 200 bytes, so comparing two costs about that.
+#[test]
+fn many_distinct_table_and_multileader_style_names_read_quickly() {
+    const N: usize = 20_000;
+    let name = |kind: char, i: usize| format!("{kind}{}{i:06}", "x".repeat(199));
+    // Each style: a dictionary entry naming its handle, and the object (TABLESTYLE margin 40 or
+    // MLEADERSTYLE arrow size 44 set to `v`).
+    let mut entries = String::new();
+    let mut objects = String::new();
+    let mut h = 0x1000;
+    let mut style = |kind: &str, n: &str, v: f64| {
+        h += 1;
+        entries.push_str(&format!("3\n{n}\n350\n{h:X}\n"));
+        let own = if kind == "TABLESTYLE" { format!("100\nAcDbTableStyle\n40\n{v}\n") } else { format!("100\nAcDbMLeaderStyle\n44\n{v}\n") };
+        objects.push_str(&format!("0\n{kind}\n5\n{h:X}\n{own}"));
+    };
+    for (kind, k) in [("TABLESTYLE", 'T'), ("MLEADERSTYLE", 'M')] {
+        for i in 0..N {
+            style(kind, &name(k, i), 1.0);
+        }
+        style(kind, &name(k, 0).to_ascii_uppercase(), 2.0);
+        style(kind, "STANDARD", 3.0);
+    }
+    let t = format!("0\nSECTION\n2\nOBJECTS\n0\nDICTIONARY\n5\nA0\n100\nAcDbDictionary\n{entries}{objects}0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "many.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let tables: Vec<(&str, f64)> = d.table_styles.iter().map(|s| (s.name.as_str(), s.margin)).collect();
+    let mleaders: Vec<(&str, f64)> = d.mleader_styles.iter().map(|s| (s.name.as_str(), s.arrow_size)).collect();
+    for (styles, k) in [(tables, 'T'), (mleaders, 'M')] {
+        assert_eq!(styles.len(), N + 1);
+        assert_eq!(styles.first(), Some(&("STANDARD", 3.0)));
+        assert_eq!(styles.get(1), Some(&(name(k, 0).to_ascii_uppercase().as_str(), 2.0)));
+        assert_eq!(styles.get(2), Some(&(name(k, 1).as_str(), 1.0)));
+    }
+}
+
+/// The most multiline styles a file can hold, with long names, read in linear time, with the
+/// duplicate rule kept: a later style of a name in other case replaces the first, which keeps its
+/// place and takes the later style's name, also the STANDARD style a drawing starts with (#1924).
+/// The names share their first 1 000 bytes, so comparing two costs about that.
+#[test]
+fn many_multiline_style_names_read_quickly() {
+    const N: usize = 9_998;
+    let name = |i: usize| format!("L{}{i:06}", "x".repeat(999));
+    let style = |n: &str, description: &str| format!("0\nMLINESTYLE\n100\nAcDbMlineStyle\n2\n{n}\n70\n0\n3\n{description}\n71\n1\n49\n0\n");
+    let mut t = String::from("0\nSECTION\n2\nOBJECTS\n");
+    for i in 0..N {
+        t.push_str(&style(&name(i), "first"));
+    }
+    t.push_str(&style(&name(0).to_ascii_uppercase(), "second"));
+    t.push_str(&style("standard", "third"));
+    t.push_str("0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "mlines.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let styles: Vec<(&str, &str)> = d.mline_styles.iter().map(|s| (s.name.as_str(), s.description.as_str())).collect();
+    assert_eq!(styles.len(), N + 1);
+    assert_eq!(styles.first(), Some(&("standard", "third")));
+    assert_eq!(styles.get(1), Some(&(name(0).to_ascii_uppercase().as_str(), "second")));
+    assert_eq!(styles.get(2), Some(&(name(1).as_str(), "first")));
+}
+
+/// Many viewport configurations read in linear time, with the rule kept: a record adds a tile to
+/// the first configuration of its name, in any case, which keeps its own name, also from a later
+/// TABLES section (#1924). The names share their first 200 bytes, so comparing two costs about
+/// that.
+#[test]
+fn many_viewport_configurations_read_quickly() {
+    const N: usize = 20_000;
+    let name = |i: usize| format!("V{}{i:06}", "x".repeat(199));
+    let record = |n: &str, x: f64| format!("0\nVPORT\n2\n{n}\n70\n0\n10\n0\n20\n0\n11\n1\n21\n1\n12\n{x}\n22\n0\n40\n10\n41\n1\n");
+    let mut t = String::from("0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nVPORT\n");
+    for i in 0..N {
+        t.push_str(&record(&name(i), 1.0));
+    }
+    t.push_str(&record(&name(0).to_ascii_uppercase(), 2.0));
+    t.push_str("0\nENDTAB\n0\nENDSEC\n0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nVPORT\n");
+    t.push_str(&record(&name(1).to_ascii_uppercase(), 3.0));
+    t.push_str("0\nENDTAB\n0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "vports.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let configs: Vec<(&str, Vec<f64>)> =
+        d.vports.iter().filter(|c| c.name.starts_with('V')).map(|c| (c.name.as_str(), c.tiles.iter().map(|t| t.center.x).collect())).collect();
+    assert_eq!(configs.len(), N);
+    assert_eq!(configs.first(), Some(&(name(0).as_str(), vec![1.0, 2.0])));
+    assert_eq!(configs.get(1), Some(&(name(1).as_str(), vec![1.0, 3.0])));
+    assert_eq!(configs.get(2), Some(&(name(2).as_str(), vec![1.0])));
+}
+
+/// The value of group `code` in each record of type `kind` (its first, if repeated), in file order.
+fn first_groups(p: &[(String, String)], kind: &str, code: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let (mut inside, mut found) = (false, false);
+    for (c, v) in p {
+        if c == "0" {
+            (inside, found) = (v.trim() == kind, false);
+        } else if inside && !found && c == code {
+            out.push(v.trim().to_string());
+            found = true;
+        }
+    }
+    out
+}
+
+/// Every dictionary entry: its handle to its name.
+fn entry_names(p: &[(String, String)]) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    let (mut inside, mut name) = (false, None);
+    for (c, v) in p {
+        match c.as_str() {
+            "0" => (inside, name) = (v.trim() == "DICTIONARY", None),
+            "3" if inside => name = Some(v.trim().to_string()),
+            "350" | "360" if inside => {
+                if let Some(n) = name.take() {
+                    out.insert(v.trim().to_string(), n);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Saving many multileaders among many multileader styles takes linear time (#1924), and each is
+/// written as before: pointing at the first style of its name (ignoring case), else at the
+/// drawing's first style, with the landing gap of the first style of its name, else the default
+/// one. The names share their first 200 bytes, so comparing two costs about that.
+#[test]
+fn many_multileaders_among_many_styles_save_quickly() {
+    const N: usize = 10_000;
+    let name = |i: usize| format!("M{}{i:06}", "x".repeat(199));
+    let missing = |i: usize| format!("M{}z{i:05}", "x".repeat(199));
+    let mut d = Drawing::new_imperial();
+    if let Some(first) = d.mleader_styles.first_mut() {
+        first.landing_gap = 0.25;
+    }
+    d.mleader_styles.extend((0..N).map(|i| MLeaderStyle { name: name(i), landing_gap: 0.5, ..MLeaderStyle::default() }));
+    d.mleader_styles.push(MLeaderStyle { name: name(N - 1).to_ascii_uppercase(), landing_gap: 0.75, ..MLeaderStyle::default() });
+    let mleader = |style: String, x: f64| {
+        EntityKind::MLeader(MLeader {
+            leaders: vec![vec![Vec3::new(x, 0.0, 0.0), Vec3::new(x + 1.0, 1.0, 0.0)]],
+            landing: Vec3::new(x + 2.0, 1.0, 0.0),
+            dogleg: 0.5,
+            text: None,
+            style,
+            arrow_size: 1.0,
+            spline: false,
+            block: None,
+        })
+    };
+    for i in 0..N {
+        d.add(&Space::Model, Common::default(), mleader(missing(i), i as f64)).unwrap();
+    }
+    d.add(&Space::Model, Common::default(), mleader(name(N - 1).to_ascii_uppercase(), -1.0)).unwrap();
+    // As a MULTILEADER (R2007 and later): older files get a LEADER and its content instead.
+    let started = std::time::Instant::now();
+    let saved = dxf_2018(&d);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let p = pairs(&saved);
+    let entries = entry_names(&p);
+    let styles: Vec<&str> = first_groups(&p, "MULTILEADER", "340").iter().filter_map(|h| entries.get(h)).map(String::as_str).collect();
+    let gaps: Vec<f64> = first_groups(&p, "MULTILEADER", "145").iter().filter_map(|v| v.parse().ok()).collect();
+    assert_eq!((styles.len(), gaps.len()), (N + 1, N + 1));
+    let default_gap = MLeaderStyle::default().landing_gap;
+    assert!(styles[..N].iter().all(|s| *s == "Standard"), "a missing style points at the first style");
+    assert!(gaps[..N].iter().all(|g| *g == default_gap), "a missing style writes the default landing gap");
+    assert_eq!((styles[N], gaps[N]), (name(N - 1).as_str(), 0.5), "the first style of the name");
+}
+
+/// A multileader's own groups (AutoLISP's entity data) carry its style's landing gap, found
+/// without the styles a save plans.
+#[test]
+fn a_multileaders_entity_groups_have_its_styles_landing_gap() {
+    let mut d = Drawing::new_imperial();
+    d.mleader_styles.push(MLeaderStyle { name: "Notes".into(), landing_gap: 0.5, ..MLeaderStyle::default() });
+    let m = MLeader {
+        leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 1.0, 0.0)]],
+        landing: Vec3::new(2.0, 1.0, 0.0),
+        dogleg: 0.5,
+        text: None,
+        style: "NOTES".into(),
+        arrow_size: 1.0,
+        spline: false,
+        block: None,
+    };
+    let h = d.add(&Space::Model, Common::default(), EntityKind::MLeader(m)).unwrap();
+    let e = d.entity(h).unwrap().clone();
+    let (kind, tags) = entity_groups(&d, &e);
+    assert_eq!(kind, "MULTILEADER");
+    assert_eq!(tags.iter().find(|t| t.code == 145).map(|t| t.f64()), Some(0.5));
+}
+
+/// Many tables from another writer naming a table style the file lacks, among many table styles,
+/// read and save in linear time (#1924). Each table takes the text height of the style of its
+/// name (ignoring case), else the default one, as before, and is saved pointing at that style,
+/// else at the drawing's first one. The names share their first 200 bytes.
+#[test]
+fn many_tables_among_many_table_styles_read_and_save_quickly() {
+    const N: usize = 10_000;
+    let name = |i: usize| format!("T{}{i:06}", "x".repeat(199));
+    let missing = format!("T{}z{:05}", "x".repeat(199), 0);
+    let upper = name(N - 1).to_ascii_uppercase();
+    // Tables whose style (342) is a dictionary entry with no TABLESTYLE: the missing name for the
+    // first N, the last style's name in upper case for the last one.
+    let mut t = String::from("0\nSECTION\n2\nENTITIES\n");
+    for i in 0..=N {
+        let style = if i < N { "F0000" } else { "F0001" };
+        t.push_str(&format!(
+            "0\nACAD_TABLE\n5\n{:X}\n100\nAcDbBlockReference\n10\n{i}\n20\n0\n30\n0\n100\nAcDbTable\n342\n{style}\n91\n1\n92\n1\n141\n1\n142\n1\n",
+            0x100000 + i
+        ));
+    }
+    t.push_str(&format!(
+        "0\nENDSEC\n0\nSECTION\n2\nOBJECTS\n0\nDICTIONARY\n5\nA0\n100\nAcDbDictionary\n3\n{missing}\n350\nF0000\n3\n{upper}\n350\nF0001\n"
+    ));
+    for i in 0..N {
+        t.push_str(&format!("3\n{}\n350\n{:X}\n", name(i), 0x10000 + i));
+    }
+    for i in 0..N {
+        t.push_str(&format!("0\nTABLESTYLE\n5\n{:X}\n100\nAcDbTableStyle\n7\n\n140\n0.5\n", 0x10000 + i));
+    }
+    t.push_str("0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "tables.dxf").unwrap();
+    let saved = write_dxf(&d);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let tables: Vec<(&str, f64)> =
+        d.model.iter().filter_map(|e| if let EntityKind::Table(t) = &e.kind { Some((t.style.as_str(), t.text_height)) } else { None }).collect();
+    let default_height = TableStyle::default().text_height;
+    assert_eq!(tables.len(), N + 1);
+    assert!(tables[..N].iter().all(|t| *t == (missing.as_str(), default_height)), "a missing style gives the default height");
+    assert_eq!(tables[N], (upper.as_str(), 0.5), "the style of the name in other case");
+    let p = pairs(&saved);
+    let entries = entry_names(&p);
+    let styles: Vec<&str> = first_groups(&p, "ACAD_TABLE", "342").iter().filter_map(|h| entries.get(h)).map(String::as_str).collect();
+    assert_eq!(styles.len(), N + 1);
+    assert!(styles[..N].iter().all(|s| *s == "Standard"), "a missing style points at the first style");
+    assert_eq!(styles[N], name(N - 1));
+}
+
+/// Saving many multilines that each name a style the drawing lacks takes linear time (#1924). As
+/// before, each missing style is written once, with the elements of the first multiline naming it,
+/// and each multiline points at the first style of its name, ignoring case and surrounding spaces,
+/// or at STANDARD when it names none.
+#[test]
+fn many_multilines_naming_missing_styles_save_quickly() {
+    const N: usize = 10_000;
+    let missing = |i: usize| format!("L{}{i:06}", "x".repeat(199));
+    let mut d = Drawing::new_imperial();
+    let mline = |style: String, x: f64| {
+        let def = MLineStyle { name: style.clone(), ..MLineStyle::default() };
+        let vertex = |x: f64| MLineVertex { p: Vec3::new(x, 0.0, 0.0), cuts: Vec::new() };
+        EntityKind::MLine(MLine {
+            style,
+            def,
+            scale: 1.0,
+            justification: MLineJust::default(),
+            closed: false,
+            no_start_caps: false,
+            no_end_caps: false,
+            vertices: vec![vertex(x), vertex(x + 1.0)],
+        })
+    };
+    for i in 0..N {
+        d.add(&Space::Model, Common::default(), mline(missing(i), i as f64)).unwrap();
+    }
+    d.add(&Space::Model, Common::default(), mline(missing(N - 1).to_ascii_uppercase(), -1.0)).unwrap();
+    let mut padded = mline(format!(" {} ", missing(0)), -2.0);
+    if let EntityKind::MLine(m) = &mut padded {
+        m.def.elements = vec![MLineElement { offset: 0.25, ..MLineElement::default() }];
+    }
+    d.add(&Space::Model, Common::default(), padded).unwrap();
+    d.add(&Space::Model, Common::default(), mline("  ".into(), -3.0)).unwrap();
+    let started = std::time::Instant::now();
+    let saved = write_dxf(&d);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let p = pairs(&saved);
+    let entries = entry_names(&p);
+    let styles: Vec<&str> = first_groups(&p, "MLINE", "340").iter().filter_map(|h| entries.get(h)).map(String::as_str).collect();
+    let want: Vec<String> = (0..N).map(missing).chain([missing(N - 1), missing(0), "STANDARD".into()]).collect();
+    assert_eq!(styles, want);
+    assert_eq!(first_groups(&p, "MLINESTYLE", "2").len(), N + 1, "STANDARD and each missing style once");
+    let offsets: Vec<f64> = first_groups(&p, "MLINESTYLE", "49").iter().filter_map(|v| v.parse().ok()).collect();
+    assert!(offsets.len() == N + 1 && !offsets.contains(&0.25), "a later multiline does not change the style");
+}
+
+/// A multiline style whose name has spaces around it in the file is read with the name trimmed, so
+/// its multilines, whose lookup trims, find it: a save writes it once and points them at it.
+#[test]
+fn a_padded_multiline_style_name_is_saved_once() {
+    let t = "0\nSECTION\n2\nENTITIES\n0\nMLINE\n5\n100\n100\nAcDbEntity\n8\n0\n100\nAcDbMline\n2\n Road \n40\n1\n70\n0\n71\n1\n72\n2\n73\n2\n\
+             10\n0\n20\n0\n30\n0\n11\n0\n21\n0\n31\n0\n12\n1\n22\n0\n32\n0\n13\n0\n23\n1\n33\n0\n74\n2\n41\n0\n41\n0\n75\n0\n74\n2\n41\n0\n41\n0\n75\n0\n\
+             11\n1\n21\n0\n31\n0\n12\n1\n22\n0\n32\n0\n13\n0\n23\n1\n33\n0\n74\n2\n41\n0\n41\n0\n75\n0\n74\n2\n41\n0\n41\n0\n75\n0\n\
+             0\nENDSEC\n0\nSECTION\n2\nOBJECTS\n0\nMLINESTYLE\n5\n200\n100\nAcDbMlineStyle\n2\n Road \n70\n0\n3\npadded\n71\n2\n\
+             49\n0.25\n62\n256\n6\nBYLAYER\n49\n-0.25\n62\n256\n6\nBYLAYER\n0\nENDSEC\n0\nEOF\n";
+    let d = read(t.as_bytes(), "padded.dxf").unwrap();
+    assert_eq!(d.mline_styles.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["STANDARD", "Road"]);
+    let p = pairs(&write_dxf(&d));
+    let entries = entry_names(&p);
+    assert_eq!(first_groups(&p, "MLINESTYLE", "2"), ["STANDARD", "Road"], "one Road style");
+    let styles: Vec<&str> = first_groups(&p, "MLINE", "340").iter().filter_map(|h| entries.get(h)).map(String::as_str).collect();
+    assert_eq!(styles, ["Road"]);
+}
+
+/// Many layouts with every paper-space object in one of the last of them read in linear time.
+/// Each object goes to the first layout of its exact name, as before: not to an earlier one whose
+/// name differs only in case, nor to a later one of the same name (#1924).
+#[test]
+fn many_layouts_read_quickly() {
+    const N: usize = 40_000;
+    let name = |i: usize| format!("L{}{i:06}", "x".repeat(47));
+    let last = name(0).to_ascii_uppercase();
+    // Layout N is the active one (its block record is *Paper_Space): paper-space objects without
+    // an owner go to it. It and layout N + 1 have the first layout's name in other case.
+    let mut t = String::from("0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nBLOCK_RECORD\n0\nBLOCK_RECORD\n5\n1F\n2\n*Paper_Space\n0\nENDTAB\n0\nENDSEC\n");
+    t.push_str("0\nSECTION\n2\nENTITIES\n");
+    for i in 0..N {
+        t.push_str(&format!("0\nLINE\n8\n0\n67\n1\n10\n{i}\n20\n0\n11\n{i}\n21\n1\n"));
+    }
+    t.push_str("0\nENDSEC\n0\nSECTION\n2\nOBJECTS\n");
+    for i in 0..N + 2 {
+        let (n, owner) = if i < N { (name(i), "0") } else { (last.clone(), if i == N { "1F" } else { "0" }) };
+        t.push_str(&format!("0\nLAYOUT\n5\n{:X}\n100\nAcDbPlotSettings\n100\nAcDbLayout\n1\n{n}\n71\n{}\n330\n{owner}\n", 0x1000 + i, i + 1));
+    }
+    t.push_str("0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "layouts.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let objects: Vec<(&str, usize)> = d.layouts.iter().map(|l| (l.name.as_str(), l.entities.len())).collect();
+    assert_eq!(objects.len(), N + 2);
+    assert_eq!(objects.first(), Some(&(name(0).as_str(), 0)));
+    assert_eq!(objects.get(N..), Some(&[(last.as_str(), N), (last.as_str(), 0)][..]));
+}
+
 /// Elements with many duplicate attributes are read in bounded time.
 #[test]
 fn svg_duplicate_attributes_are_not_rescanned() {
@@ -3599,6 +4047,189 @@ fn mirrored_mtext_extrusion_keeps_its_footprint() {
     assert!((t.rotation - std::f64::consts::PI).abs() < 1e-12, "{}", t.rotation);
     let b = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default()).bounds;
     assert!(b.min.x > -0.2 && b.max.x > 0.5 && b.min.y > -0.2 && b.max.y > 0.5, "box right of and above (0,0): {b:?}");
+}
+
+/// Attributes in the plane of extrusion `n` (#3541): the DXF of block BL holding two ATTDEFs that
+/// start at world point `start` and turn `degrees` in that plane (LEFT, and RIGHT, right-justified,
+/// whose baseline ends 20 units on), a reference to BL at the origin whose two ATTRIBs repeat
+/// them, and a 100 × 60 rectangle round `start`. Groups 10 and 11 hold OCS coordinates (DXF
+/// Reference, ATTDEF and ATTRIB), worked out here with the arbitrary axis algorithm. Also returns
+/// the world end of RIGHT's baseline and the world direction the attributes run in.
+fn tilted_attribute_dxf(n: Vec3, start: Vec3, degrees: f64) -> (String, Vec3, Vec3) {
+    // Ax = Wy × N when N is near the Z axis (|Nx| and |Ny| under 1/64), else Wz × N; Ay = N × Ax.
+    let n = n.normalized();
+    let near_z = n.x.abs() < 1.0 / 64.0 && n.y.abs() < 1.0 / 64.0;
+    let ax = if near_z { Vec3::new(0.0, 1.0, 0.0) } else { Vec3::Z }.cross(n).normalized();
+    let ay = n.cross(ax).normalized();
+    let pt = |code: i32, p: Vec3| format!("{code}\n{}\n{}\n{}\n{}\n{}\n", p.dot(ax), code + 10, p.dot(ay), code + 20, p.dot(n));
+    let turn = degrees.to_radians();
+    let dir = ax * turn.cos() + ay * turn.sin();
+    let end = start + dir * 20.0;
+    let attribute = |kind: &str, tag: &str| {
+        let right = if tag == "RIGHT" { format!("72\n2\n{}", pt(11, end)) } else { String::new() };
+        let prompt = if kind == "ATTDEF" { "3\nValue\n" } else { "" };
+        format!(
+            "0\n{kind}\n8\n0\n{}40\n3\n1\n{tag}\n50\n{degrees}\n210\n{}\n220\n{}\n230\n{}\n{prompt}2\n{tag}\n70\n0\n{right}",
+            pt(10, start),
+            n.x,
+            n.y,
+            n.z
+        )
+    };
+    let (x0, y0, x1, y1) = (start.x - 50.0, start.y - 30.0, start.x + 50.0, start.y + 30.0);
+    let text = format!(
+        "0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n8\n0\n2\nBL\n70\n2\n10\n0\n20\n0\n30\n0\n3\nBL\n{}{}0\nENDBLK\n8\n0\n0\nENDSEC\n\
+         0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n4\n70\n1\n10\n{x0}\n20\n{y0}\n10\n{x1}\n20\n{y0}\n10\n{x1}\n20\n{y1}\n10\n{x0}\n20\n{y1}\n\
+         0\nINSERT\n8\n0\n66\n1\n2\nBL\n10\n0\n20\n0\n30\n0\n{}{}0\nSEQEND\n8\n0\n0\nENDSEC\n0\nEOF\n",
+        attribute("ATTDEF", "LEFT"),
+        attribute("ATTDEF", "RIGHT"),
+        attribute("ATTRIB", "LEFT"),
+        attribute("ATTRIB", "RIGHT"),
+    );
+    (text, end, dir)
+}
+
+/// The ATTDEFs of block BL (with their extrusions) and the ATTRIBs of the first block reference.
+fn attributes(d: &Drawing) -> (Vec<(Attrib, Vec3)>, Vec<Attrib>) {
+    let defs = d.block("BL").expect("block BL").entities.iter();
+    let defs = defs.filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some((a.clone(), e.common.extrusion)) } else { None });
+    let refs = first(d, |k| if let EntityKind::Insert(i) = k { Some(i.attribs.clone()) } else { None });
+    (defs.collect(), refs)
+}
+
+/// Issue #3541: an ATTDEF and an ATTRIB in a tilted plane near survey coordinates are read at their
+/// world points, turned the way the plane runs in plan, and drawn there, not millions of units
+/// away at their OCS coordinates read as world ones.
+#[test]
+fn tilted_attributes_are_read_at_their_world_points() {
+    let start = Vec3::new(550_050.0, 9_580_030.0, 0.0);
+    let (text, end, dir) = tilted_attribute_dxf(Vec3::new(0.3, -0.2, 0.93), start, 30.0);
+    let d = read(text.as_bytes(), "a.dxf").unwrap();
+    let plan = dir.xy().normalized();
+    let check = |a: &Attrib, what: &str| {
+        assert!((a.text.insert - start).len() < 1e-6, "{what} {} insert {:?}", a.tag, a.text.insert);
+        if a.tag == "RIGHT" {
+            let at = a.text.align_pt.expect("a right-justified attribute keeps its alignment point");
+            assert!((at - end).len() < 1e-6, "{what} RIGHT alignment point {at:?}, want {end:?}");
+        }
+        let runs = Vec2::new(a.text.rotation.cos(), a.text.rotation.sin());
+        assert!((runs - plan).len() < 1e-9, "{what} {} runs along {runs:?}, want {plan:?}", a.tag);
+    };
+    let (defs, refs) = attributes(&d);
+    assert_eq!((defs.len(), refs.len()), (2, 2));
+    for (a, extrusion) in &defs {
+        check(a, "ATTDEF");
+        // Its points are plan coordinates now, so the plane they were in is spent.
+        assert_eq!(*extrusion, Vec3::Z, "ATTDEF {}", a.tag);
+    }
+    for a in &refs {
+        check(a, "ATTRIB");
+    }
+    // The ATTRIBs are drawn inside the rectangle's neighbourhood.
+    let b = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default()).bounds;
+    assert!(b.min.x > start.x - 80.0 && b.max.x < start.x + 80.0 && b.min.y > start.y - 60.0 && b.max.y < start.y + 60.0, "drawn over {b:?}");
+
+    // In a plane standing on edge (normal along X) a direction turned -90° runs straight down and
+    // leaves no direction in plan: the attributes keep the file's turn, at their world points.
+    let (text, _, _) = tilted_attribute_dxf(Vec3::new(1.0, 0.0, 0.0), start, -90.0);
+    let d = read(text.as_bytes(), "edge.dxf").unwrap();
+    let (defs, refs) = attributes(&d);
+    for a in defs.iter().map(|(a, _)| a).chain(&refs) {
+        assert!((a.text.insert - start).len() < 1e-6, "{} insert {:?}", a.tag, a.text.insert);
+        assert!((a.text.rotation - (-90f64).to_radians()).abs() < 1e-12, "{} rotation {}", a.tag, a.text.rotation);
+    }
+}
+
+/// Issue #3541, on save: tilted attributes are written at their world points with no plane
+/// (groups 10 and 11 in the WCS, no 210), and reopened where they were read.
+#[test]
+fn tilted_attributes_are_saved_at_their_world_points_and_reopened_there() {
+    let start = Vec3::new(550_050.0, 9_580_030.0, 0.0);
+    let (text, end, _) = tilted_attribute_dxf(Vec3::new(0.3, -0.2, 0.93), start, 30.0);
+    let d = read(text.as_bytes(), "a.dxf").unwrap();
+    let out = write_dxf(&d);
+    let pairs = dxf_pairs(&out);
+    for kind in ["ATTDEF", "ATTRIB"] {
+        let recs = dxf_records(&pairs, kind);
+        assert_eq!(recs.len(), 2, "{kind}");
+        for r in recs {
+            let num = |code: i32, default: f64| group(r, &code.to_string()).map_or(default, |v| v.parse::<f64>().unwrap());
+            let point = |code: i32, default_z: f64| Vec3::new(num(code, 0.0), num(code + 10, 0.0), num(code + 20, default_z));
+            let tag = group(r, "2").unwrap_or_default();
+            assert_eq!(point(210, 1.0), Vec3::Z, "{kind} {tag} is written with a plane");
+            let (code, want) = if tag == "RIGHT" { (11, end) } else { (10, start) };
+            assert!((point(code, 0.0) - want).len() < 1e-6, "{kind} {tag} group {code}: {:?}, want {want:?}", point(code, 0.0));
+        }
+    }
+    let back = read_dxf(out.as_bytes()).unwrap();
+    let ((defs, refs), (defs2, refs2)) = (attributes(&d), attributes(&back));
+    let same = |a: &Attrib, b: &Attrib| {
+        assert_eq!(a.tag, b.tag);
+        // A justified attribute is placed by its alignment point: the writer derives its group 10
+        // from it (#1050), so only a baseline-left one keeps its own.
+        if a.text.align_pt.is_none() {
+            assert!((a.text.insert - b.text.insert).len() < 1e-6, "{} insert {:?} came back as {:?}", a.tag, a.text.insert, b.text.insert);
+        }
+        assert!(a.text.align_pt.zip(b.text.align_pt).is_none_or(|(p, q)| (p - q).len() < 1e-6), "{} alignment point", a.tag);
+        assert_eq!(a.text.align_pt.is_some(), b.text.align_pt.is_some(), "{} alignment point", a.tag);
+        assert!((a.text.rotation - b.text.rotation).abs() < 1e-9, "{} rotation {} came back as {}", a.tag, a.text.rotation, b.text.rotation);
+    };
+    assert_eq!((defs2.len(), refs2.len()), (2, 2));
+    for ((a, _), (b, extrusion)) in defs.iter().zip(&defs2) {
+        same(a, b);
+        assert_eq!(*extrusion, Vec3::Z, "ATTDEF {}", b.tag);
+    }
+    for (a, b) in refs.iter().zip(&refs2) {
+        same(a, b);
+    }
+}
+
+/// A block reference in a tilted plane is still read as is (its block drawn at the OCS point read),
+/// so the ATTRIBs in that plane stay as read too, on the block's own ATTDEFs, rather than mapped
+/// away from the block.
+#[test]
+fn attributes_of_a_tilted_reference_stay_with_its_block() {
+    let start = Vec3::new(50.0, 30.0, 0.0);
+    let (flat, _, _) = tilted_attribute_dxf(Vec3::Z, start, 30.0);
+    let (blocks, reference) = flat.split_once("0\nINSERT\n").unwrap();
+    let plane = "210\n0.3\n220\n-0.2\n230\n0.93\n";
+    let flat_plane = "210\n0\n220\n0\n230\n1\n";
+    assert_eq!(reference.matches(flat_plane).count(), 2);
+    let text = format!("{blocks}0\nINSERT\n{plane}{}", reference.replace(flat_plane, plane));
+    let d = read(text.as_bytes(), "r.dxf").unwrap();
+    let (defs, refs) = attributes(&d);
+    assert_eq!(refs.len(), 2);
+    for a in &refs {
+        let def = defs.iter().find(|(def, _)| def.tag == a.tag).expect("its definition");
+        assert_eq!(a.text.insert, def.0.text.insert, "{} left its definition", a.tag);
+    }
+}
+
+/// Attributes on the Z axis are read exactly as written, and saved so; a plane facing down keeps
+/// the mirrored reading, which maps its points once (#3541 changes neither).
+#[test]
+fn flat_and_mirrored_attributes_read_as_before() {
+    let start = Vec3::new(550_050.125, 9_580_030.375, 12.5);
+    // A turn of -30° stays -30° (taken through the plane it would come back as 330°).
+    let (text, _, _) = tilted_attribute_dxf(Vec3::Z, start, -30.0);
+    let d = read(text.as_bytes(), "flat.dxf").unwrap();
+    let (defs, refs) = attributes(&d);
+    for a in defs.iter().map(|(a, _)| a).chain(&refs) {
+        assert_eq!((a.text.insert, a.text.rotation), (start, (-30f64).to_radians()), "{}", a.tag);
+    }
+    let out = write_dxf(&d);
+    let pairs = dxf_pairs(&out);
+    for r in dxf_records(&pairs, "ATTDEF").into_iter().chain(dxf_records(&pairs, "ATTRIB")).filter(|r| group(r, "2") == Some("LEFT")) {
+        let num = |code: &str| group(r, code).map(|v| v.parse::<f64>().unwrap());
+        assert_eq!((num("10"), num("20"), num("30"), num("210")), (Some(start.x), Some(start.y), Some(start.z), None));
+    }
+    // Facing down and tilted: the mirrored reading maps the start point once, to `start`.
+    let (text, _, _) = tilted_attribute_dxf(Vec3::new(0.6, 0.0, -0.8), start, 30.0);
+    let d = read(text.as_bytes(), "down.dxf").unwrap();
+    let (defs, refs) = attributes(&d);
+    for a in defs.iter().map(|(a, _)| a).chain(&refs).filter(|a| a.tag == "LEFT") {
+        assert!((a.text.insert - start).len() < 1e-6, "{} insert {:?}, want {start:?}", a.tag, a.text.insert);
+    }
 }
 
 // --- SVG import ---

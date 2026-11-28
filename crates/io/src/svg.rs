@@ -17,10 +17,21 @@ pub fn export_window(d: &Drawing, space: &Space, window: Option<Bounds2>) -> Str
     export_window_with(d, space, window, true)
 }
 
+/// [`export_window`], also returning the dashed runs it drew continuous because of a dash limit
+/// ([`cadcraft_render::DisplayList::undashed`]).
+pub fn export_window_noted(d: &Drawing, space: &Space, window: Option<Bounds2>) -> (String, usize) {
+    export_noted(d, space, window, true)
+}
+
 /// [`export_window`], drawing transparency only when `transparency` is on (plots).
 pub fn export_window_with(d: &Drawing, space: &Space, window: Option<Bounds2>, transparency: bool) -> String {
+    export_noted(d, space, window, transparency).0
+}
+
+/// [`export_window_with`] and the list's [`cadcraft_render::DisplayList::undashed`].
+pub(crate) fn export_noted(d: &Drawing, space: &Space, window: Option<Bounds2>, transparency: bool) -> (String, usize) {
     let list = cadcraft_render::build(d, space, &cadcraft_render::Options { transparency, ..cadcraft_render::Options::default() });
-    export_list(&list, window)
+    (export_list(&list, window), list.undashed)
 }
 
 /// Opacity for a transparent primitive (none for an opaque one or a wipeout's mask).

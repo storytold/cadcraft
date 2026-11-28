@@ -6,8 +6,8 @@ use super::draw::entity;
 use super::pipeline::PARALLEL_CHUNK;
 use super::pipeline::{Options, style_table, top_ctx, with_point_view};
 use super::{
-    Bounds2, Builder, Ctx, Drawing, Entity, EntityKind, Handle, MAX_BLOCK_EXPANSION, MAX_DISPLAY_POINTS, Mat3, Pen, Space, Vec2, clip, paper, pen,
-    plotstyle,
+    Bounds2, Builder, Ctx, Drawing, Entity, EntityKind, Handle, MAX_BLOCK_EXPANSION, MAX_DASH_ELEMENTS, MAX_DISPLAY_POINTS, Mat3, Pen, Space, Vec2,
+    clip, paper, pen, plotstyle,
 };
 
 /// Upper bound on viewports drawn per layout (hostile files).
@@ -70,7 +70,8 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
     }
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, false).map(|t| plotstyle::Styler::new(d, t));
-    let points = std::sync::atomic::AtomicUsize::new(0);
+    let (points, dashes) = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
+    let loops = std::sync::OnceLock::new();
     let mut b = Builder {
         list: DisplayList::default(),
         opts,
@@ -81,6 +82,9 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
         transparency: 0,
         points: &points,
         max_points: MAX_DISPLAY_POINTS,
+        dashes: &dashes,
+        max_dashes: MAX_DASH_ELEMENTS,
+        loops: &loops,
     };
     contents(&mut b, d, vp, area, &Clip::Rect(area), paper::unit_mm_of(d, handle));
     b.list
@@ -135,6 +139,9 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
         transparency: 0,
         points: b.points,
         max_points: b.max_points,
+        dashes: b.dashes,
+        max_dashes: b.max_dashes,
+        loops: b.loops,
     };
     #[cfg(not(target_arch = "wasm32"))]
     let parallel = !b.plotting && b.styles.is_none() && d.model.len() >= 2 * PARALLEL_CHUNK;
@@ -146,7 +153,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
             // As `build_parallel`: chunks built side by side, joined in drawing order.
             use rayon::prelude::*;
             let ents: Vec<&std::sync::Arc<Entity>> = d.model.iter().collect();
-            let (opts, points, max_points) = (b.opts, b.points, b.max_points);
+            let (opts, points, max_points, dashes, max_dashes, loops) = (b.opts, b.points, b.max_points, b.dashes, b.max_dashes, b.loops);
             let parts: Vec<DisplayList> = ents
                 .par_chunks(PARALLEL_CHUNK)
                 .map(|chunk| {
@@ -160,6 +167,9 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
                         transparency: 0,
                         points,
                         max_points,
+                        dashes,
+                        max_dashes,
+                        loops,
                     };
                     let c = ctx();
                     for me in chunk.iter().filter(|me| seen(me)) {
@@ -193,6 +203,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     pen::apply(&mut sub.list, unit_mm);
     b.list.expanded = b.list.expanded.saturating_add(sub.list.expanded);
     b.list.truncated |= sub.list.truncated;
+    b.list.undashed = b.list.undashed.saturating_add(sub.list.undashed);
     append_clipped(&mut b.list, &sub.list, clip);
 }
 

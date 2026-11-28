@@ -9,3 +9,11 @@
 *.swp
 /apps/cadcraft-web/dist/
 /.claude/worktrees/
+
+# Checked out inside the workspace by the shared nightly workflows (craft-common-actions):
+# nightly_init refuses to build from a tree where these show up as changes.
+/.nightly-tools
+/.nightly-input
+/craft-i18n
+/craft-fonts
+__pycache__/

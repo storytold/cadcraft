@@ -205,6 +205,8 @@ pub(super) fn float(a: &[Value]) -> R {
     Ok(Value::Real(num(&a[0])?))
 }
 
+/// The greatest common divisor. The one past 32 bits, 2147483648 (of -2147483648 and 0 or
+/// itself), is a real, as the reader and `fix` give such a number, not the largest integer.
 pub(super) fn gcd(a: &[Value]) -> R {
     arity(a, 2, 2)?;
     let (mut x, mut y) = (i64::from(int(&a[0])?).abs(), i64::from(int(&a[1])?).abs());
@@ -216,7 +218,7 @@ pub(super) fn gcd(a: &[Value]) -> R {
         x = y;
         y = t;
     }
-    Ok(Value::Int(i32::try_from(x).unwrap_or(i32::MAX)))
+    Ok(i32::try_from(x).map_or(Value::Real(x as f64), Value::Int))
 }
 
 pub(super) fn logand(a: &[Value]) -> R {

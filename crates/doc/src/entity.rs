@@ -47,7 +47,7 @@ mod proxy;
 mod text;
 mod wipeout;
 
-pub use block::{Attrib, AttribModes, AttribProps, Insert, MultilineAttrib, mtext_literal};
+pub use block::{Attrib, AttribModes, AttribProps, Insert, MultilineAttrib, TagKey, mtext_literal};
 pub use common::{Common, Handle, Lineweight, RawTag, Transparency};
 pub use curves::{Arc, Circle, Ellipse, Face3d, Line, LwPolyline, Point, PolyfaceMesh, Polyline3d, RayLine, Solid};
 pub use dim::{AssocSnap, DimAssoc, DimBreak, DimKind, DimMarks, Dimension, Inspection, JoggedRadius, Leader, MLeader};

@@ -42,8 +42,8 @@ pub(super) fn grip_menu(app: &mut CadApp, resp: &egui::Response) {
     let Some(g) = app.canvas.grip_menu else { return };
     let options = grip_options(app, g);
     let mut chosen: Option<Option<cadcraft_engine::grips::GripAction>> = None;
-    let open = resp
-        .context_menu(|ui| {
+    let open = crate::context_menu::popup(resp)
+        .show(|ui| {
             let vertex = options.contains(&cadcraft_engine::grips::GripAction::RemoveVertex);
             if ui.button(crate::i18n::t(if vertex { "Stretch Vertex" } else { "Stretch" })).clicked() {
                 chosen = Some(None);

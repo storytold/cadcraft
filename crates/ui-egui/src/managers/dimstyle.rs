@@ -285,7 +285,7 @@ fn list_page(
                     }
                 });
             });
-            let filter = craft_ui::ComboBox::from_id_salt("dimstyle_list_filter")
+            let filter = egui::ComboBox::from_id_salt("dimstyle_list_filter")
                 .selected_text(if st.in_use_only { crate::tl!("Styles in use") } else { crate::tl!("All styles") })
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut st.in_use_only, false, crate::tl!("All styles"));
@@ -434,7 +434,7 @@ fn new_page(ui: &mut egui::Ui, d: &Drawing, st: &mut State) {
         ui.add(egui::TextEdit::singleline(&mut st.new_name).desired_width(220.0)).labelled_by(name_label.id);
         ui.end_row();
         let start_label = ui.label(crate::tl!("Start with"));
-        let start = craft_ui::ComboBox::from_id_salt("dimstyle_start_with").selected_text(st.start_with.clone()).width(220.0).show_ui(ui, |ui| {
+        let start = egui::ComboBox::from_id_salt("dimstyle_start_with").selected_text(st.start_with.clone()).width(220.0).show_ui(ui, |ui| {
             for s in &d.dim_styles {
                 ui.selectable_value(&mut st.start_with, s.name.clone(), &s.name);
             }
@@ -620,7 +620,7 @@ fn fields(ui: &mut egui::Ui, d: &Drawing, st: &mut State) {
             DimPropKind::Color => {
                 let c = serde_json::from_value::<cadcraft_color::Color>(cur.clone()).unwrap_or(cadcraft_color::Color::ByBlock);
                 let mut out = None;
-                craft_ui::ComboBox::from_id_salt(id).selected_text(crate::i18n::t(&c.name())).width(160.0).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt(id).selected_text(crate::i18n::t(&c.name())).width(160.0).show_ui(ui, |ui| {
                     for (n, aci) in [
                         ("ByBlock", 0),
                         ("ByLayer", 256),
@@ -677,7 +677,7 @@ fn combo(ui: &mut egui::Ui, id: egui::Id, cur: &Value, options: Vec<(Value, Stri
         .find(|(v, _)| v == cur)
         .map_or_else(|| cur.as_str().map(str::to_string).unwrap_or_else(|| cur.to_string()), |(_, l)| l.clone());
     let mut out = None;
-    craft_ui::ComboBox::from_id_salt(id).selected_text(shown).width(160.0).show_ui(ui, |ui| {
+    egui::ComboBox::from_id_salt(id).selected_text(shown).width(160.0).show_ui(ui, |ui| {
         for (v, label) in options {
             if ui.selectable_label(v == *cur, label).clicked() {
                 out = Some(v);
@@ -698,14 +698,14 @@ fn compare_page(ui: &mut egui::Ui, d: &Drawing, st: &mut State, current: &str, o
     }
     ui.horizontal(|ui| {
         let compare_label = ui.label(crate::tl!("Compare"));
-        let a = craft_ui::ComboBox::from_id_salt("dimstyle_compare_a").selected_text(st.selected.clone()).show_ui(ui, |ui| {
+        let a = egui::ComboBox::from_id_salt("dimstyle_compare_a").selected_text(st.selected.clone()).show_ui(ui, |ui| {
             for n in &names {
                 ui.selectable_value(&mut st.selected, n.clone(), n);
             }
         });
         a.response.labelled_by(compare_label.id);
         let with_label = ui.label(crate::tl!("With"));
-        let b = craft_ui::ComboBox::from_id_salt("dimstyle_compare_b").selected_text(st.compare_with.clone()).show_ui(ui, |ui| {
+        let b = egui::ComboBox::from_id_salt("dimstyle_compare_b").selected_text(st.compare_with.clone()).show_ui(ui, |ui| {
             for n in &names {
                 ui.selectable_value(&mut st.compare_with, n.clone(), n);
             }
@@ -787,7 +787,7 @@ fn sample(d: &Drawing, style: &DimStyle, w: u32, h: u32, bg: egui::Color32) -> O
         let doc = s.doc_mut().ok()?;
         doc.text_styles.clone_from(&d.text_styles);
         doc.linetypes.clone_from(&d.linetypes);
-        doc.dim_styles = vec![DimStyle { name: "Preview".into(), ..style.clone() }];
+        doc.dim_styles = vec![DimStyle { name: "Preview".into(), ..style.clone() }].into();
         doc.header.set_str("DIMSTYLE", "Preview");
         doc.sync_dim_vars();
     }

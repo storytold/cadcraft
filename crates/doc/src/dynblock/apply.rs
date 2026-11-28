@@ -819,13 +819,22 @@ fn delta(old: &Val, new: &Val, connection: &str) -> f64 {
     }
 }
 
-/// Move entity `e` by `v`: the listed vertices of a line or polyline, else the whole object.
+/// Move entity `e` by `v`: the listed vertices of a line, polyline or wipeout, the listed ends of
+/// an arc (0 its start, 1 its end), else the whole object.
 fn move_entity(e: &mut Entity, vertices: Option<&[i32]>, v: Vec2) {
     match (&mut e.kind, vertices) {
+        (EntityKind::Arc(a), Some(idx)) => stretch_arc(a, idx.contains(&0), idx.contains(&1), v),
         (EntityKind::LwPolyline(pl), Some(idx)) => {
             for i in idx {
                 if let Some(p) = usize::try_from(*i).ok().and_then(|i| pl.vertices.get_mut(i)) {
                     p.p += v;
+                }
+            }
+        }
+        (EntityKind::Wipeout(w), Some(idx)) => {
+            for i in idx {
+                if let Some(p) = usize::try_from(*i).ok().and_then(|i| w.boundary.get_mut(i)) {
+                    *p += v;
                 }
             }
         }
@@ -839,6 +848,27 @@ fn move_entity(e: &mut Entity, vertices: Option<&[i32]>, v: Vec2) {
             }
         }
         _ => e.kind.transform(&Mat3::translate(v)),
+    }
+}
+
+/// Move the start and/or the end of arc `a` by `v`, keeping its height over its chord, as AutoCAD
+/// 2024 stretches an arc one of whose ends is in the frame. Both ends move it whole. An arc whose
+/// new ends would meet, or that would come out too flat to be an arc, is left where it was.
+fn stretch_arc(a: &mut crate::Arc, start: bool, end: bool, v: Vec2) {
+    let c = a.center.xy();
+    let (s, e) = (Vec2::polar(c, a.radius, a.start), Vec2::polar(c, a.radius, a.end));
+    match (start, end) {
+        (true, true) => a.center = a.center + v.to3(0.0),
+        (false, false) => {}
+        _ => {
+            let (s2, e2) = (if start { s + v } else { s }, if end { e + v } else { e });
+            // The height over the chord is half the chord times the bulge, tan(sweep / 4).
+            let height = s.dist(e) * 0.5 * (cadcraft_geom::ccw_sweep(a.start, a.end) / 4.0).tan();
+            let chord = s2.dist(e2);
+            if let Some((g, _)) = (chord > 0.0).then(|| cadcraft_geom::bulge_to_arc(s2, e2, 2.0 * height / chord)).flatten() {
+                *a = crate::Arc { center: Vec3::new(g.center.x, g.center.y, a.center.z), radius: g.radius, start: g.start, end: g.end };
+            }
+        }
     }
 }
 
@@ -902,6 +932,9 @@ struct ActionRun<'a> {
     param_of: HashMap<Handle, i32>,
     /// The reference's copy of each of the dynamic block's objects.
     copy_map: &'a HashMap<Handle, Handle>,
+    /// The dynamic block's objects whose copies the reference's flips mirror (see
+    /// [`flipped_objects`]).
+    flipped: HashSet<Handle>,
     new: BTreeMap<i32, Val>,
     moves: HashMap<Handle, Vec<Op>>,
 }
@@ -909,6 +942,13 @@ struct ActionRun<'a> {
 impl ActionRun<'_> {
     fn copy_of(&self, dh: &Handle) -> Option<Handle> {
         self.copy_map.get(dh).copied()
+    }
+
+    /// Whether copy `c` of the dynamic block's object `h` is mirrored from it where a move queued
+    /// for it now finds it: by the reference's flips, and by each mirror queued for it so far.
+    fn mirrored(&self, h: &Handle, c: Handle) -> bool {
+        let queued = self.moves.get(&c).map_or(0, |ops| ops.iter().filter(|op| matches!(op, Op::Transform(t) if t.is_mirroring())).count());
+        self.flipped.contains(h) != (queued % 2 == 1)
     }
 
     /// The value of parameter `node` so far: carried along by an action already, else the
@@ -1046,7 +1086,12 @@ impl ActionRun<'_> {
                 continue;
             }
             let Some(c) = self.copy_of(h) else { continue };
-            let idx = vtx_by_handle.get(h).map(|i| (*i).clone());
+            // A wipeout's or arc's stored list isn't measured (see `stretch`): it moves whole after
+            // the turn, as before.
+            let idx = match self.def.entities.get(*h).map(|e| &e.kind) {
+                Some(EntityKind::Wipeout(_) | EntityKind::Arc(_)) => None,
+                _ => vtx_by_handle.get(h).map(|i| (*i).clone()),
+            };
             let ops = self.moves.entry(c).or_default();
             ops.push(Op::Transform(turn));
             ops.push(Op::Move(idx, v));
@@ -1107,16 +1152,27 @@ impl ActionRun<'_> {
                 continue;
             }
             let Some(c) = self.copy_of(h) else { continue };
-            // The points of a line or polyline that move are those inside the frame where the
-            // dynamic block has them, all of them when none is, as AutoCAD 2024 moves them. It
+            // The points of a line, polyline, wipeout or arc that move are those inside the frame
+            // where the dynamic block has them, all of them when none is, as AutoCAD 2024 moves them. It
             // doesn't go by the vertex lists the action stores, which a block from another program
             // can get wrong. A polyline's vertices are in its own plane: in the block's when its
             // extrusion is exactly along z (a mirrored one is read flipped into it). Any tilt, however
             // small, moves them by as much as the elevation times the tilt, so a tilted one keeps the
-            // stored list.
+            // stored list. A wipeout's outline is read into the block's plane. An arc's ends move as
+            // a polyline's vertices do (see `stretch_arc`); a copy mirrored from the dynamic block has
+            // them the other way round (a mirror swaps an arc's start and end). When the frame can't
+            // be tested, or an arc is tilted, a wipeout or arc moves whole, as before (their stored
+            // lists aren't measured).
             let idx = match self.def.entities.get(*h).map(|e| (&e.kind, e.common.extrusion)) {
                 Some((EntityKind::Line(l), _)) if framed => inside(frame, [l.a.xy(), l.b.xy()].into_iter()),
                 Some((EntityKind::LwPolyline(pl), n)) if framed && n.x == 0.0 && n.y == 0.0 => inside(frame, pl.vertices.iter().map(|v| v.p)),
+                Some((EntityKind::Wipeout(w), _)) if framed => inside(frame, w.boundary.iter().copied()),
+                Some((EntityKind::Arc(a), n)) if framed && n.x == 0.0 && n.y == 0.0 => {
+                    let o = a.center.xy();
+                    let ends = inside(frame, [Vec2::polar(o, a.radius, a.start), Vec2::polar(o, a.radius, a.end)].into_iter());
+                    if self.mirrored(h, c) { ends.map(|i| i.into_iter().map(|k| 1 - k).collect()) } else { ends }
+                }
+                Some((EntityKind::Wipeout(_) | EntityKind::Arc(_), _)) => None,
                 _ => vtx_by_handle.get(h).map(|i| (*i).clone()),
             };
             self.moves.entry(c).or_default().push(Op::Move(idx, v));
@@ -1208,6 +1264,7 @@ fn apply(
         set,
         param_of: m.parameters.iter().map(|p| (p.handle, p.node)).collect(),
         copy_map: &copy_map,
+        flipped: flipped_objects(&m, values),
         new: set.clone(),
         moves: HashMap::new(),
     };
@@ -1341,6 +1398,7 @@ fn apply(
             b.entities.push(r);
         }
     }
+    follow_outlines(&mut b, &src, &copies);
     refill_hatches(&mut b);
     let def_record = Some(record_handle(d, definition).unwrap_or_else(|| {
         let h = d.new_handle();
@@ -1468,6 +1526,155 @@ fn array_offsets(kind: &ParameterKind, b: Vec3, e: Vec3, column: f64, row: f64) 
             Ok((0..rows).flat_map(|j| (0..cols).map(move |i| Vec2::new(i as f64 * sx, j as f64 * sy))).skip(1).collect())
         }
         _ => Ok(Vec::new()),
+    }
+}
+
+/// The points of a hatch's boundary object that a loop vertex can sit on: a line's ends, a
+/// polyline's vertices (in the block's plane).
+fn outline_points(e: &Entity) -> Vec<Vec2> {
+    (0..outline_len(e)).filter_map(|k| outline_point(e, k)).collect()
+}
+
+/// How many points [`outline_points`] gives for `e`.
+fn outline_len(e: &Entity) -> usize {
+    match &e.kind {
+        EntityKind::Line(_) => 2,
+        EntityKind::LwPolyline(pl) if e.common.extrusion.x == 0.0 && e.common.extrusion.y == 0.0 => pl.vertices.len(),
+        _ => 0,
+    }
+}
+
+/// Point `k` of [`outline_points`] for `e`, without listing the others.
+fn outline_point(e: &Entity, k: usize) -> Option<Vec2> {
+    match &e.kind {
+        EntityKind::Line(l) => [l.a.xy(), l.b.xy()].get(k).copied(),
+        EntityKind::LwPolyline(pl) if e.common.extrusion.x == 0.0 && e.common.extrusion.y == 0.0 => pl.vertices.get(k).map(|v| v.p),
+        _ => None,
+    }
+}
+
+/// The points of a hatch loop's boundary objects, found by place within a rounding of where they
+/// are: a hatch's loop vertices come within about 3e-10 of the points they were made from in the
+/// library drawings measured, not always exactly on them.
+struct OutlinePoints {
+    /// A rounding: a billionth of the largest coordinate (at least of 1).
+    tol: f64,
+    /// The points by grid cell of side `tol`: the object and the point's index.
+    cells: HashMap<(i64, i64), Vec<(Vec2, Handle, usize)>>,
+}
+
+/// Most boundary points a vertex is matched against: those in its cell of [`OutlinePoints`] and the
+/// eight around it. A vertex with more within reach matches none, and its loop keeps what it has:
+/// it can't tell which object it sits on, and a file that piles points on one place would make
+/// every vertex look at all of them (CWE-400).
+const MAX_NEAR_POINTS: usize = 16;
+
+/// Most boundary points looked through for the loops of one stretched block: a file whose loops
+/// each list many boundary objects multiplies them; past this the remaining loops keep what they
+/// have (CWE-400).
+const MAX_FOLLOWED_POINTS: usize = 4_000_000;
+
+impl OutlinePoints {
+    fn new(points: Vec<(Vec2, Handle, usize)>) -> Self {
+        let largest = points.iter().map(|(p, ..)| p.x.abs().max(p.y.abs())).filter(|m| m.is_finite()).fold(1.0, f64::max);
+        let tol = largest * 1e-9;
+        let mut cells: HashMap<(i64, i64), Vec<(Vec2, Handle, usize)>> = HashMap::new();
+        for (p, h, k) in points {
+            if p.is_finite() {
+                cells.entry(Self::cell(p, tol)).or_default().push((p, h, k));
+            }
+        }
+        OutlinePoints { tol, cells }
+    }
+
+    fn cell(p: Vec2, tol: f64) -> (i64, i64) {
+        // Saturating casts: a far point lands in an edge cell, where only points as far are.
+        ((p.x / tol).floor() as i64, (p.y / tol).floor() as i64)
+    }
+
+    /// The nearest point within the rounding of `p`, if any; none when more than
+    /// [`MAX_NEAR_POINTS`] are within reach.
+    fn at(&self, p: Vec2) -> Option<(Handle, usize)> {
+        if !p.is_finite() {
+            return None;
+        }
+        let (cx, cy) = Self::cell(p, self.tol);
+        let near: Vec<&Vec<(Vec2, Handle, usize)>> = (-1..=1)
+            .flat_map(|dx| (-1..=1).map(move |dy| (cx.saturating_add(dx), cy.saturating_add(dy))))
+            .filter_map(|key| self.cells.get(&key))
+            .collect();
+        if near.iter().map(|c| c.len()).sum::<usize>() > MAX_NEAR_POINTS {
+            return None;
+        }
+        let mut best: Option<(f64, Handle, usize)> = None;
+        for (q, h, k) in near.into_iter().flatten() {
+            let d = q.dist(p);
+            if d <= self.tol && best.is_none_or(|(bd, ..)| d < bd) {
+                best = Some((d, *h, *k));
+            }
+        }
+        best.map(|(_, h, k)| (h, k))
+    }
+}
+
+/// Associative hatches of block `b` follow their boundary objects: a straight loop whose every
+/// vertex is a point of one of its boundary objects (a line's end, a polyline's vertex, within a
+/// rounding) in `before`, the block the copies were made from, takes that point's new place (the
+/// first boundary object's, where two meet at the vertex). AutoCAD 2024 fills such a hatch again
+/// from its stretched boundary. A loop whose boundary didn't move comes back on its boundary's
+/// points, within a rounding of where it was. A loop with a curved edge, or with a vertex on no
+/// such point, keeps what it has.
+fn follow_outlines(b: &mut Block, before: &Block, copies: &HashMap<Handle, Handle>) {
+    let mut budget = MAX_FOLLOWED_POINTS;
+    for old in before.entities.iter() {
+        let EntityKind::Hatch(h) = &old.kind else { continue };
+        let Some(nh) = copies.get(&old.handle).copied() else { continue };
+        if !h.associative {
+            continue;
+        }
+        let mut loops: Vec<(usize, Vec<Vec2>)> = Vec::new();
+        for (i, l) in h.loops.iter().enumerate() {
+            if l.sources.is_empty() || l.vertices.iter().any(|v| v.bulge != 0.0) {
+                continue;
+            }
+            let count: usize = l.sources.iter().filter_map(|s| before.entities.get(*s)).map(|e| outline_len(e)).sum();
+            let Some(left) = budget.checked_sub(count) else { continue };
+            budget = left;
+            // Where each point of the loop's boundary objects is: the object and the point's index.
+            let at = OutlinePoints::new(
+                l.sources
+                    .iter()
+                    .filter_map(|s| before.entities.get(*s).map(|e| (*s, e)))
+                    .flat_map(|(s, e)| outline_points(e).into_iter().enumerate().map(move |(k, p)| (p, s, k)))
+                    .collect(),
+            );
+            let moved: Option<Vec<Vec2>> = l
+                .vertices
+                .iter()
+                .map(|v| {
+                    let (s, k) = at.at(v.p)?;
+                    let e = copies.get(&s).and_then(|ns| b.entities.get(*ns))?;
+                    outline_point(e, k)
+                })
+                .collect();
+            if let Some(m) = moved {
+                loops.push((i, m));
+            }
+        }
+        if loops.is_empty() {
+            continue;
+        }
+        b.entities.modify(nh, |e| {
+            if let EntityKind::Hatch(hh) = &mut e.kind {
+                for (i, m) in loops {
+                    if let Some(l) = hh.loops.get_mut(i) {
+                        for (v, p) in l.vertices.iter_mut().zip(m) {
+                            v.p = p;
+                        }
+                    }
+                }
+            }
+        });
     }
 }
 
@@ -1875,6 +2082,25 @@ fn set_state(tags: &mut Vec<RawTag>, on: bool) {
         }
         None => tags.push(tag(70, i32::from(on).to_string())),
     }
+}
+
+/// The dynamic block's objects whose copies reference values `values` mirror: those held by an
+/// odd number of flip actions whose parameter is flipped. A selection that repeats an object
+/// mirrors it once, as [`ActionRun::transform`] does, and a reflection line of no length mirrors
+/// nothing, as [`transform_of`] makes no mirror across it.
+fn flipped_objects(m: &DynamicBlock, values: &BTreeMap<i32, Value>) -> HashSet<Handle> {
+    let mut out: HashSet<Handle> = HashSet::new();
+    for a in m.actions.iter().filter(|a| matches!(a.kind, ActionKind::Flip)) {
+        let Some(Val::Flip(b, e, true)) = a.connections.first().and_then(|(n, _)| current(m, values, *n)) else { continue };
+        if (e - b).len() > 1e-12 {
+            for h in a.selection.iter().collect::<HashSet<_>>() {
+                if !out.remove(h) {
+                    out.insert(*h);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The transform action `a` makes with the changes `set`, if it is one and they change it: a

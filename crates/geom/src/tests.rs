@@ -175,7 +175,7 @@ fn spline_interpolates_fit_points() {
         assert!(d < 0.05, "fit point {f:?} missed by {d}");
     }
     assert!(s.eval(0.0).near(fit[0], 1e-9));
-    assert!(s.eval(1.0).near(fit[4], 1e-9));
+    assert!(s.eval(s.domain().1).near(fit[4], 1e-9));
 }
 
 #[test]
@@ -199,6 +199,62 @@ fn closed_spline_is_smooth_at_the_seam() {
     let mut dup = fit.to_vec();
     dup.push(fit[0]);
     assert_eq!(Spline::from_fit_points_closed(&dup).fit.len(), 4);
+}
+
+#[test]
+fn periodic_means_the_same_derivative_where_it_closes() {
+    // AutoCAD 2024 sets group 70 bit 2 from the curve: its closed fit spline through (0,0)
+    // (4,0) (6,3) (1,4), made again without fit data, keeps it with clamped knots; with the
+    // second control point moved along the first leg (the same direction, twice as long), or
+    // across it by a fraction of its length, it drops it (accoreconsole, `entmake` + `entget`;
+    // AutoCAD drops it from 1e-11).
+    let control = vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(0.9768273968569969, -0.9075163990404586),
+        Vec2::new(4.110440110427768, -0.7122257786209955),
+        Vec2::new(7.696509078097733, 3.854015801004462),
+        Vec2::new(0.3665121443407813, 5.739691001923484),
+        Vec2::new(-1.006890633809635, 0.9354464925559993),
+        Vec2::new(0.0, 0.0),
+    ];
+    let knots = vec![
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        4.0,
+        7.605551275463989,
+        12.70457078905677,
+        16.82767641467443,
+        16.82767641467443,
+        16.82767641467443,
+        16.82767641467443,
+    ];
+    let s = Spline { degree: 3, knots, control, closed: true, ..Spline::default() };
+    assert!(s.is_valid() && s.is_periodic() && !s.wraps());
+    let leg = s.control[1] - s.control[0];
+    let moved = |to: Vec2| {
+        let mut m = s.clone();
+        m.control[1] = to;
+        m
+    };
+    assert!(!moved(s.control[0] + leg * 2.0).is_periodic(), "the same direction is not enough");
+    let across = Vec2::new(-leg.y, leg.x) * 1e-7;
+    assert!(!moved(s.control[1] + across).is_periodic());
+    // The last two control points moved together: the same derivative, but the ends apart.
+    let mut apart = s.clone();
+    for c in &mut apart.control[5..] {
+        *c += Vec2::new(0.0, 1e-3);
+    }
+    assert!(!apart.is_periodic(), "the ends must meet");
+    assert!(!Spline { closed: false, ..s.clone() }.is_periodic(), "an open spline is not periodic");
+    // Control points that wrap round (unclamped knots) are periodic too.
+    let w = Spline::fit_with(
+        &[Vec2::ZERO, Vec2::new(4.0, 0.0), Vec2::new(2.0, 3.0)],
+        true,
+        crate::FitOptions { knots: crate::KnotParam::SqrtChord, ..Default::default() },
+    );
+    assert!(w.wraps() && w.is_periodic());
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! CADCraft file formats: DXF/DWG read, SVG and SVGZ import, SVG/PNG/PDF export (plotting).
+//! CADCraft file formats: DXF/DWG read, SVG/SVGZ import, PDF page conversion and SVG/PNG/PDF plotting.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
@@ -18,6 +18,7 @@ mod dxf_table;
 mod dxf_write;
 mod dxf_xref;
 pub mod pdf;
+pub mod pdf_read;
 pub mod plotter;
 /// Raster image files (PNG, JPEG, BMP, TIFF) decoded to pixels.
 pub mod raster;
@@ -37,7 +38,7 @@ pub use cadcraft_doc::Format;
 pub use craft_dxf::Version;
 pub use dxf_raw::{ObjectRecord, object_records};
 pub use dxf_read::entity_from_groups;
-pub use dxf_write::{dwg_compat_lost, entity_groups, proxies_lost};
+pub use dxf_write::{DWG_MAX_LINETYPE_ELEMENTS, dwg_compat_lost, dwg_notes, entity_groups, proxies_lost};
 pub use pdf::{PdfOptions, pdf, plot};
 
 /// How a drawing is saved as DXF or DWG.
@@ -178,26 +179,50 @@ fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, craft_dwg::Unwri
 /// extents. Formats that are not images (DXF, DWG) ignore the window. The window is checked with
 /// [`check_window`].
 pub fn write_framed(d: &Drawing, name: impl AsRef<Path>, window: Option<Bounds2>) -> Result<Vec<u8>> {
+    write_framed_noted(d, name, window).map(|(bytes, _)| bytes)
+}
+
+/// [`write_framed`], also returning what an image (PNG, SVG, PDF) draws short of the drawing
+/// because of a render limit, one note each: the dashed runs drawn continuous
+/// ([`undashed_note`]). DXF and DWG have none.
+pub fn write_framed_noted(d: &Drawing, name: impl AsRef<Path>, window: Option<Bounds2>) -> Result<(Vec<u8>, Vec<String>)> {
     let name = name.as_ref();
     // A drawing template (.dwt) is DWG content.
     let format = Format::from_path(name);
     if format == Some(Format::Dwt) {
         let mut dwg = name.as_os_str().to_owned();
         dwg.push(".dwg");
-        return write_framed(d, PathBuf::from(dwg), None);
+        return write_framed_noted(d, PathBuf::from(dwg), None);
     }
     if let Some(w) = &window
         && is_image(name)
     {
         check_window(w)?;
     }
-    match format {
-        Some(Format::Dxf | Format::Dwg) => write_with(d, name, &SaveOptions::default()),
-        Some(Format::Svg) => Ok(svg::export_window(d, &Space::Model, window).into_bytes()),
-        Some(Format::Png) => png_framed(d, &Space::Model, 2400, 1600, window),
-        Some(Format::Pdf) => pdf::pdf(d, &Space::Model, &PdfOptions { compress: true, window, ..PdfOptions::default() }),
-        _ => Err(IoError::Unsupported(ext(name))),
-    }
+    let (bytes, undashed) = match format {
+        Some(Format::Dxf | Format::Dwg) => (write_with(d, name, &SaveOptions::default())?, 0),
+        Some(Format::Svg) => {
+            let (svg, undashed) = svg::export_window_noted(d, &Space::Model, window);
+            (svg.into_bytes(), undashed)
+        }
+        Some(Format::Png) => png_framed_noted(d, &Space::Model, 2400, 1600, window)?,
+        Some(Format::Pdf) => pdf::pdf_noted(d, &Space::Model, &PdfOptions { compress: true, window, ..PdfOptions::default() })?,
+        _ => return Err(IoError::Unsupported(ext(name))),
+    };
+    Ok((bytes, undashed_note(undashed).into_iter().collect()))
+}
+
+/// The note for `n` dashed runs an output drew continuous because of a dash limit
+/// ([`cadcraft_render::DisplayList::undashed`]), or `None` when there are none.
+pub fn undashed_note(n: usize) -> Option<String> {
+    let runs = if n == 1 { "run" } else { "runs" };
+    (n > 0).then(|| {
+        format!(
+            "{n} dashed {runs} (each a line, a curve or a polyline segment) drawn continuous: past the dash limit of {} pattern elements per run or {} per drawing",
+            cadcraft_render::MAX_RUN_DASH_ELEMENTS,
+            cadcraft_render::MAX_DASH_ELEMENTS
+        )
+    })
 }
 
 /// Whether `name` is written as an image (PNG, SVG, PDF), i.e. whether framing applies to it.
@@ -237,10 +262,17 @@ pub fn png(d: &Drawing, space: &Space, width: u32, height: u32) -> Result<Vec<u8
 /// extents (5% margin) when `window` is `None`. Objects are drawn with their transparency, as on
 /// screen.
 pub fn png_framed(d: &Drawing, space: &Space, width: u32, height: u32, window: Option<Bounds2>) -> Result<Vec<u8>> {
+    png_framed_noted(d, space, width, height, window).map(|(png, _)| png)
+}
+
+/// [`png_framed`], also returning the dashed runs it drew continuous because of a dash limit
+/// ([`cadcraft_render::DisplayList::undashed`]).
+pub fn png_framed_noted(d: &Drawing, space: &Space, width: u32, height: u32, window: Option<Bounds2>) -> Result<(Vec<u8>, usize)> {
     let list = cadcraft_render::build(d, space, &cadcraft_render::Options { transparency: true, ..cadcraft_render::Options::default() });
     let view = png_view(&list.bounds, width, height, window);
-    cadcraft_render::raster::render_png(&list, &view, &cadcraft_render::raster::RasterOptions::default())
-        .ok_or_else(|| IoError::Format("render failed".into()))
+    let png = cadcraft_render::raster::render_png(&list, &view, &cadcraft_render::raster::RasterOptions::default())
+        .ok_or_else(|| IoError::Format("render failed".into()))?;
+    Ok((png, list.undashed))
 }
 
 /// The raster view a PNG export uses.

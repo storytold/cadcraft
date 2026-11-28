@@ -1,217 +1,213 @@
 # Parity checklist
 
-> **Generated:** 2026-11-01 by `cargo xtask parity`. Do not edit by hand.
+> **Generated:** 2026-11-27 by `cargo xtask parity`. Do not edit by hand.
 
 Menu-breadth parity: a reference menu item counts as covered when a CADCraft command is registered under the same menu label. It measures breadth, not depth; see [target-app-parity.md](target-app-parity.md) for the weighted assessment.
 
-**Menu breadth: 298 / 491 items (61%)** · 449 registered commands.
+**Menu breadth: 306 / 491 items (62%)** · 482 registered commands.
 
 | Menu | Items | Covered | % |
 |---|---|---|---|
 | File | 22 | 13 | 59% |
 | Edit | 13 | 12 | 92% |
-| View | 75 | 37 | 49% |
+| View | 75 | 38 | 51% |
 | Insert | 11 | 5 | 45% |
 | Format | 27 | 26 | 96% |
-| Tools | 85 | 66 | 78% |
-| Draw | 87 | 55 | 63% |
+| Tools | 85 | 71 | 84% |
+| Draw | 87 | 56 | 64% |
 | Dimension | 28 | 28 | 100% |
-| Modify | 113 | 53 | 47% |
+| Modify | 113 | 54 | 48% |
 | Window | 22 | 3 | 14% |
 | Help | 8 | 0 | 0% |
 
+**Headless ([RFC-0052](https://github.com/storytold/craft-contrib/blob/main/rfcs/0052-headless-reach.md)): 306 yes, 185 no (window 32, os 6, engine-gap 147), 0 partial, 0 unknown.**
+
+A covered item is `headless: yes`: the command that covers it is in the engine registry that `cadcraft-cli` and the MCP server load. An item not covered carries its hand mark from `HEADLESS` in `xtask/src/parity.rs`, or `unknown`.
+
 ## Not yet covered
 
-- File > New Sheet Set...
-- File > Open Sheet Set...
-- File > Open Recent > Clear Menu
-- File > Attach...
-- File > Export Layout to Model...
-- File > Package Drawing...
-- File > DWG Compare...
-- File > Markup Import...
-- File > Share...
-- Edit > Undo Group of commands
-- View > Pan > Point
-- View > Orbit > Constrained Orbit
-- View > Orbit > Free Orbit
-- View > Camera > Adjust Distance
-- View > Camera > Swivel
-- View > 3D Views > Viewpoint
-- View > 3D Views > Plan View > Current UCS
-- View > 3D Views > Plan View > World UCS
-- View > 3D Views > Plan View > Named UCS
-- View > 3D Views > Top
-- View > 3D Views > Bottom
-- View > 3D Views > Front
-- View > 3D Views > Back
-- View > 3D Views > SW Isometric
-- View > 3D Views > SE Isometric
-- View > 3D Views > NE Isometric
-- View > 3D Views > NW Isometric
-- View > Hide
-- View > Visual Styles > 2D Wireframe
-- View > Visual Styles > Wireframe
-- View > Visual Styles > Hidden
-- View > Visual Styles > Realistic
-- View > Visual Styles > Conceptual
-- View > Visual Styles > Shaded
-- View > Visual Styles > Shaded with Edges
-- View > Visual Styles > Shades of Gray
-- View > Visual Styles > Sketchy
-- View > Visual Styles > X-Ray
-- View > Render > Light > New Point Light
-- View > Render > Light > New Spotlight
-- View > Render > Light > New Distant Light
-- View > Render > Light > Light Glyphs
-- View > Render > Materials Browser
-- View > UCS Icon > Origin
-- View > UCS Icon > Properties...
-- View > ViewCube > Settings
-- View > Lights
-- View > Enter Full Screen
-- Insert > PDF Underlay...
-- Insert > Raster Image Reference...
-- Insert > Field...
-- Insert > Layout > Layout from Template...
-- Insert > ACIS File...
-- Insert > Drawing Exchange Binary...
-- Format > Transparency
-- Tools > Spelling
-- Tools > Update Fields
-- Tools > Edit Xref in Place
-- Tools > New UCS > World
-- Tools > New UCS > Face
-- Tools > New UCS > View
-- Tools > New UCS > Origin
-- Tools > New UCS > Z Axis Vector
-- Tools > New UCS > 3 Point
-- Tools > New UCS > X
-- Tools > New UCS > Y
-- Tools > New UCS > Z
-- Tools > Named UCS...
-- Tools > Customize > Interface (CUI)...
-- Tools > Import Settings
-- Tools > Export Settings
-- Tools > Express Tools > Super Hatch > Image...
-- Tools > Express Tools > Super Hatch > Xref...
-- Tools > Express Tools > Super Hatch > Select Existing Object
-- Draw > 3D Modeling > Polysolid
-- Draw > 3D Modeling > Box
-- Draw > 3D Modeling > Wedge
-- Draw > 3D Modeling > Cone
-- Draw > 3D Modeling > Sphere
-- Draw > 3D Modeling > Cylinder
-- Draw > 3D Modeling > Torus
-- Draw > 3D Modeling > Pyramid
-- Draw > 3D Modeling > Extrude
-- Draw > 3D Modeling > Revolve
-- Draw > 3D Modeling > Sweep
-- Draw > 3D Modeling > Loft
-- Draw > 3D Modeling > Section Plane
-- Draw > 3D Modeling > Surfaces > Planar
-- Draw > 3D Modeling > Surfaces > Network
-- Draw > 3D Modeling > Surfaces > Patch
-- Draw > 3D Modeling > Meshes > Primitives > Box
-- Draw > 3D Modeling > Meshes > Primitives > Wedge
-- Draw > 3D Modeling > Meshes > Primitives > Cone
-- Draw > 3D Modeling > Meshes > Primitives > Sphere
-- Draw > 3D Modeling > Meshes > Primitives > Cylinder
-- Draw > 3D Modeling > Meshes > Primitives > Torus
-- Draw > 3D Modeling > Meshes > Primitives > Pyramid
-- Draw > 3D Modeling > Meshes > Smooth Mesh
-- Draw > 3D Modeling > Meshes > 3D Face
-- Draw > 3D Modeling > Meshes > Meshes, Revolved Surface
-- Draw > 3D Modeling > Meshes > Meshes, Tabulated Surface
-- Draw > 3D Modeling > Meshes > Meshes, Ruled Surface
-- Draw > 3D Modeling > Meshes > Meshes, Edge Surface
-- Draw > 3D Modeling > Setup > Drawing
-- Draw > 3D Modeling > Setup > View
-- Draw > 3D Modeling > Setup > Profile
-- Modify > Object > External Reference > Frame
-- Modify > Object > Image > Adjust...
-- Modify > Object > Image > Quality
-- Modify > Object > Image > Transparency
-- Modify > Object > Image > Frame
-- Modify > Clip > Image
-- Modify > Clip > Xref
-- Modify > 3D Operations > 3D Move
-- Modify > 3D Operations > 3D Rotate
-- Modify > 3D Operations > 3D Align
-- Modify > 3D Operations > 3D Mirror
-- Modify > 3D Operations > 3D Array
-- Modify > 3D Operations > Interference Checking
-- Modify > 3D Operations > Slice
-- Modify > 3D Operations > Thicken
-- Modify > 3D Operations > Convert to Solid
-- Modify > 3D Operations > Convert to Surface
-- Modify > 3D Operations > Extract Edges
-- Modify > 3D Operations > Extract Isolines
-- Modify > Solid Editing > Imprint Edges
-- Modify > Solid Editing > Fillet edges
-- Modify > Solid Editing > Chamfer edges
-- Modify > Solid Editing > Color edges
-- Modify > Solid Editing > Copy edges
-- Modify > Solid Editing > Extrude faces
-- Modify > Solid Editing > Move faces
-- Modify > Solid Editing > Offset faces
-- Modify > Solid Editing > Delete faces
-- Modify > Solid Editing > Rotate faces
-- Modify > Solid Editing > Taper faces
-- Modify > Solid Editing > Color faces
-- Modify > Solid Editing > Copy faces
-- Modify > Solid Editing > Clean
-- Modify > Solid Editing > Separate
-- Modify > Solid Editing > Shell
-- Modify > Solid Editing > Check
-- Modify > Surface Editing > Untrim
-- Modify > Surface Editing > Sculpt
-- Modify > Surface Editing > Convert to NURBS
-- Modify > Surface Editing > Convert to Mesh
-- Modify > Surface Editing > NURBS Surface Editing > Show CV
-- Modify > Surface Editing > NURBS Surface Editing > Hide CV
-- Modify > Surface Editing > NURBS Surface Editing > Add CV
-- Modify > Surface Editing > NURBS Surface Editing > Remove CV
-- Modify > Surface Editing > NURBS Surface Editing > Rebuild
-- Modify > Mesh Editing > Smooth More
-- Modify > Mesh Editing > Smooth Less
-- Modify > Mesh Editing > Refine Mesh
-- Modify > Mesh Editing > Crease
-- Modify > Mesh Editing > Uncrease
-- Modify > Mesh Editing > Split Face
-- Modify > Mesh Editing > Extrude Face
-- Modify > Mesh Editing > Merge Face
-- Modify > Mesh Editing > Spin Triangle Face
-- Modify > Mesh Editing > Close Hole
-- Modify > Mesh Editing > Collapse Face or Edge
-- Modify > Mesh Editing > Convert to Faceted Solid
-- Modify > Mesh Editing > Convert to Faceted Surface
-- Modify > Mesh Editing > Convert to Smooth Solid
-- Modify > Mesh Editing > Convert to Smooth Surface
-- Window > Minimize
-- Window > Minimize All
-- Window > Zoom
-- Window > Tool Bar
-- Window > File Tab
-- Window > Tool Sets
-- Window > Status Bar
-- Window > Command Line
-- Window > Blocks
-- Window > Properties Inspector
-- Window > Traces
-- Window > Sheet Set Manager
-- Window > Materials Browser
-- Window > Activity Insights
-- Window > Geometry Cleanup
-- Window > Hide Palettes
-- Window > Reset Palettes
-- Window > Start
-- Window > Drawing1.dwg
-- Help > AutoCAD Help
-- Help > Autodesk Assistant
-- Help > Download Offline Help
-- Help > What's New
-- Help > Highlight New Features
-- Help > Recover Files
-- Help > Send Feedback
-- Help > Privacy Settings...
+- File > New Sheet Set...: headless: no, reach: engine-gap (sheet sets could be commands)
+- File > Open Sheet Set...: headless: no, reach: engine-gap (sheet sets could be commands)
+- File > Open Recent > Clear Menu: headless: no, reach: window (the desktop recent-files list)
+- File > Attach...: headless: no, reach: engine-gap (attaching a reference could be a command)
+- File > Export Layout to Model...: headless: no, reach: engine-gap (the export could be a command)
+- File > Package Drawing...: headless: no, reach: engine-gap (packaging a drawing could be a command)
+- File > DWG Compare...: headless: no, reach: engine-gap (comparing drawings could be a command)
+- File > Markup Import...: headless: no, reach: engine-gap (the import could be a command)
+- File > Share...: headless: no, reach: os (an online sharing service)
+- Edit > Undo Group of commands: headless: no, reach: engine-gap (undo groups could be a command)
+- View > Pan > Point: headless: no, reach: window (drags the desktop view)
+- View > Orbit > Constrained Orbit: headless: no, reach: window (drags the desktop view)
+- View > Orbit > Free Orbit: headless: no, reach: window (drags the desktop view)
+- View > Camera > Adjust Distance: headless: no, reach: engine-gap (cameras could be created by a command)
+- View > Camera > Swivel: headless: no, reach: engine-gap (cameras could be created by a command)
+- View > 3D Views > Viewpoint: headless: no, reach: engine-gap (a saved view direction could be set by a command)
+- View > 3D Views > Plan View > Current UCS: headless: no, reach: engine-gap (a saved view direction could be set by a command)
+- View > 3D Views > Plan View > World UCS: headless: no, reach: engine-gap (a saved view direction could be set by a command)
+- View > 3D Views > Plan View > Named UCS: headless: no, reach: engine-gap (a saved view direction could be set by a command)
+- View > 3D Views > Top: headless: no, reach: engine-gap (a saved view direction could be set by a command)
+- View > 3D Views > Bottom: headless: no, reach: engine-gap (a saved view direction could be set by a command)
+- View > 3D Views > Front: headless: no, reach: engine-gap (a saved view direction could be set by a command)
+- View > 3D Views > Back: headless: no, reach: engine-gap (a saved view direction could be set by a command)
+- View > 3D Views > SW Isometric: headless: no, reach: engine-gap (a saved view direction could be set by a command)
+- View > 3D Views > SE Isometric: headless: no, reach: engine-gap (a saved view direction could be set by a command)
+- View > 3D Views > NE Isometric: headless: no, reach: engine-gap (a saved view direction could be set by a command)
+- View > 3D Views > NW Isometric: headless: no, reach: engine-gap (a saved view direction could be set by a command)
+- View > Hide: headless: no, reach: engine-gap (hidden-line output could be a command)
+- View > Visual Styles > 2D Wireframe: headless: no, reach: engine-gap (a visual style could be set by a command)
+- View > Visual Styles > Wireframe: headless: no, reach: engine-gap (a visual style could be set by a command)
+- View > Visual Styles > Hidden: headless: no, reach: engine-gap (a visual style could be set by a command)
+- View > Visual Styles > Realistic: headless: no, reach: engine-gap (a visual style could be set by a command)
+- View > Visual Styles > Conceptual: headless: no, reach: engine-gap (a visual style could be set by a command)
+- View > Visual Styles > Shaded: headless: no, reach: engine-gap (a visual style could be set by a command)
+- View > Visual Styles > Shaded with Edges: headless: no, reach: engine-gap (a visual style could be set by a command)
+- View > Visual Styles > Shades of Gray: headless: no, reach: engine-gap (a visual style could be set by a command)
+- View > Visual Styles > Sketchy: headless: no, reach: engine-gap (a visual style could be set by a command)
+- View > Visual Styles > X-Ray: headless: no, reach: engine-gap (a visual style could be set by a command)
+- View > Render > Light > New Point Light: headless: no, reach: engine-gap (rendering could be a command)
+- View > Render > Light > New Spotlight: headless: no, reach: engine-gap (rendering could be a command)
+- View > Render > Light > New Distant Light: headless: no, reach: engine-gap (rendering could be a command)
+- View > Render > Light > Light Glyphs: headless: no, reach: engine-gap (rendering could be a command)
+- View > Render > Materials Browser: headless: no, reach: engine-gap (rendering could be a command)
+- View > UCS Icon > Properties...: headless: no, reach: window (a desktop view overlay)
+- View > ViewCube > Settings: headless: no, reach: window (a desktop view control)
+- View > Lights: headless: no, reach: engine-gap (lights could be created by a command)
+- View > Enter Full Screen: headless: no, reach: window (the desktop window)
+- Insert > PDF Underlay...: headless: no, reach: engine-gap (the underlay could be inserted by a command)
+- Insert > Raster Image Reference...: headless: no, reach: engine-gap (the reference could be inserted by a command)
+- Insert > Field...: headless: no, reach: engine-gap (fields could be inserted by a command)
+- Insert > Layout > Layout from Template...: headless: no, reach: engine-gap (layouts could be created by a command)
+- Insert > ACIS File...: headless: no, reach: engine-gap (the import could be a command)
+- Insert > Drawing Exchange Binary...: headless: no, reach: engine-gap (the import could be a command)
+- Format > Transparency: headless: no, reach: engine-gap (transparency could be set by a command)
+- Tools > Spelling: headless: no, reach: engine-gap (a spell check could be a command)
+- Tools > Update Fields: headless: no, reach: engine-gap (updating fields could be a command)
+- Tools > Edit Xref in Place: headless: no, reach: window (edits a reference in the desktop view)
+- Tools > New UCS > Face: headless: no, reach: engine-gap (a coordinate system could be set by a command)
+- Tools > New UCS > Z Axis Vector: headless: no, reach: engine-gap (a coordinate system could be set by a command)
+- Tools > New UCS > X: headless: no, reach: engine-gap (a coordinate system could be set by a command)
+- Tools > New UCS > Y: headless: no, reach: engine-gap (a coordinate system could be set by a command)
+- Tools > Named UCS...: headless: no, reach: engine-gap (named coordinate systems could be commands)
+- Tools > Customize > Interface (CUI)...: headless: no, reach: window (a desktop dialog)
+- Tools > Import Settings: headless: no, reach: engine-gap (importing settings could be a command)
+- Tools > Export Settings: headless: no, reach: engine-gap (exporting settings could be a command)
+- Tools > Express Tools > Super Hatch > Image...: headless: no, reach: engine-gap (image and reference hatches could be commands)
+- Tools > Express Tools > Super Hatch > Xref...: headless: no, reach: engine-gap (image and reference hatches could be commands)
+- Tools > Express Tools > Super Hatch > Select Existing Object: headless: no, reach: window (picks an object in the desktop view)
+- Draw > 3D Modeling > Polysolid: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Box: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Wedge: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Cone: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Sphere: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Cylinder: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Torus: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Pyramid: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Extrude: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Revolve: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Sweep: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Loft: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Section Plane: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Surfaces > Planar: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Surfaces > Network: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Surfaces > Patch: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Meshes > Primitives > Box: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Meshes > Primitives > Wedge: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Meshes > Primitives > Cone: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Meshes > Primitives > Sphere: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Meshes > Primitives > Cylinder: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Meshes > Primitives > Torus: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Meshes > Primitives > Pyramid: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Meshes > Smooth Mesh: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Meshes > 3D Face: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Meshes > Meshes, Revolved Surface: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Meshes > Meshes, Tabulated Surface: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Meshes > Meshes, Ruled Surface: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Meshes > Meshes, Edge Surface: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Setup > Drawing: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Draw > 3D Modeling > Setup > Profile: headless: no, reach: engine-gap (3D solid and surface creation could be commands)
+- Modify > Object > External Reference > Frame: headless: no, reach: engine-gap (the frame setting could be a command)
+- Modify > Object > Image > Adjust...: headless: no, reach: engine-gap (image settings could be commands)
+- Modify > Object > Image > Quality: headless: no, reach: engine-gap (image settings could be commands)
+- Modify > Object > Image > Transparency: headless: no, reach: engine-gap (image settings could be commands)
+- Modify > Object > Image > Frame: headless: no, reach: engine-gap (image settings could be commands)
+- Modify > Clip > Image: headless: no, reach: engine-gap (clipping an image could be a command)
+- Modify > 3D Operations > 3D Move: headless: no, reach: engine-gap (3D operations could be commands)
+- Modify > 3D Operations > 3D Rotate: headless: no, reach: engine-gap (3D operations could be commands)
+- Modify > 3D Operations > 3D Align: headless: no, reach: engine-gap (3D operations could be commands)
+- Modify > 3D Operations > 3D Mirror: headless: no, reach: engine-gap (3D operations could be commands)
+- Modify > 3D Operations > 3D Array: headless: no, reach: engine-gap (3D operations could be commands)
+- Modify > 3D Operations > Interference Checking: headless: no, reach: engine-gap (3D operations could be commands)
+- Modify > 3D Operations > Slice: headless: no, reach: engine-gap (3D operations could be commands)
+- Modify > 3D Operations > Thicken: headless: no, reach: engine-gap (3D operations could be commands)
+- Modify > 3D Operations > Convert to Solid: headless: no, reach: engine-gap (3D operations could be commands)
+- Modify > 3D Operations > Convert to Surface: headless: no, reach: engine-gap (3D operations could be commands)
+- Modify > 3D Operations > Extract Edges: headless: no, reach: engine-gap (3D operations could be commands)
+- Modify > 3D Operations > Extract Isolines: headless: no, reach: engine-gap (3D operations could be commands)
+- Modify > Solid Editing > Imprint Edges: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Solid Editing > Fillet edges: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Solid Editing > Chamfer edges: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Solid Editing > Color edges: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Solid Editing > Copy edges: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Solid Editing > Extrude faces: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Solid Editing > Move faces: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Solid Editing > Offset faces: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Solid Editing > Delete faces: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Solid Editing > Rotate faces: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Solid Editing > Taper faces: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Solid Editing > Color faces: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Solid Editing > Copy faces: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Solid Editing > Clean: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Solid Editing > Separate: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Solid Editing > Shell: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Solid Editing > Check: headless: no, reach: engine-gap (solid editing could be commands)
+- Modify > Surface Editing > Untrim: headless: no, reach: engine-gap (surface editing could be commands)
+- Modify > Surface Editing > Sculpt: headless: no, reach: engine-gap (surface editing could be commands)
+- Modify > Surface Editing > Convert to NURBS: headless: no, reach: engine-gap (surface editing could be commands)
+- Modify > Surface Editing > Convert to Mesh: headless: no, reach: engine-gap (surface editing could be commands)
+- Modify > Surface Editing > NURBS Surface Editing > Show CV: headless: no, reach: engine-gap (surface editing could be commands)
+- Modify > Surface Editing > NURBS Surface Editing > Hide CV: headless: no, reach: engine-gap (surface editing could be commands)
+- Modify > Surface Editing > NURBS Surface Editing > Add CV: headless: no, reach: engine-gap (surface editing could be commands)
+- Modify > Surface Editing > NURBS Surface Editing > Remove CV: headless: no, reach: engine-gap (surface editing could be commands)
+- Modify > Surface Editing > NURBS Surface Editing > Rebuild: headless: no, reach: engine-gap (surface editing could be commands)
+- Modify > Mesh Editing > Smooth More: headless: no, reach: engine-gap (mesh editing could be commands)
+- Modify > Mesh Editing > Smooth Less: headless: no, reach: engine-gap (mesh editing could be commands)
+- Modify > Mesh Editing > Refine Mesh: headless: no, reach: engine-gap (mesh editing could be commands)
+- Modify > Mesh Editing > Crease: headless: no, reach: engine-gap (mesh editing could be commands)
+- Modify > Mesh Editing > Uncrease: headless: no, reach: engine-gap (mesh editing could be commands)
+- Modify > Mesh Editing > Split Face: headless: no, reach: engine-gap (mesh editing could be commands)
+- Modify > Mesh Editing > Extrude Face: headless: no, reach: engine-gap (mesh editing could be commands)
+- Modify > Mesh Editing > Merge Face: headless: no, reach: engine-gap (mesh editing could be commands)
+- Modify > Mesh Editing > Spin Triangle Face: headless: no, reach: engine-gap (mesh editing could be commands)
+- Modify > Mesh Editing > Close Hole: headless: no, reach: engine-gap (mesh editing could be commands)
+- Modify > Mesh Editing > Collapse Face or Edge: headless: no, reach: engine-gap (mesh editing could be commands)
+- Modify > Mesh Editing > Convert to Faceted Solid: headless: no, reach: engine-gap (mesh editing could be commands)
+- Modify > Mesh Editing > Convert to Faceted Surface: headless: no, reach: engine-gap (mesh editing could be commands)
+- Modify > Mesh Editing > Convert to Smooth Solid: headless: no, reach: engine-gap (mesh editing could be commands)
+- Modify > Mesh Editing > Convert to Smooth Surface: headless: no, reach: engine-gap (mesh editing could be commands)
+- Window > Minimize: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Minimize All: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Zoom: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Tool Bar: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > File Tab: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Tool Sets: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Status Bar: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Command Line: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Blocks: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Properties Inspector: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Traces: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Sheet Set Manager: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Materials Browser: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Activity Insights: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Geometry Cleanup: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Hide Palettes: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Reset Palettes: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Start: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Window > Drawing1.dwg: headless: no, reach: window (opens or arranges a desktop window or palette)
+- Help > AutoCAD Help: headless: no, reach: os (opens online help in the browser)
+- Help > Autodesk Assistant: headless: no, reach: os (an online assistant service)
+- Help > Download Offline Help: headless: no, reach: os (an online download)
+- Help > What's New: headless: no, reach: os (opens online help in the browser)
+- Help > Highlight New Features: headless: no, reach: window (a desktop help window or dialog)
+- Help > Recover Files: headless: no, reach: window (a desktop help window or dialog)
+- Help > Send Feedback: headless: no, reach: os (an online feedback service)
+- Help > Privacy Settings...: headless: no, reach: window (a desktop help window or dialog)

@@ -184,6 +184,7 @@ fn wheel_zoom_reads_every_notch_of_the_frame() {
 #[test]
 fn a_wheel_notch_zooms_whole_in_its_own_frame() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let o = ctx.options(|o| o.input_options);
     let input = egui::RawInput { events: vec![wheel(egui::MouseWheelUnit::Line, 1.0, egui::Modifiers::NONE)], ..Default::default() };
     let mut seen = (0.0, 0.0);
@@ -231,6 +232,7 @@ fn dynamic_input_distance_follows_the_drawing_units() {
     let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
     app.session.execute("units", &serde_json::json!({"lunits": 4, "luprec": 4})).unwrap();
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     painted_text(&mut app, &ctx, pos2(700.0, 450.0));
     app.session.cmdline("line").unwrap();
     app.session.input(Input::Point(Vec2::ZERO)).unwrap();
@@ -275,6 +277,7 @@ fn cursor_shows_pickbox_only_at_command_object_selection_prompts() {
     let at = pos2(400.0, 300.0);
     let paint = |app: &CadApp| {
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             let painter = ui.painter_at(rect);
             let picking = app.session.picking_objects() && app.session.pending_window.is_none();
@@ -459,6 +462,7 @@ fn the_cycling_badge_follows_the_frozen_layers_under_a_resting_pointer() {
     app.session.execute("setvar", &serde_json::json!({ "name": "SELECTIONCYCLING", "value": 1 })).unwrap();
     app.session.execute("mspace", &serde_json::json!({ "handle": b })).unwrap();
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     /// Whether the badge shows after a frame with the pointer resting on the two lines.
     fn badge(app: &mut CadApp, ctx: &egui::Context) -> bool {
         let (at, on_lines) = (Some(Pos2::new(200.0, 150.0)), Some(Vec2::new(50.0, 0.0)));
@@ -471,4 +475,65 @@ fn the_cycling_badge_follows_the_frozen_layers_under_a_resting_pointer() {
     assert!(!badge(&mut app, &ctx), "the badge stayed for a line the viewport no longer draws");
     app.session.execute("vplayer", &serde_json::json!({ "handles": [b], "thaw": ["Hidden"] })).unwrap();
     assert!(badge(&mut app, &ctx), "thawed in the viewport: two lines are under the cursor again");
+}
+
+/// #1118: with the cursor on an object at TRIM's "Select object to trim" prompt, the rollover
+/// highlight shows only the piece a click there removes, worked out once while the cursor rests.
+#[test]
+fn trim_highlights_the_piece_a_click_removes_once_per_cursor_position() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    for points in [[[0, -5], [0, 5]], [[10, -5], [10, 5]], [[-5, 0], [15, 0]]] {
+        app.run("line", serde_json::json!({ "points": points })).unwrap();
+    }
+    app.session.zoom_extents().unwrap();
+    let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
+    painted_text(&mut app, &ctx, pos2(700.0, 450.0));
+    app.session.cmdline("trim").unwrap();
+    let at = app.canvas.xf.unwrap().to_screen(Vec2::new(5.0, 0.0));
+    painted_text(&mut app, &ctx, at);
+    let part = app.canvas.hover_part.list.as_ref().expect("a part of the line is highlighted");
+    let (lo, hi) = (part.bounds.min.x, part.bounds.max.x);
+    assert!((lo - 0.0).abs() < 1e-6 && (hi - 10.0).abs() < 1e-6, "the piece between the edges: {lo}..{hi}");
+    let computed = app.canvas.hover_part.list_gen;
+    for _ in 0..3 {
+        painted_text(&mut app, &ctx, at);
+    }
+    assert_eq!(app.canvas.hover_part.list_gen, computed, "frames with the cursor at rest compute nothing");
+    // Without a command the whole object is highlighted, as before.
+    app.session.cancel();
+    painted_text(&mut app, &ctx, at);
+    assert!(app.canvas.hover_part.list.is_none());
+}
+
+#[test]
+fn a_fence_point_taken_back_with_undo_updates_the_highlight_at_once() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    for points in [[[0, -5], [0, 5]], [[10, -5], [10, 5]], [[-5, 0], [15, 0]], [[-5, 3], [15, 3]]] {
+        app.run("line", serde_json::json!({ "points": points })).unwrap();
+    }
+    app.session.zoom_extents().unwrap();
+    let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
+    painted_text(&mut app, &ctx, pos2(700.0, 450.0));
+    for answer in ["trim", "f", "5,-4", "5,1.5"] {
+        app.session.cmdline(answer).unwrap();
+    }
+    // The fence so far crosses the line at y = 0; the cursor carries it on across y = 3 too.
+    let at = app.canvas.xf.unwrap().to_screen(Vec2::new(5.0, 4.0));
+    painted_text(&mut app, &ctx, at);
+    let both = app.canvas.hover_part.list.as_ref().expect("the fence's pieces are highlighted").bounds;
+    assert!(both.min.y.abs() < 1e-6 && (both.max.y - 3.0).abs() < 1e-6, "both lines' pieces: {both:?}");
+    // Undo takes back the second point: the fence now runs from (5,-4) straight to the cursor,
+    // which still crosses both lines, but the cursor has not moved and the prompt is the same.
+    let (hover, cursor, scale) = (app.canvas.hover, app.canvas.cursor, app.canvas.xf.unwrap().scale);
+    app.canvas.hover_part.update(&app.session, hover, cursor, scale);
+    let computed = app.canvas.hover_part.list_gen;
+    app.session.cmdline("u").unwrap();
+    app.canvas.hover_part.update(&app.session, hover, cursor, scale);
+    assert_ne!(app.canvas.hover_part.list_gen, computed, "the highlight is computed again without the cursor moving");
+    // With only the first point left, a cursor below y = 0 crosses nothing.
+    let below = app.canvas.xf.unwrap().to_screen(Vec2::new(6.0, -4.5));
+    painted_text(&mut app, &ctx, below);
+    assert!(app.canvas.hover_part.list.as_ref().is_none_or(|l| l.prims.is_empty()), "nothing is crossed");
 }

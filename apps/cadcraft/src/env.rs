@@ -71,6 +71,10 @@ impl Env {
 
     fn from_vars_and_exe(var: impl Fn(&str) -> Option<OsString>, exe_dir: Option<&std::path::Path>) -> Env {
         let mut vars = Env::from_vars(&var);
+        // The Nightly profile owns every data root before the first use (see [`apply_profile`]).
+        if Self::apply_profile(&mut vars, crate::launch_profile::current().root()) {
+            return vars;
+        }
         // An explicit override (including blank, which disables settings) takes precedence.
         if var(CONFIG_DIR).is_none()
             && let Some(exe) = exe_dir
@@ -85,6 +89,17 @@ impl Env {
             }
         }
         vars
+    }
+
+    /// Point every data root this process resolves at the Nightly profile `root`: the settings folder
+    /// (logs, autosave and Drawing Recovery, workspace, plotters, LISP support, crash reports) and
+    /// eframe's own storage file, which would otherwise go to the stable user profile. `false` for a
+    /// stable launch, which then resolves its folders as before.
+    fn apply_profile(vars: &mut Env, root: Option<&std::path::Path>) -> bool {
+        let Some(root) = root else { return false };
+        vars.config_dir = Some(root.to_path_buf());
+        vars.portable_storage_file = Some(root.join("app.ron"));
+        true
     }
 
     /// [`Env::read`] with `var` looking a variable up.
@@ -123,6 +138,20 @@ pub(crate) fn help() -> String {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    /// The Nightly profile is the settings folder and eframe's storage file, before any portable
+    /// or platform resolution: no stable folder is read or written by a nightly launch.
+    #[test]
+    fn a_launch_profile_owns_the_settings_folder_and_the_eframe_storage_file() {
+        let profile = std::path::PathBuf::from("/nightly-data/profile");
+        let mut vars = Env::from_vars(|_| None);
+        // A stable launch keeps the platform resolution.
+        assert!(!Env::apply_profile(&mut vars, None));
+        assert!(!vars.portable_storage_file.as_ref().is_some_and(|f| f.ends_with("app.ron")));
+        assert!(Env::apply_profile(&mut vars, Some(&profile)));
+        assert_eq!(vars.config_dir, Some(profile.clone()));
+        assert_eq!(vars.portable_storage_file, Some(profile.join("app.ron")));
+    }
 
     #[test]
     fn portable_eframe_storage_is_a_file_inside_the_settings_directory() {

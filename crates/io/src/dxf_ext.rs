@@ -66,6 +66,75 @@ pub(crate) fn named_ucs<'a>(
     ucss.iter().find(|u| u.name.eq_ignore_ascii_case(name) && is_named_frame(u, origin, x, y))
 }
 
+/// The drawing's UCSs by name with its ASCII letters lower-cased, each name with its positions in
+/// table order, so the named UCS of each of many layouts is found without scanning every UCS: a
+/// file of N layouts each naming one of N UCSs cost N² name comparisons (#1924).
+pub(crate) struct UcsNames<'a> {
+    ucss: &'a [cadcraft_doc::Ucs],
+    at: std::collections::BTreeMap<String, Vec<usize>>,
+}
+
+impl<'a> UcsNames<'a> {
+    pub(crate) fn new(ucss: &'a [cadcraft_doc::Ucs]) -> Self {
+        let mut at: std::collections::BTreeMap<String, Vec<usize>> = std::collections::BTreeMap::new();
+        for (i, u) in ucss.iter().enumerate() {
+            at.entry(u.name.to_ascii_lowercase()).or_default().push(i);
+        }
+        UcsNames { ucss, at }
+    }
+
+    /// What [`named_ucs`] finds: the first UCS named `name` (without case) whose frame is
+    /// `origin`, `x`, `y`.
+    pub(crate) fn named(
+        &self,
+        name: &str,
+        origin: cadcraft_geom::Vec3,
+        x: cadcraft_geom::Vec3,
+        y: cadcraft_geom::Vec3,
+    ) -> Option<&'a cadcraft_doc::Ucs> {
+        let name = name.trim();
+        if name.is_empty() {
+            return None;
+        }
+        let ucss = self.ucss;
+        self.at.get(&name.to_ascii_lowercase())?.iter().filter_map(|&i| ucss.get(i)).find(|u| is_named_frame(u, origin, x, y))
+    }
+}
+
+/// The entries of a list (a table's records, a drawing's styles), by name with its ASCII letters
+/// lower-cased, each name at the position of its first entry. A later record of a name replaces
+/// the first, which keeps its place and takes the later record's name. Each record or lookup is
+/// then a map lookup, not a scan of the list: a file of N records, or of N objects each naming one
+/// of N styles, cost N² name comparisons (#1924). Ordered by name rather than hashed, so its cost
+/// does not depend on hash keys.
+#[derive(Default)]
+pub(crate) struct ByName(std::collections::BTreeMap<String, usize>);
+
+impl ByName {
+    /// The entries the list starts with; the first of a name is the one kept.
+    pub(crate) fn new<T>(list: &[T], name: impl Fn(&T) -> &str) -> Self {
+        ByName(list.iter().enumerate().rev().map(|(i, t)| (name(t).to_ascii_lowercase(), i)).collect())
+    }
+
+    /// Put `item`, named `name`, in place of the first entry of that name, else at the end.
+    pub(crate) fn put<T>(&mut self, list: &mut Vec<T>, name: &str, item: T) {
+        let key = name.to_ascii_lowercase();
+        match self.0.get(&key).and_then(|&i| list.get_mut(i)) {
+            Some(x) => *x = item,
+            None => {
+                self.0.insert(key, list.len());
+                list.push(item);
+            }
+        }
+    }
+
+    /// The position of the first entry named `name` (ignoring ASCII case), while the list has
+    /// changed only through [`ByName::put`] since [`ByName::new`].
+    pub(crate) fn position(&self, name: &str) -> Option<usize> {
+        self.0.get(&name.to_ascii_lowercase()).copied()
+    }
+}
+
 /// Whether `x` and `y` can be a UCS's axes: finite, not zero and not along each other (relative
 /// to their lengths, so short but square axes are fine). Read and written by the same rule.
 pub(crate) fn usable_axes(x: cadcraft_geom::Vec3, y: cadcraft_geom::Vec3) -> bool {

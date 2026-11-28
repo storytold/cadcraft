@@ -89,11 +89,12 @@ impl Session {
         if tt.starts_with('\'') {
             return self.start(tt);
         }
-        // A LISP expression typed at a command's prompt: its value is the answer.
+        // A LISP expression typed at a command's prompt: its value is the answer, so it runs to
+        // the end first, with a short allowance (the interface waits for it).
         // Not at a free-text prompt: there the text is the answer (CAL takes "(3+4)*2").
         if lisp && lisp_expression(tt) && !prompt.accept.text && self.lisp_prompt().is_none() && !self.lisp_groups_undo() {
             let src = tt.strip_prefix('!').unwrap_or(tt).to_string();
-            let v = match self.lisp_eval(&src, false, true, Vec::new()) {
+            let v = match self.lisp_eval_answer(&src) {
                 Ok(Some(Ok(v))) => v,
                 Ok(_) => return Ok(()),
                 Err(e) => {

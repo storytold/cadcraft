@@ -258,7 +258,7 @@ fn run_cellstyle_use(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => v.as_str().map(|x| x.trim().to_string()).ok_or_else(|| bad(id, "`style` must be a cell style name"))?,
         None => return Err(bad(id, "`style` (cell style name) is required")),
     };
-    let styles: Vec<TableStyle> = s.doc()?.table_styles.clone();
+    let styles: Vec<TableStyle> = s.doc()?.table_styles.to_vec();
     edit(s, p, id, |t| {
         let st = styles.iter().find(|x| x.name.eq_ignore_ascii_case(&t.style)).cloned().unwrap_or_default();
         if !name.is_empty() && !st.has_cell_style(&name) {

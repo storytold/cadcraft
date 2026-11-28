@@ -12,6 +12,7 @@ mod attrib_props;
 mod block_expansion;
 mod closed_spline;
 mod codepages;
+mod dash_controls;
 mod dim_block_resave_roundtrip;
 mod dim_block_text;
 mod dim_marks_roundtrip;
@@ -36,6 +37,7 @@ mod exhausted_handseed;
 mod followups_626;
 mod groups_roundtrip;
 mod hatch_assoc_roundtrip;
+mod hatch_edge_chain;
 mod hatch_elliptic_edge_dedup;
 mod hatch_loop_flags;
 mod hatch_pattern_def;
@@ -51,6 +53,9 @@ mod layout_plot_window;
 mod leader_vertex_elevation;
 #[cfg(not(target_arch = "wasm32"))]
 mod low_handseed;
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+mod ltype_dwg_dash_count;
+mod ltype_element_cap;
 mod minsert_marker;
 mod mleader_content;
 mod mleader_roundtrip;
@@ -69,6 +74,7 @@ mod ole_frame;
 mod paperview_marker;
 mod passthrough_image_roundtrip;
 mod pdf_followups;
+mod pdf_import;
 mod pdf_layers;
 #[path = "../support/pdf_read.rs"]
 mod pdf_read;

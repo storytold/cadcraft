@@ -151,7 +151,7 @@ presence: an option that prints "not available yet" doesn't count.
 | Layers and properties | 7% | 70% | 10–15 | Layer Properties Manager with filters, states, VP overrides; QSELECT; Quick Properties; object transparency drawn on screen, in exports and in plots (#764); linetype manager thin; 19 linetypes of ~45 | [gaps](gaps.md#features) |
 | Dimensions | 9% | 45% | 25–35 | all core DIM types and associativity; style variables, DIMJOGGED, DIMJOGLINE, DIMBREAK, DIMEDIT, DIMINSPECT, QDIM modes (#507) and TOLERANCE (#420); no DIMSTYLE manager dialog or smart DIM | [gaps](gaps.md#features) |
 | Text and MTEXT | 6% | 35% | 30–45 | TrueType, formatting codes, stacking; MTEXT prompt options (#408), indents, tabs, bullets, numbering and columns (#547), annotative scaling (#468); in-place editor with formatting toolbar and ruler for new MTEXT (#792; existing TEXT is edited on the command line with TEXTEDIT; an existing MTEXT opens in the in-place editor with its contents, #1002); no fields or SPELL (open PR #551), no SHX | [gaps](gaps.md#features) |
-| Leaders, tables, fields | 4% | 25% | 25–35 | MLEADER options and block content (#408), native MULTILEADER in DXF (#459); MLEADEREDIT, MLEADERALIGN and MLEADERCOLLECT (#816); tables with cell styles, formulas, breaking and CSV data links (#534); no FIELD (open PR #551) | [gaps](gaps.md#features) |
+| Leaders, tables, fields | 4% | 25% | 25–35 | MLEADER options and block content (#408), native MULTILEADER in DXF (#459); MLEADEREDIT, MLEADERALIGN and MLEADERCOLLECT (#816); QLEADER at the command line, without its Settings dialog (#2740, #3532); tables with cell styles, formulas, breaking and CSV data links (#534); no FIELD (open PR #551) | [gaps](gaps.md#features) |
 | Hatch and gradients | 5% | 35% | 15–25 | pick points with islands; 23 patterns of ~85; gradients render flat; origin, gap tolerance, separate hatches, island styles and HATCHEDIT options (#451); Hatch and Gradient / Hatch Edit dialogs (no Preview or Inherit Properties) | [gaps](gaps.md#features) |
 | Blocks, attributes, xrefs, groups | 9% | 25% | 80–120 | static blocks and attributes; ATTSYNC, BATTMAN editing, DATAEXTRACTION/EATTEXT (#433); xrefs (#525); groups (#417); Block Editor for static blocks (BEDIT, BSAVE, BSAVEAS, BCLOSE); REFEDIT, REFSET and REFCLOSE (#818); XCLIP and XCLIPFRAME (#2354); dynamic block references read and edited, with grips (#838–#883); no dynamic-block authoring, DesignCenter | [gaps](gaps.md#features) |
 | Layouts, viewports, plotting | 9% | 35% | 35–50 | layouts, per-VP layers, page setups, plot styles (CTB/STB), Plot dialog (#160), Plot Preview and PUBLISH (#186), plotter devices (#564), PDF with text, layers and sheets (#567, #571), polygonal/object/clipped viewports (#453), annotative scales (#468), MVIEW Restore (#633); no system printers (CUPS printing is open PR #755) | [gaps](gaps.md#features) |
@@ -197,11 +197,17 @@ tail factor for verification against AutoCAD.
 **Why the total went up.** The 2026-10-07 roadmap put full parity at ≈ 29% with ≈ 570 h left,
 from agent-reported milestone percentages. This pass audited behaviour instead of presence and
 found new evidence: object snap tracking, extension, parallel and apparent snaps are toggles;
-dynamic input is read-only; saves drop every entity the reader doesn't model; DWG always saves as
-R2000; tolerances are absolute; and the old estimate had no rows for localization, ecosystem,
-platforms, stability or AI. The weighted figure rose (29% → 41% features) because breadth and
+dynamic input is read-only; saves drop every entity the reader doesn't model; DWG saves were
+limited to R2000 (since #421, 2000–2018 with 2018 for new drawings; see
+[file formats](file-format-parity.md)); tolerances are absolute; and the old estimate had no
+rows for localization, ecosystem, platforms, stability or AI. The weighted figure rose
+(29% → 41% features) because breadth and
 depth both grew since 2026-10-07 and the weights are now written down; the hours rose because
 the remaining work is depth and 3D.
+In the app's Save dialog, File ▸ Default Save Format (also Options ▸ Open and Save,
+`saveVersion`, default 2018) sets the version for untitled drawings; drawings with a file keep
+their own version, subject to supported-version mapping and the DWG minimum. SAVEAS `version`
+overrides this choice and is remembered for later saves.
 
 **Parallelism.** About 70% of the work splits across 4–6 agents by area (each feature area,
 file formats, UI precision, localization per language), so elapsed time is roughly a quarter of
@@ -222,7 +228,9 @@ DWG/DXF corpus (files from people who own them); black-box checks in AutoCAD of 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-26 | minor | Leaders, tables, fields row: QLEADER at the command line, without its Settings dialog (#2740, #3532); parity percentages and hours not re-measured |
 | 2026-10-27 | minor | Blocks, attributes, xrefs, groups row: XCLIP and XCLIPFRAME clip block and xref references; parity percentages and hours not re-measured |
+| 2026-10-25 | minor | Mark the R2000-only DWG save limitation as historical and link current version-selection rules; percentages and hours not re-measured |
 | 2026-10-24 | minor | Re-audit against main 41d9b5e95: evidence text of the feature, stability, platforms and localization rows refreshed against main 41d9b5e95; percentages, hours and breadth counts (245/491, 233/491) not re-measured |
 | 2026-10-24 | minor | Inquiry and utilities row: COMPAREEXPORT exports a comparison to a new drawing; parity percentages and hours not re-measured |
 | 2026-10-22 | minor | Draw row: RECTANG gained a centre construction mode (`Center` keyword, `center: true`) beside its corner mode (#1127); parity percentages and hours not re-measured |

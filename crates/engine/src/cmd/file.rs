@@ -16,7 +16,7 @@ use super::{CommandSpec, EngineError, Interactive, always, bad, bool_or, find_co
 use crate::{Accept, Input, Prompt, Result, Session, Step};
 
 /// The rules the Command Aliases dialog checks before it sends an alias to ALIASEDIT.
-pub use pgp::{MAX_ALIAS_PROFILE_BYTES, MAX_ALIASES, alias_name, alias_profile, command_id, restore_aliases};
+pub use pgp::{MAX_ALIAS_PROFILE_BYTES, MAX_ALIASES, alias_name, alias_profile, command_id, restore_aliases, user_alias_command};
 pub(crate) use pgp::{greek_alias, specs as alias_specs, user_alias};
 pub use template::{qnew_template, set_qnew_template};
 
@@ -47,6 +47,47 @@ pub fn set_io(h: IoHooks) {
 }
 pub fn io() -> Option<&'static IoHooks> {
     IO.get()
+}
+
+/// [`IoHooks::write`] and [`IoHooks::plot`] that also return what an image (PNG, SVG, PDF) draws
+/// short of the drawing because of a render limit, one note each, such as dashed lines drawn
+/// continuous past the dash limit (installed by the app with the image writers, a lower layer;
+/// see `cadcraft_io::write_framed_noted` and `cadcraft_io::plotter::plot_noted`). EXPORT, QSAVE
+/// and SAVEAS to an image, `document.bytes` and PLOT (so PUBLISH and PDFBOOK, sheet by sheet)
+/// report them; without the hooks they write through [`IoHooks`] with no such notes. The app
+/// installs the same writers as its [`IoHooks`].
+pub struct NotedIo {
+    pub write: fn(&Drawing, &str) -> std::result::Result<(Vec<u8>, Vec<String>), String>,
+    pub plot: fn(&Drawing, &cadcraft_doc::Space, &Value) -> std::result::Result<(Vec<u8>, Vec<String>), String>,
+}
+
+static NOTED_IO: OnceLock<NotedIo> = OnceLock::new();
+
+pub fn set_noted_io(h: NotedIo) {
+    let _ = NOTED_IO.set(h);
+}
+
+/// `d` written as `name` with the image's notes ([`NotedIo::write`]), or through `hooks.write`
+/// with none when the app installed no [`NotedIo`].
+pub(crate) fn write_noted(hooks: &IoHooks, d: &Drawing, name: &str) -> std::result::Result<(Vec<u8>, Vec<String>), String> {
+    match NOTED_IO.get() {
+        Some(n) => (n.write)(d, name),
+        None => (hooks.write)(d, name).map(|bytes| (bytes, Vec::new())),
+    }
+}
+
+/// `d` plotted with the plot's notes ([`NotedIo::plot`]), or through `hook` with none when the
+/// app installed no [`NotedIo`].
+pub(crate) fn plot_noted(
+    hook: PlotHook,
+    d: &Drawing,
+    space: &cadcraft_doc::Space,
+    opts: &Value,
+) -> std::result::Result<(Vec<u8>, Vec<String>), String> {
+    match NOTED_IO.get() {
+        Some(n) => (n.plot)(d, space, opts),
+        None => hook(d, space, opts).map(|bytes| (bytes, Vec::new())),
+    }
 }
 
 /// An entity as DXF groups and back, for AutoLISP's `entget`, `entmake` and `entmod`
@@ -102,6 +143,46 @@ static DWG_COMPAT_LOST: OnceLock<DwgCompatLost> = OnceLock::new();
 
 pub fn set_dwg_compat_lost(f: DwgCompatLost) {
     let _ = DWG_COMPAT_LOST.set(f);
+}
+
+/// Notes on what a DWG keeps of a drawing only in part, such as a linetype with more dash
+/// elements than a DWG can count (installed by the app with the DWG writer, a lower layer; see
+/// `cadcraft_io::dwg_notes`).
+pub type DwgNotes = fn(&Drawing) -> Vec<String>;
+
+static DWG_NOTES: OnceLock<DwgNotes> = OnceLock::new();
+
+pub fn set_dwg_notes(f: DwgNotes) {
+    let _ = DWG_NOTES.set(f);
+}
+
+/// The [`DwgNotes`] of `d`, the drawing a DWG save writes: none without the hook.
+pub fn dwg_notes(d: &Drawing) -> Vec<String> {
+    DWG_NOTES.get().map(|f| f(d)).unwrap_or_default()
+}
+
+/// Say on the command line what the DWG just written keeps only in part (`notes`, from
+/// [`dwg_notes`]), and list it in the result's `warnings`.
+pub(crate) fn report_dwg_notes(s: &mut Session, r: &mut Value, notes: Vec<String>) {
+    report_notes(s, r, notes);
+}
+
+/// Say each of `notes` on the command line and add them to the result's `warnings`.
+pub(crate) fn report_notes(s: &mut Session, r: &mut Value, notes: Vec<String>) {
+    if notes.is_empty() {
+        return;
+    }
+    for note in &notes {
+        s.echo(note.clone());
+    }
+    if let Some(o) = r.as_object_mut() {
+        match o.get_mut("warnings").and_then(Value::as_array_mut) {
+            Some(list) => list.extend(notes.into_iter().map(Value::String)),
+            None => {
+                o.insert("warnings".into(), json!(notes));
+            }
+        }
+    }
 }
 
 /// What a DXF of `version` leaves out of `d` for its proxies' string streams (#3229): empty from
@@ -208,9 +289,10 @@ fn is_dxf(path: &str) -> bool {
     Format::from_path(path) == Some(Format::Dxf)
 }
 
-/// The drawing written to `path` with `opts`: through [`IoHooks::write`] when no option is set,
-/// else through the [`write_as`] hook.
-fn write_bytes(s: &Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<Vec<u8>> {
+/// The drawing written to `path` with `opts`: an image, or a drawing file with no option set,
+/// through [`IoHooks::write`] (with an image's notes, [`write_noted`]); a drawing file at a
+/// chosen version or as binary DXF through the [`write_as`] hook.
+fn write_bytes(s: &Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<(Vec<u8>, Vec<String>)> {
     let hooks = io().ok_or_else(|| bad(cmd, "file formats are not available in this build"))?;
     if opts.binary && !is_dxf(path) {
         return Err(bad(cmd, "binary applies to DXF files only"));
@@ -219,11 +301,12 @@ fn write_bytes(s: &Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<Vec<
     let d: &cadcraft_doc::Drawing = if is_drawing_file(path) { s.state()?.drawing() } else { s.doc()? };
     let copy = (opts.portable_fonts && is_drawing_file(path)).then(|| Drawing { portable_fonts: true, ..d.clone() });
     let d = copy.as_ref().unwrap_or(d);
-    let r = if opts.version.is_none() && !opts.binary {
-        (hooks.write)(d, path)
+    // An image has no version: `write_as` would write the same bytes without the notes.
+    let r = if !is_drawing_file(path) || (opts.version.is_none() && !opts.binary) {
+        write_noted(hooks, d, path)
     } else {
         let w = write_as().ok_or_else(|| bad(cmd, "saving at a chosen version or as binary DXF is not available in this build"))?;
-        w(d, path, opts)
+        w(d, path, opts).map(|bytes| (bytes, Vec::new()))
     };
     r.map_err(|e| bad(cmd, e))
 }
@@ -255,7 +338,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .noundo(),
         CommandSpec::new("document.switch", "Switch Drawing", run_switch).params("{index}").enabled(always).noundo(),
         CommandSpec::new("document.bytes", "Drawing as bytes", run_bytes)
-            .params("{format?: dxf, version?: 2000…2018, binary?: bool, portableFonts?: bool} → {data: base64}")
+            .params("{format?: dxf, version?: 2000…2018, binary?: bool, portableFonts?: bool} → {data: base64, warnings?: what an image draws short of the drawing}")
             .noundo(),
         CommandSpec::new("script", "Run Script...", run_script)
             .menu(&["Tools", "Run Script..."])
@@ -382,11 +465,16 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
 
 /// Parse a drawing's bytes, and search its folder for fonts where the automation roots allow.
 fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile> {
-    let hooks = io().ok_or_else(|| bad("open", "file formats are not available in this build"))?;
-    let drawing = (hooks.read)(bytes, name).map_err(|e| bad("open", e))?;
+    let drawing = match super::exchange::open_pdf(bytes) {
+        Some(result) => result.map_err(|e| bad("open", e))?,
+        None => {
+            let hooks = io().ok_or_else(|| bad("open", "file formats are not available in this build"))?;
+            (hooks.read)(bytes, name).map_err(|e| bad("open", e))?
+        }
+    };
     // A file that isn't a drawing (an imported SVG) gives the drawing no file name: QSAVE then
     // asks where to save instead of exporting over the original.
-    let path = path.filter(|p| is_drawing_file(p));
+    let path = path.filter(|p| is_drawing_file(p) && !bytes.starts_with(b"%PDF-"));
     // The SHX fonts its text styles name are looked for beside the drawing too.
     if let Some(dir) = path.as_deref().and_then(|p| std::path::Path::new(p).parent()) {
         // A bare file name is in the current folder.
@@ -494,18 +582,19 @@ fn run_closeall(s: &mut Session, _p: &Value) -> Result<Value> {
     ok()
 }
 
-pub(crate) fn save_to(s: &mut Session, path: &str) -> Result<usize> {
+pub(crate) fn save_to(s: &mut Session, path: &str) -> Result<(usize, Vec<String>)> {
     let opts = SaveAs { binary: s.state()?.binary_dxf && is_dxf(path), ..SaveAs::default() };
     save_as(s, "save", path, &opts)
 }
 
 /// Save to `path` with `opts`. A drawing file then keeps the version and binary choice: the
-/// version goes into the drawing's `$ACADVER`, so later saves (QSAVE) write it again.
-fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usize> {
+/// version goes into the drawing's `$ACADVER`, so later saves (QSAVE) write it again. Also an
+/// image's notes ([`write_noted`]).
+fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<(usize, Vec<String>)> {
     if s.doc()?.refedit.is_some() {
         return Err(bad(cmd, "A block reference is being edited in place: finish with REFCLOSE (Save or Discard) before saving."));
     }
-    let bytes = write_bytes(s, cmd, path, opts)?;
+    let (bytes, notes) = write_bytes(s, cmd, path, opts)?;
     let n = commit_save(s, path, &bytes, store)?;
     if is_drawing_file(path) {
         let st = s.state_mut()?;
@@ -517,7 +606,7 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
             st.saved = st.drawing().clone();
         }
     }
-    Ok(n)
+    Ok((n, notes))
 }
 
 /// Put saved bytes where the user gets them: natively the file at `path`; on the web, which has
@@ -807,15 +896,18 @@ fn run_save(s: &mut Session, p: &Value) -> Result<Value> {
         Some(p) => p.to_string(),
         None => s.state()?.path.clone().ok_or_else(|| bad("qsave", "drawing has no file name yet; use saveas {path}"))?,
     };
-    let n = save_to(s, &path)?;
-    Ok(saved(&path, n))
+    let (n, notes) = save_to(s, &path)?;
+    let mut r = saved(&path, n);
+    report_notes(s, &mut r, notes);
+    Ok(r)
 }
 
 fn run_saveas(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("saveas", "`path` is required"))?.to_string();
     let opts = save_options("saveas", p)?;
-    let n = save_as(s, "saveas", &path, &opts)?;
+    let (n, notes) = save_as(s, "saveas", &path, &opts)?;
     let mut r = saved(&path, n);
+    report_notes(s, &mut r, notes);
     if is_drawing_file(&path) {
         r["version"] = json!(opts.version.unwrap_or_else(|| drawing_version(s, &path)).year());
         r["binary"] = json!(opts.binary);
@@ -864,10 +956,13 @@ fn run_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     let opts = save_options("document.bytes", p)?;
     let version = opts.version.unwrap_or_else(|| drawing_version(s, &format!("drawing.{fmt}")));
     let lost = not_saved_as(s.doc()?, version);
-    let bytes = write_bytes(s, "document.bytes", &format!("drawing.{fmt}"), &opts)?;
+    let (bytes, notes) = write_bytes(s, "document.bytes", &format!("drawing.{fmt}"), &opts)?;
     let mut r = json!({ "data": base64_encode(&bytes), "bytes": bytes.len() });
+    report_notes(s, &mut r, notes);
     if drops_unknown(format!("drawing.{fmt}")) {
         report_not_saved(s, &mut r, &lost);
+        let notes = s.state().map(|st| dwg_notes(st.drawing())).unwrap_or_default();
+        report_dwg_notes(s, &mut r, notes);
     } else if is_dxf_file(format!("drawing.{fmt}")) {
         let lost = host_dxf_lost(s, version);
         report_lost(s, &mut r, "drawing.dxf", version, &lost);
@@ -1000,7 +1095,9 @@ pub(super) fn report_loss(s: &mut Session, r: &mut Value, path: &str) {
     let Ok(d) = s.doc() else { return };
     let version = own_version(d, path);
     let lost = lost_writing(d, path, version);
+    let notes = if drops_unknown(path) { dwg_notes(d) } else { Vec::new() };
     report_lost(s, r, path, version, &lost);
+    report_dwg_notes(s, r, notes);
 }
 
 /// Say on the command line what the file `path`, written at `version`, couldn't keep (`lost`),
@@ -1107,6 +1204,8 @@ fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> R
     report_new_folder(s, &mut r, folder);
     if r.get("path").and_then(Value::as_str).is_some_and(drops_unknown) {
         report_not_saved(s, &mut r, &lost);
+        let notes = s.state().map(|st| dwg_notes(st.drawing())).unwrap_or_default();
+        report_dwg_notes(s, &mut r, notes);
     } else if r.get("path").and_then(Value::as_str).is_some_and(is_dxf_file) {
         let lost = host_dxf_lost(s, version);
         report_lost(s, &mut r, "drawing.dxf", version, &lost);
@@ -1173,6 +1272,22 @@ mod tests {
 
     use crate::Session;
     use crate::temp_dir::TempDir;
+
+    /// Notes join the warnings a result already has instead of replacing them, and are said on
+    /// the command line.
+    #[test]
+    fn notes_are_added_to_the_warnings_a_result_has() {
+        let mut s = Session::new();
+        let mut r = json!({ "warnings": ["kept"] });
+        super::report_notes(&mut s, &mut r, vec!["added".into()]);
+        assert_eq!(r["warnings"], json!(["kept", "added"]));
+        let mut r = json!({});
+        super::report_notes(&mut s, &mut r, Vec::new());
+        assert!(r.get("warnings").is_none());
+        super::report_notes(&mut s, &mut r, vec!["first".into()]);
+        assert_eq!(r["warnings"], json!(["first"]));
+        assert!(s.log.ends_with(&["added".to_string(), "first".to_string()]), "{:?}", s.log);
+    }
 
     /// Whether the `.bak` name is taken is asked without following a link there: a dangling link
     /// counts as taken, so a file that doesn't look like a drawing leaves it alone.

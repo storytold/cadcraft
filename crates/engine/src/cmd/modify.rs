@@ -18,6 +18,7 @@ use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, St
 
 mod break_join;
 mod explode;
+mod extrim;
 mod fillet;
 mod offset;
 mod oops;
@@ -37,10 +38,13 @@ use select_then::{DisplaceM, Op, SelectThen};
 use stretch::{StretchM, run_stretch};
 pub(crate) use transform::{holds_ole_frame, ole_refusal, refuse_ole_frames, transform_entities};
 use transform::{mirror_entities, mirror_kind, run_copy, run_erase, run_mirror, run_move, run_rotate, run_scale};
-pub(crate) use trim::{CUT_ONCE, Edges, extend, json_pick_error, trim};
+pub(crate) use trim::{
+    CUT_ONCE, Edges, Overlay, edge_segments, edge_segments_over, extend, extend_kind, extended, json_pick_error, trim, trim_kind, trimmed,
+};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        extrim::spec(),
         CommandSpec::new("erase", "Erase", run_erase)
             .menu(&["Modify", "Erase"])
             .alias(&["e", "delete"])

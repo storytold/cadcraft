@@ -231,10 +231,10 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let cur = d.header.str("CLAYER", "0");
     let used = used_layers(d);
     let vp: Option<(Handle, cadcraft_doc::Viewport)> = dst.active_viewport();
-    let linetypes: Vec<cadcraft_doc::Linetype> = d.linetypes.clone();
+    let linetypes: cadcraft_doc::NamedList<cadcraft_doc::Linetype> = d.linetypes.clone();
     let library: Vec<String> = cadcraft_doc::library::standard_linetypes().into_iter().map(|l| l.name).filter(|n| d.linetype(n).is_none()).collect();
     let states: Vec<String> = d.layer_states.iter().map(|s| s.name.clone()).collect();
-    let mut layers: Vec<Layer> = d.layers.clone();
+    let mut layers: Vec<Layer> = d.layers.to_vec();
     layers.sort_by_key(|l| natural_lower(&l.name));
     if st.sort_desc {
         layers.reverse();
@@ -283,7 +283,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 // Layer states.
                 ui.label(crate::tl!("Layer State"));
                 let label = st.state_sel.clone().unwrap_or_else(|| crate::tl!("Unsaved Layer State").into());
-                craft_ui::ComboBox::from_id_salt("lpm_states").selected_text(label).width(170.0).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt("lpm_states").selected_text(label).width(170.0).show_ui(ui, |ui| {
                     for s in &states {
                         if ui.selectable_label(st.state_sel.as_deref() == Some(s), s).clicked() {
                             st.state_sel = Some(s.clone());
@@ -425,7 +425,7 @@ struct LayerRow<'a> {
     current: &'a str,
     used: &'a std::collections::HashSet<String>,
     viewport: Option<&'a (Handle, cadcraft_doc::Viewport)>,
-    linetypes: &'a [cadcraft_doc::Linetype],
+    linetypes: &'a cadcraft_doc::NamedList<cadcraft_doc::Linetype>,
     library: &'a [String],
     state: &'a mut LpmState,
     actions: &'a mut Vec<(&'static str, Value)>,
@@ -467,7 +467,7 @@ fn row(ui: &mut egui::Ui, args: LayerRow<'_>) {
             lt_sample(
                 ui.painter(),
                 Rect::from_min_size(pos2(r.left() + 3.0, r.top()), vec2(30.0, r.height())),
-                linetypes.iter().find(|x| x.name.eq_ignore_ascii_case(&l.linetype)),
+                linetypes.by_name(&l.linetype),
                 t.text,
             );
             ui.painter().text(pos2(r.left() + 38.0, r.center().y), egui::Align2::LEFT_CENTER, &l.linetype, crate::theme::body(), t.text);

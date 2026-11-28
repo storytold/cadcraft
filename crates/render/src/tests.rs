@@ -282,6 +282,23 @@ fn system_font() -> Option<&'static str> {
     ["Arial", "Helvetica", "DejaVuSans", "Verdana", "LiberationSans-Regular"].into_iter().find(|n| cadcraft_fonts::ttf::find(n).is_some())
 }
 
+/// #666: on screen, filled glyphs outside the area being looked at are left out (the canvas
+/// builds again when the view leaves it); plots and builds without a view keep every glyph.
+#[test]
+fn glyphs_outside_the_view_are_left_out_of_screen_builds_only() {
+    let Some(font) = system_font() else { return };
+    let d = text_doc(font, "OH");
+    let tris = |o: &Options| build(&d, &Space::Model, o).prims.iter().filter(|p| p.kind == Kind::Tris).count();
+    let all = tris(&Options::default());
+    assert!(all > 0);
+    let near = Options { view: Some(Bounds2::new(Vec2::new(-1.0, -1.0), Vec2::new(3.0, 2.0))), ..Options::default() };
+    assert_eq!(tris(&near), all, "a view over the text keeps it");
+    let far = Options { view: Some(Bounds2::new(Vec2::new(100.0, 100.0), Vec2::new(110.0, 110.0))), ..Options::default() };
+    assert_eq!(tris(&far), 0, "a view far from the text leaves its glyphs out");
+    let plot = build_plot(&d, &Space::Model, &far);
+    assert_eq!(plot.prims.iter().filter(|p| p.kind == Kind::Tris).count(), all, "plots keep every glyph");
+}
+
 // ---------- a fixture TrueType font: no font file, no installed font ----------
 
 /// A closed ellipse round (500, 350), wound by `clockwise`: one contour of a glyph outline.
@@ -901,6 +918,80 @@ fn attributes_draw_with_their_own_transparency() {
     assert!(build(&d, &Space::Model, &Options::default()).prims.iter().all(|p| p.transparency == 0));
 }
 
+/// A block "K" with a line along y = 0 and the definition `def` (its text at y = 1), referenced
+/// at `at` with `attribs`, under ATTMODE `attmode`: the points drawn above the line.
+fn drawn_above_line(def: cadcraft_doc::Attrib, attribs: Vec<cadcraft_doc::Attrib>, attmode: i64, at: Vec3) -> Vec<cadcraft_geom::Vec2> {
+    let mut d = Drawing::new_imperial();
+    d.header.set_i64("ATTMODE", attmode);
+    let mut blk = cadcraft_doc::Block::new("K");
+    let (c, k) = line_common(Common::default());
+    blk.entities.push(block_entity(1, c, k));
+    blk.entities.push(block_entity(2, Common::default(), EntityKind::AttDef(def)));
+    d.blocks.insert("K".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("K") else { panic!("an insert") };
+    ins.insert = at;
+    ins.attribs = attribs;
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let l = build(&d, &Space::Model, &Options::default());
+    l.prims.iter().flat_map(|p| l.points(p).iter().copied()).filter(|p| p.y > at.y + 0.5).collect()
+}
+
+fn constant(invisible: bool) -> cadcraft_doc::Attrib {
+    cadcraft_doc::Attrib { constant: true, invisible, ..attrib("C") }
+}
+
+#[test]
+fn a_constant_attribute_definition_draws_its_value_with_the_reference() {
+    // #3413: a constant value isn't copied into the reference's attributes; the block draws it.
+    let at = Vec3::new(100.0, 200.0, 0.0);
+    let pts = drawn_above_line(constant(false), vec![], 1, at);
+    assert!(!pts.is_empty(), "the constant value is drawn");
+    // Where the definition puts it, moved with the reference.
+    assert!(pts.iter().all(|p| p.x > at.x && p.x < at.x + 10.0 && p.y < at.y + 3.0), "{pts:?}");
+    // A variable definition draws nothing from the block (its attribute is drawn instead).
+    assert!(drawn_above_line(attrib("C"), vec![], 1, at).is_empty());
+    // A reference that carries an attribute for the constant (placed, as attributes are, in
+    // drawing coordinates where the definition's text lands) draws it once, not twice.
+    let mut own = attrib("c");
+    own.text.insert = own.text.insert + at;
+    assert_eq!(drawn_above_line(constant(false), vec![own], 1, at).len(), pts.len());
+}
+
+#[test]
+fn many_constant_definitions_are_matched_to_the_attributes_without_comparing_every_pair() {
+    // #1923: a reference with N attributes of a block with N constant definitions, the tags N long
+    // ones alike up to their last characters, no attribute's a definition's. Asking for each
+    // definition whether the reference carries its tag by comparing it with every attribute cost
+    // N x N comparisons of whole tags for each copy drawn (many seconds here); gathering the
+    // reference's tags once costs milliseconds. The values are empty and the attributes invisible,
+    // so drawing them costs nothing.
+    const N: usize = 4000;
+    let tag = |kind: char, i: usize| format!("{}{kind}{i:05}", "T".repeat(1000));
+    let mut d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("K");
+    for (h, i) in (1..).zip(0..N) {
+        let mut a = cadcraft_doc::Attrib { constant: true, ..attrib(&tag('D', i)) };
+        a.text.value.clear();
+        blk.entities.push(block_entity(h, Common::default(), EntityKind::AttDef(a)));
+    }
+    d.blocks.insert("K".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("K") else { panic!("an insert") };
+    ins.attribs = (0..N).map(|i| cadcraft_doc::Attrib { invisible: true, ..attrib(&tag('A', i)) }).collect();
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let t = std::time::Instant::now();
+    build(&d, &Space::Model, &Options::default());
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
+}
+
+#[test]
+fn constant_attribute_definitions_follow_attmode() {
+    let at = Vec3::ZERO;
+    // ATTMODE 0 hides every attribute; 1 the invisible ones; 2 shows them all.
+    assert!(drawn_above_line(constant(false), vec![], 0, at).is_empty());
+    assert!(drawn_above_line(constant(true), vec![], 1, at).is_empty());
+    assert!(!drawn_above_line(constant(true), vec![], 2, at).is_empty());
+}
+
 #[test]
 fn attributes_follow_the_reference_layer_and_have_no_definition() {
     use cadcraft_doc::Transparency::Percent;
@@ -1460,7 +1551,7 @@ fn block_copies_stop_at_the_point_budget_and_say_so() {
     let d = arrayed_circles();
     let full = build(&d, &Space::Model, &Options::default());
     assert!(!full.truncated && points(&full) > 100_000, "{}", points(&full));
-    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, 10_000);
+    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, 10_000, crate::MAX_DASH_ELEMENTS);
     assert!(l.truncated);
     assert!(points(&l) > 0 && points(&l) <= 10_000, "{}", points(&l));
     assert!(l.prims.iter().all(|p| p.start as usize + p.len as usize <= l.verts.len()));
@@ -1473,7 +1564,140 @@ fn objects_built_on_all_cores_stop_at_the_point_budget_and_say_so() {
     for _ in 0..600 {
         d.add(&Space::Model, Common::default(), circle()).unwrap();
     }
-    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, 10_000);
+    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, 10_000, crate::MAX_DASH_ELEMENTS);
     assert!(l.truncated);
     assert!(points(&l) > 0 && points(&l) <= 10_000, "{}", points(&l));
+}
+
+// ---------- dash budget (#1069, #1923) ----------
+
+/// A drawing of lines on DASHED (0.5, -0.25), one per entry of `periods` and that many periods
+/// long, on rows 1 apart.
+fn dashed_lines(periods: &[f64]) -> Drawing {
+    let mut d = Drawing::new_imperial();
+    d.linetypes.push(cadcraft_doc::Linetype::simple("DASHED", "", &[0.5, -0.25]));
+    for (row, n) in periods.iter().enumerate() {
+        let y = row as f64;
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(n * 0.75, y, 0.0) });
+        d.add(&Space::Model, Common { linetype: "DASHED".into(), ..Default::default() }, line).unwrap();
+    }
+    d
+}
+
+/// The primitives drawn for each top-level entity, in drawing order.
+fn prims_per_entity(l: &DisplayList) -> Vec<usize> {
+    let mut out: Vec<(Handle, usize)> = Vec::new();
+    for p in &l.prims {
+        match out.last_mut() {
+            Some((h, n)) if *h == p.handle => *n += 1,
+            _ => out.push((p.handle, 1)),
+        }
+    }
+    out.into_iter().map(|(_, n)| n).collect()
+}
+
+/// A run whose pattern repeats past [`MAX_RUN_DASH_ELEMENTS`] is drawn continuous, and the list
+/// says so: 1,000,001 DASHED periods are (n + 2) × 2 elements, past two million (#1069). A plot
+/// keeps the dashes of 50,001 periods and says nothing.
+#[test]
+fn a_run_past_its_dash_limit_is_drawn_continuous_and_says_so() {
+    let l = build_plot(&dashed_lines(&[1_000_001.0]), &Space::Model, &Options::default());
+    assert_eq!(l.prims.len(), 1);
+    assert!(l.truncated);
+    let l = build_plot(&dashed_lines(&[50_001.0]), &Space::Model, &Options::default());
+    assert!(l.prims.len() > 50_001 && !l.truncated, "{}", l.prims.len());
+    // The band of a wide polyline as well.
+    let mut d = dashed_lines(&[]);
+    let vertices = vec![PolyVertex::new(Vec2::ZERO), PolyVertex::new(Vec2::new(1_000_001.0 * 0.75, 0.0))];
+    let band = cadcraft_doc::LwPolyline { vertices, closed: false, const_width: 0.1, elevation: 0.0, plinegen: false };
+    d.add(&Space::Model, Common { linetype: "DASHED".into(), ..Default::default() }, EntityKind::LwPolyline(band)).unwrap();
+    assert!(build_plot(&d, &Space::Model, &Options::default()).truncated);
+}
+
+/// Past the build's dash budget the rest of the dashed runs are drawn continuous and counted
+/// (#1923): 40 lines of 1,000 periods, 2,004 elements each, against a budget of 40,000.
+#[test]
+fn dashed_runs_past_the_build_dash_budget_are_drawn_continuous_and_counted() {
+    let d = dashed_lines(&[1000.0; 40]);
+    let full = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), true, MAX_DISPLAY_POINTS, MAX_DASH_ELEMENTS);
+    assert!(!full.truncated && full.undashed == 0);
+    let each = prims_per_entity(&full);
+    assert!(each.len() == 40 && each.iter().all(|n| *n > 1000), "{each:?}");
+    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), true, MAX_DISPLAY_POINTS, 40_000);
+    let dashed = 40 - l.undashed;
+    assert!(l.truncated && l.undashed > 0 && dashed > 0, "{}", l.undashed);
+    assert!(dashed * 2004 <= 40_000, "{dashed} lines dashed");
+    // The first lines keep their dashes; from the first that does not fit, each is one stroke.
+    let got = prims_per_entity(&l);
+    assert_eq!(got[..dashed], each[..dashed]);
+    assert!(got[dashed..].iter().all(|n| *n == 1), "{got:?}");
+}
+
+/// Parts built on all cores spend one dash budget, and their counts add up.
+#[test]
+fn dashed_runs_built_on_all_cores_share_the_dash_budget() {
+    // 600 lines of 100 periods (204 elements each): enough for the parallel build.
+    let d = dashed_lines(&[100.0; 600]);
+    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, MAX_DISPLAY_POINTS, 20_000);
+    let dashed = 600 - l.undashed;
+    assert!(l.truncated && l.undashed > 0 && dashed > 0, "{}", l.undashed);
+    assert!(dashed * 204 <= 20_000, "{dashed} lines dashed");
+    let each = prims_per_entity(&l);
+    assert_eq!(each.iter().filter(|n| **n == 1).count(), l.undashed, "{each:?}");
+}
+
+/// Model space seen through a layout viewport reports a run it draws continuous on the layout's
+/// list too, and spends the layout's dash budget.
+#[test]
+fn runs_seen_through_a_viewport_are_counted_and_spend_the_layout_dash_budget() {
+    let mut d = dashed_lines(&[]);
+    // 3,000,000 periods, past the limit also at the viewport's linetype scale (PSLTSCALE); and
+    // 1,000 periods, within it.
+    for (y, len) in [(5.0, 2_250_000.0), (6.0, 750.0)] {
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(len, y, 0.0) });
+        d.add(&Space::Model, Common { linetype: "DASHED".into(), ..Default::default() }, line).unwrap();
+    }
+    let paper = Space::Paper("Layout1".into());
+    d.add(&paper, Common::default(), EntityKind::Viewport(vp(Vec2::new(5.0, 4.0), 4.0, 4.0, Vec2::new(5.0, 5.0), 8.0, 2))).unwrap();
+    let l = build_plot(&d, &paper, &Options::default());
+    assert!(l.prims.iter().any(|p| p.handle == VIEWPORT_CONTENT), "the lines show in the viewport");
+    assert!(l.truncated && l.undashed == 1, "{}", l.undashed);
+    let l = crate::pipeline::build_space_within(&d, &paper, &Options::default(), true, MAX_DISPLAY_POINTS, 100);
+    assert_eq!(l.undashed, 2);
+}
+
+/// A block reference cut by an XCLIP boundary is drawn apart and then joined: a run in it drawn
+/// continuous is still counted.
+#[test]
+fn a_run_past_its_dash_limit_in_a_clipped_block_reference_is_counted() {
+    let mut d = dashed_lines(&[]);
+    let mut blk = cadcraft_doc::Block::new("B");
+    let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::ZERO, b: Vec3::new(1_000_001.0 * 0.75, 0.0, 0.0) });
+    blk.entities.push(block_entity(1, Common { linetype: "DASHED".into(), ..Default::default() }, line));
+    d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("B") else { panic!("an insert") };
+    ins.clip = Some(cadcraft_doc::ClipBoundary::new(vec![Vec2::new(-1.0, -1.0), Vec2::new(10.0, 1.0)]));
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let l = build_plot(&d, &Space::Model, &Options::default());
+    assert!(!l.prims.is_empty() && l.truncated && l.undashed == 1, "{}", l.undashed);
+}
+
+/// Text in a linetype is placed only on a run whose dashes were laid out: a line past the build's
+/// dash budget is one stroke, without its texts.
+#[test]
+fn linetype_text_is_left_off_a_run_past_the_dash_budget() {
+    use cadcraft_doc::DashElement;
+    let mut d = Drawing::new_imperial();
+    let text = DashElement { text: Some("GAS".into()), style: Some("Standard".into()), scale: 0.1, ..DashElement::dash(-0.2) };
+    let pattern = vec![DashElement::dash(0.5), text, DashElement::dash(-0.25)];
+    d.linetypes.push(cadcraft_doc::Linetype { name: "GAS".into(), description: String::new(), pattern });
+    // Two lines of 100 periods, 306 elements each: the budget fits the first.
+    for y in [0.0, 1.0] {
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(95.0, y, 0.0) });
+        d.add(&Space::Model, Common { linetype: "GAS".into(), ..Default::default() }, line).unwrap();
+    }
+    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), true, MAX_DISPLAY_POINTS, 400);
+    let each = prims_per_entity(&l);
+    assert!(matches!(each.as_slice(), [first, 1] if *first > 101), "{each:?}");
+    assert_eq!(l.undashed, 1);
 }

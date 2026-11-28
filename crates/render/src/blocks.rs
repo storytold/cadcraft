@@ -1,3 +1,7 @@
+use std::collections::BTreeMap;
+
+use cadcraft_doc::TagKey;
+
 use super::draw::entity;
 use super::props::{resolve, resolve_common, transparency};
 use super::text_entity::{mtext, place_text_entity};
@@ -37,6 +41,9 @@ pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
         block_pstyle: ctx.block_pstyle,
         // The reference's own, set by the caller (`Builder::transparency` while it draws).
         block_transparency: ctx.block_transparency,
+        // Proxy graphics are drawn as part of the block they are in; a block reference or a
+        // dimension sets its own block instead.
+        block: ctx.block,
     }
 }
 
@@ -64,6 +71,11 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
         return;
     }
     if let Some(blk) = ctx.d.block(&ins.block) {
+        // ATTMODE (ATTDISP) for the block's constant attributes, as for its other attributes.
+        let attmode = ctx.d.header.i64("ATTMODE", 1);
+        // The reference's attributes by tag, gathered at the first constant definition that asks
+        // and kept for the others and every copy.
+        let mut carried = None;
         let cols = ins.cols.clamp(1, 10_000);
         let rows = ins.rows.clamp(1, 10_000);
         'copies: for r in 0..rows {
@@ -73,7 +85,7 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                 }
                 let off = Vec2::new(ins.col_spacing * f64::from(c), ins.row_spacing * f64::from(r)).rotate(ins.rotation);
                 let m = Mat3::translate(off).then_before(ins.transform(blk.base.xy()));
-                let sub = Ctx { block_pstyle: b.named, block_transparency: own, ..sub_ctx(ctx, e, m) };
+                let sub = Ctx { block: Some(blk), block_pstyle: b.named, block_transparency: own, ..sub_ctx(ctx, e, m) };
                 // XCLIP: the copy is drawn on its own, then cut to the boundary.
                 let clip = xclip_region(ins, &sub.xf);
                 let mut part = clip.as_ref().map(|_| b.part());
@@ -86,8 +98,12 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                         stop = true;
                         break;
                     }
-                    // Constant/visible attribute definitions inside blocks are not drawn; attribs are.
-                    if matches!(be.kind, EntityKind::AttDef(_)) {
+                    // Attribute definitions inside blocks are not drawn (the reference's attributes
+                    // are), except a constant one: its value draws with the block's geometry.
+                    if let EntityKind::AttDef(a) = &be.kind {
+                        if let Some(text) = constant_attribute(be, a, ins, attmode, &mut carried) {
+                            entity(target, &sub, &text);
+                        }
                         continue;
                     }
                     entity(target, &sub, be);
@@ -95,6 +111,7 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                 if let (Some(part), Some((region, inverted))) = (part, &clip) {
                     b.list.expanded = part.list.expanded;
                     b.list.truncated |= part.list.truncated;
+                    b.list.undashed = b.list.undashed.saturating_add(part.list.undashed);
                     append_clipped_keep(&mut b.list, &part.list, &if *inverted { Clip::Outside(region) } else { Clip::Poly(region) });
                     xclip_frame(b, ctx, region, rgb);
                 }
@@ -111,6 +128,33 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
     if let (Some(part), Some((region, inverted))) = (part, &attr_clip) {
         append_clipped_keep(&mut b.list, &part.list, &if *inverted { Clip::Outside(region) } else { Clip::Poly(region) });
     }
+}
+
+/// A constant attribute definition `a` (`be`) of reference `ins`'s block as the text it draws:
+/// its value, with the definition's properties. A constant value isn't copied into the reference's
+/// attributes, so it is drawn from the definition. `None` for a variable definition (its attribute
+/// is drawn instead), one ATTMODE hides (0 hides all, 1 the invisible ones), and one the reference
+/// carries an attribute for (that attribute is drawn, not both). `carried`: the reference's
+/// attributes by tag, gathered here on first use so that each definition costs one lookup (#1923).
+fn constant_attribute<'i>(
+    be: &Entity,
+    a: &cadcraft_doc::Attrib,
+    ins: &'i cadcraft_doc::Insert,
+    attmode: i64,
+    carried: &mut Option<BTreeMap<TagKey<'i>, &'i cadcraft_doc::Attrib>>,
+) -> Option<Entity> {
+    if !a.constant
+        || attmode == 0
+        || (a.invisible && attmode != 2)
+        || carried.get_or_insert_with(|| ins.attribs_by_tag()).contains_key(&TagKey(&a.tag))
+    {
+        return None;
+    }
+    let kind = match a.multiline_text() {
+        Some(m) => EntityKind::MText(m),
+        None => EntityKind::Text(a.text.clone()),
+    };
+    Some(Entity { handle: be.handle, common: be.common.clone(), kind })
 }
 
 /// The XCLIP region of reference `ins` drawn through `xf` (block to drawing coordinates), and

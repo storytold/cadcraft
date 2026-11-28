@@ -14,6 +14,13 @@ use std::path::PathBuf;
 /// Length of the token in bytes (256 bits), rendered as lowercase hex.
 const TOKEN_BYTES: usize = 32;
 
+/// Longest request line in bytes (newline excluded) the control server reads on a connection
+/// before a request on it has carried the right token. The token is checked only once the whole
+/// line is read (a client that sorts keys sends it last), so this bounds what a peer without the
+/// token can make the app buffer (#1925). A client sends a longer request only after a shorter one
+/// with the token has been answered on the same connection.
+pub const MAX_UNAUTHENTICATED_LINE: usize = 64 * 1024;
+
 /// The file holding the control token for `port`, inside a per-user private directory.
 ///
 /// On Unix the runtime dir (`XDG_RUNTIME_DIR`, already `0700` and per-user) is preferred, else the

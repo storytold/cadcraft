@@ -82,6 +82,8 @@ fn clipboard_events_run_the_clipboard_commands() {
     app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
     let h = app.session.doc().unwrap().model.handles();
     app.session.set_selection(h);
+    // Only the shortcut table runs here, no app UI: the drawing that keeps the clipboard events in egui while it is
+    // shown is not drawn, so the runtime is not installed.
     let ctx = egui::Context::default();
     let frame = |app: &mut CadApp, events: Vec<egui::Event>| {
         ctx.begin_pass(egui::RawInput { events, ..Default::default() });
@@ -186,6 +188,7 @@ fn painted(app: &mut CadApp, ctx: &egui::Context, mut events: Vec<egui::Event>, 
 fn shift_right_click_opens_the_snap_menu() {
     let mut app = CadApp::new(Session::new(), Services::default());
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     app.logic(&ctx);
     painted(&mut app, &ctx, Vec::new(), egui::Modifiers::NONE);
     app.cmdline("LINE 0,0");
@@ -209,6 +212,7 @@ fn shift_right_click_opens_the_snap_menu() {
 fn quick_right_click_cancels_a_palette_placement_only() {
     let mut app = CadApp::new(Session::new(), Services::default());
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     app.logic(&ctx);
     painted(&mut app, &ctx, Vec::new(), egui::Modifiers::NONE);
     app.session.execute("line", &json!({ "points": [[0, 0], [4, 0]] })).unwrap();
@@ -486,4 +490,99 @@ fn a_paste_bound_to_another_key_asks_the_window_for_the_system_clipboard() {
     assert!(asked || frame(&mut app, vec![]), "the window is asked for the clipboard text");
     frame(&mut app, vec![egui::Event::Paste("text from another program".into())]);
     assert_eq!(running(&app).as_deref(), Some("pasteclip"), "the text arrived: paste runs");
+}
+
+/// A held paste belongs to the drawing it was asked for in: when another drawing is shown before
+/// the clipboard has been read (a background open finished), neither the answer nor the wait
+/// running out pastes into that one.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_held_paste_does_not_run_in_another_drawing() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    let h = app.session.doc().unwrap().model.handles();
+    app.session.set_selection(h);
+    app.run("copyclip", json!({})).unwrap();
+    let ctx = egui::Context::default();
+    let mut now = 0.0;
+    let mut frame = |app: &mut CadApp, events: Vec<egui::Event>, dt: f64| {
+        now += dt;
+        ctx.begin_pass(egui::RawInput { events, time: Some(now), ..Default::default() });
+        cadcraft_ui_egui::menus::shortcuts(app, &ctx);
+        ctx.end_pass().textures_delta.clear();
+    };
+    let running = |app: &CadApp| app.session.running.as_ref().map(|r| r.id.clone());
+    let paste = || vec![egui::Event::Paste("text from another program".into())];
+    let first = app.session.active;
+
+    // The answer arrives after the switch.
+    app.start("pasteclip");
+    frame(&mut app, vec![], 0.01);
+    app.session.new_drawing(false);
+    assert_ne!(app.session.active, first, "the new drawing is the one shown");
+    frame(&mut app, paste(), 0.01);
+    assert_eq!(running(&app), None, "the answer does not paste into the other drawing");
+    frame(&mut app, vec![], 5.0);
+    assert_eq!(running(&app), None, "nor does the wait running out");
+
+    // No answer: the wait runs out after the switch.
+    app.session.active = first;
+    app.start("pasteclip");
+    frame(&mut app, vec![], 0.01);
+    app.session.new_drawing(false);
+    frame(&mut app, vec![], 5.0);
+    assert_eq!(running(&app), None, "the fallback does not paste into the other drawing");
+
+    // Back in a drawing that stays shown, a paste still runs.
+    app.start("pasteclip");
+    frame(&mut app, vec![], 0.01);
+    frame(&mut app, paste(), 0.01);
+    assert_eq!(running(&app).as_deref(), Some("pasteclip"));
+}
+
+/// Input that answers the prompt of the command still running drops a paste held meanwhile: the
+/// command goes on with that input, and neither the clipboard's answer nor the wait running out
+/// cancels it to paste.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn input_to_the_running_command_drops_a_held_paste() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    let h = app.session.doc().unwrap().model.handles();
+    app.session.set_selection(h);
+    app.run("copyclip", json!({})).unwrap();
+    let ctx = egui::Context::default();
+    let mut now = 0.0;
+    let mut frame = |app: &mut CadApp, events: Vec<egui::Event>, dt: f64| {
+        now += dt;
+        ctx.begin_pass(egui::RawInput { events, time: Some(now), ..Default::default() });
+        cadcraft_ui_egui::menus::shortcuts(app, &ctx);
+        ctx.end_pass().textures_delta.clear();
+    };
+    let running = |app: &CadApp| app.session.running.as_ref().map(|r| r.id.clone());
+    let paste = || vec![egui::Event::Paste("text from another program".into())];
+
+    // A typed coordinate, then the clipboard's answer.
+    app.start("line");
+    app.start("pasteclip");
+    frame(&mut app, vec![], 0.01);
+    assert_eq!(running(&app).as_deref(), Some("line"), "the paste is held, LINE still runs");
+    assert_eq!(app.cmdline("1,1"), None);
+    frame(&mut app, paste(), 0.01);
+    assert_eq!(running(&app).as_deref(), Some("line"), "the answer does not cancel LINE to paste");
+    frame(&mut app, vec![], 5.0);
+    assert_eq!(running(&app).as_deref(), Some("line"), "nor does the wait running out");
+
+    // A picked point, and no answer.
+    app.start("pasteclip");
+    frame(&mut app, vec![], 0.01);
+    app.session.input(cadcraft_engine::Input::Point(cadcraft_engine::geom::Vec2::new(5.0, 5.0))).unwrap();
+    frame(&mut app, vec![], 5.0);
+    assert_eq!(running(&app).as_deref(), Some("line"));
+
+    // Without input in between, the held paste still takes over.
+    app.start("pasteclip");
+    frame(&mut app, vec![], 0.01);
+    frame(&mut app, paste(), 0.01);
+    assert_eq!(running(&app).as_deref(), Some("pasteclip"));
 }

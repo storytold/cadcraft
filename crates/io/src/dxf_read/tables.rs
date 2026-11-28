@@ -4,7 +4,9 @@ use super::{
     Color, DashElement, DimStyle, Drawing, HVal, HashMap, Layer, Linetype, Lineweight, NamedView, Rgb, Rx, Tag, TextStyle, Ucs, Vec2, Vec3,
     VportConfig, VportTile, record_slices,
 };
+use crate::dxf_ext::ByName;
 use cadcraft_fonts::windows::windows_font;
+use craft_dxf::lin_pat::MAX_LINETYPE_ELEMENTS;
 
 pub(super) fn header(tags: &[Tag], d: &mut Drawing) {
     let mut i = 0;
@@ -113,6 +115,12 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     // The same for linetypes (first definition wins) and text styles (last definition wins).
     let mut linetype_names: std::collections::HashSet<String> = d.linetypes.iter().map(|l| l.name.to_ascii_lowercase()).collect();
     let mut style_index: HashMap<String, usize> = d.text_styles.iter().enumerate().map(|(i, s)| (s.name.to_ascii_lowercase(), i)).collect();
+    // And for dimension styles, views and UCSs (a later record replaces the first of its name),
+    // and viewport configurations (a record adds a tile to the first of its name).
+    let mut dim_style_names = ByName::new(&d.dim_styles, |s| &s.name);
+    let mut view_names = ByName::new(&d.views, |v| &v.name);
+    let mut ucs_names = ByName::new(&d.ucss, |u| &u.name);
+    let mut vport_names = ByName::new(&d.vports, |c| &c.name);
     for (kind, tg) in recs {
         let t = T(tg);
         match kind.as_str() {
@@ -166,7 +174,8 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                     continue;
                 }
                 linetype_names.insert(name.to_ascii_lowercase());
-                let pattern = ltype_pattern(tg, &ltype_styles);
+                let (pattern, cut) = ltype_pattern(tg, &ltype_styles);
+                rx.linetypes_cut = rx.linetypes_cut.saturating_add(usize::from(cut));
                 d.linetypes.push(Linetype { name, description: t.s(3).unwrap_or_default(), pattern });
             }
             "STYLE" => {
@@ -199,7 +208,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
             // The first *ACTIVE viewport holds the current snap/grid settings.
             "VPORT" if !active_vport && t.s(2).is_some_and(|n| n.trim().eq_ignore_ascii_case("*ACTIVE")) => {
                 active_vport = true;
-                vport_record(d, &t, true);
+                vport_record(d, &mut vport_names, &t, true);
                 for (name, code) in [("SNAPUNIT", 14), ("GRIDUNIT", 15)] {
                     if let (Some(x), Some(y)) = (t.f(code), t.f(code + 10)) {
                         let p = Vec2::new(x, y);
@@ -238,10 +247,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 // 70 bit 1: a paper space view; its layout is CADCraft xdata.
                 let layout = (t.i(70).unwrap_or(0) & 1 != 0).then(|| field("LAYOUT").unwrap_or_default());
                 let v = NamedView { name: name.clone(), center, height: h, width: w, layer_state: field("LAYERSTATE"), twist, layout };
-                match d.views.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)) {
-                    Some(x) => *x = v,
-                    None => d.views.push(v),
-                }
+                view_names.put(&mut d.views, &name, v);
             }
             "UCS" => {
                 let name = t.s(2).unwrap_or_default();
@@ -251,10 +257,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                     continue;
                 }
                 let u = Ucs { name: name.clone(), origin, x_axis, y_axis };
-                match d.ucss.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)) {
-                    Some(x) => *x = u,
-                    None => d.ucss.push(u),
-                }
+                ucs_names.put(&mut d.ucss, &name, u);
             }
             "DIMSTYLE" => {
                 let name = t.s(2).unwrap_or_default();
@@ -278,12 +281,9 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 fields.extend(crate::dxf_ext::read_newer_dimvars(tg, &rx.styles, &rx.brs, &rx.ltypes));
                 let mut st = DimStyle { name: name.clone(), annotative: annotative(tg), ..DimStyle::default() };
                 st.apply_fields(&fields);
-                match d.dim_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(&name)) {
-                    Some(x) => *x = st,
-                    None => d.dim_styles.push(st),
-                }
+                dim_style_names.put(&mut d.dim_styles, &name, st);
             }
-            "VPORT" => vport_record(d, &t, false),
+            "VPORT" => vport_record(d, &mut vport_names, &t, false),
             _ => {}
         }
     }
@@ -352,8 +352,9 @@ const MAX_VPORT_TILES: usize = 64;
 
 /// A VPORT record: one tile of the configuration it names (`*ACTIVE` the one shown). Corners
 /// are fractions of the drawing area; unusable tiles are skipped. `first_active`: this is the
-/// file's first `*ACTIVE` record, the one whose view is the drawing's saved view.
-fn vport_record(d: &mut Drawing, t: &T, first_active: bool) {
+/// file's first `*ACTIVE` record, the one whose view is the drawing's saved view. `names`: the
+/// configurations read so far by name.
+fn vport_record(d: &mut Drawing, names: &mut ByName, t: &T, first_active: bool) {
     let name = t.s(2).map(|n| n.trim().to_string()).unwrap_or_default();
     // View twist (group 51, degrees).
     let twist = t.f(51).map_or(0.0, |a| cadcraft_geom::norm_angle(a.to_radians()));
@@ -390,10 +391,13 @@ fn vport_record(d: &mut Drawing, t: &T, first_active: bool) {
     let tile = VportTile { min: clamp(min), max: clamp(max), center, height, aspect, twist };
     let name = if name.eq_ignore_ascii_case(VportConfig::ACTIVE) { VportConfig::ACTIVE.to_string() } else { name };
     let room = d.vports.len() < MAX_OBJECTS;
-    match d.vports.iter_mut().find(|c| c.name.eq_ignore_ascii_case(&name)) {
+    match names.position(&name).and_then(|i| d.vports.get_mut(i)) {
         Some(c) if c.tiles.len() < MAX_VPORT_TILES => c.tiles.push(tile),
         Some(_) => {}
-        None if room => d.vports.push(VportConfig { name, tiles: vec![tile] }),
+        None if room => {
+            let config = VportConfig { name: name.clone(), tiles: vec![tile] };
+            names.put(&mut d.vports, &name, config);
+        }
         None => {}
     }
 }
@@ -402,10 +406,18 @@ fn vport_record(d: &mut Drawing, t: &T, first_active: bool) {
 /// LTYPE): each `49` length starts an element; `74` type flags (1 absolute rotation, 2 text,
 /// 4 shape), `75` shape number, `340` STYLE, `46` scale, `50` rotation (radians), `44`/`45`
 /// offset and `9` text follow it.
-fn ltype_pattern(tags: &[Tag], styles: &HashMap<String, String>) -> Vec<DashElement> {
+///
+/// At most [`MAX_LINETYPE_ELEMENTS`] elements are read, the cap a `.lin` file has: the rest of
+/// the pattern, with the text and shapes of its elements, is dropped and `true` comes back so
+/// the reader can say so. The renderer copies and walks the whole pattern for every object
+/// drawn with it, so an uncapped pattern made each redraw and export cost grow with its length.
+fn ltype_pattern(tags: &[Tag], styles: &HashMap<String, String>) -> (Vec<DashElement>, bool) {
     let mut out: Vec<DashElement> = Vec::new();
     for t in tags.iter().take_while(|t| t.code < 1000) {
         if t.code == 49 {
+            if out.len() >= MAX_LINETYPE_ELEMENTS {
+                return (out, true);
+            }
             out.push(DashElement::dash(t.f64()));
             continue;
         }
@@ -432,5 +444,5 @@ fn ltype_pattern(tags: &[Tag], styles: &HashMap<String, String>) -> Vec<DashElem
             _ => {}
         }
     }
-    out
+    (out, false)
 }

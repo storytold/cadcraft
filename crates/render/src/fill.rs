@@ -387,18 +387,19 @@ pub(crate) mod tests {
         assert!(cover(&tris, Vec2::new(10.9, -0.9)) > 0);
     }
 
-    /// A tapered segment meets the next one along its own edges: the corner between a segment
-    /// ending 4 wide and one starting 2 wide is filled out to where those edges meet.
+    /// A tapered segment meets the next one along its own edges, not along an offset of its
+    /// centre line: a segment widening from 2 to 4 meets one 2 wide where their edges meet.
     #[test]
     fn tapered_corners_follow_the_segment_edges() {
         let mut p = wide(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)], false, 0.0);
-        for (v, w) in p.vertices.iter_mut().zip([4.0, 2.0]) {
-            (v.start_width, v.end_width) = (w, w);
+        for (v, (w0, w1)) in p.vertices.iter_mut().zip([(2.0, 4.0), (2.0, 2.0)]) {
+            (v.start_width, v.end_width) = (w0, w1);
         }
         let tris = wide_polyline(&p, 0.01);
-        // The first segment's outer edge is y = -2 and the second's x = 11: they meet at (11, -2).
-        assert!(cover(&tris, Vec2::new(10.9, -1.9)) > 0);
-        assert!(cover(&tris, Vec2::new(11.1, -1.9)) == 0);
+        // The first segment's outer edge runs from (0, -1) to (10, -2), so it meets the second's
+        // (x = 11) at (11, -2.1); an offset of the centre line would stop at (11, -2).
+        assert!(cover(&tris, Vec2::new(10.95, -2.05)) > 0);
+        assert!(cover(&tris, Vec2::new(11.05, -2.05)) == 0);
     }
 
     /// A corner sharper than the miter limit is bevelled instead of growing a long spike out past

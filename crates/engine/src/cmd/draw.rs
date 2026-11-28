@@ -47,7 +47,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("pline", "Polyline", run_pline)
             .menu(&["Draw", "Polyline"])
             .alias(&["pl"])
-            .params("{vertices: [[x,y] | {p:[x,y], bulge, startWidth, endWidth}], closed?, width?}")
+            .params("{vertices: [[x,y] | {p:[x,y], bulge, startWidth, endWidth}], closed?, width? (default PLINEWID unless vertices give widths)}")
             .interactive(|_| Ok(Box::new(PlineM::default()))),
         CommandSpec::new("circle", "Circle", run_circle)
             .menu(&["Draw", "Circle", "Center, Radius"])
@@ -62,7 +62,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("rectang", "Rectangle", super::draw2::run_rectang2)
             .menu(&["Draw", "Rectangle"])
             .alias(&["rec", "rectangle"])
-            .params("{p1, p2 | dimensions: [l, w] (p2 picks the quadrant) | area + length|breadth, rotation? (deg), fillet?, chamfer?: [d1, d2], width?, elevation?, thickness?, center?: bool (p1 is the centre, not a corner; the size spans it evenly)}")
+            .params("{p1, p2 | dimensions: [l, w] (p2 picks the quadrant) | area + length|breadth (the outline encloses it, cut corners included), rotation? (deg), fillet? (wins over a chamfer), chamfer?: [d1, d2], width?, elevation?, thickness?, center?: bool (p1 is the centre, not a corner; the size spans it evenly)}")
             .interactive(|_| Ok(Box::new(super::draw2::RectM2::default()))),
         CommandSpec::new("polygon", "Polygon", run_polygon)
             .menu(&["Draw", "Polygon"])

@@ -143,7 +143,8 @@ pub struct LispState {
     /// the step is charged it without charging the enclosing callback a second time.
     pub(crate) callback_work: u64,
     /// The `callback_used` value the callback running now (and so every one it calls) must not
-    /// pass: the lowest of its own and its callers' allowances.
+    /// pass: the lowest of its own and its callers' allowances, and of what is left to an
+    /// expression typed at a prompt.
     pub(crate) callback_ceiling: Option<u64>,
 }
 
@@ -200,6 +201,9 @@ struct Run {
     inputs: std::collections::VecDeque<Value>,
     /// Run to the end without waiting (programmatic calls): `get…` without an input gets nil.
     blocking: bool,
+    /// An expression typed at a command's prompt ([`Session::lisp_eval_answer`]): blocking, with
+    /// [`ANSWER_CAP`] steps instead of [`BLOCKING_CAP`].
+    answer: bool,
     /// Steps taken, for the cap on blocking runs.
     steps: u64,
     /// The `*error*` handler is the one running.
@@ -215,6 +219,10 @@ struct Run {
 const SLICE: u64 = 400_000;
 /// Steps a blocking run (a programmatic call) may take before it is stopped.
 const BLOCKING_CAP: u64 = 500_000_000;
+/// Steps an expression typed at a command's prompt may take, the callbacks it runs included. It
+/// runs blocking, since its value is the prompt's answer, so the interface draws no frame and
+/// Esc doesn't reach it until it ends; a routine at `Command:` runs a slice per frame instead.
+const ANSWER_CAP: u64 = 20_000_000;
 
 impl Session {
     /// The LISP environment of the active drawing.
@@ -272,12 +280,19 @@ impl Session {
         inputs: Vec<Value>,
     ) -> crate::Result<Option<std::result::Result<Value, String>>> {
         let forms = read::read_all(src).map_err(|e| crate::EngineError::Other(format!("; error: {}", e.msg)))?;
-        self.lisp_start(Machine::forms(forms), print, blocking, inputs, "LISP".into())
+        self.lisp_start(Machine::forms(forms), print, blocking, inputs, "LISP".into(), false)
+    }
+
+    /// Evaluate an expression typed at a command's prompt, whose value is the answer: it runs to
+    /// the end as a programmatic call does, within [`ANSWER_CAP`] steps.
+    pub(crate) fn lisp_eval_answer(&mut self, src: &str) -> crate::Result<Option<std::result::Result<Value, String>>> {
+        let forms = read::read_all(src).map_err(|e| crate::EngineError::Other(format!("; error: {}", e.msg)))?;
+        self.lisp_start(Machine::forms(forms), false, true, Vec::new(), "LISP".into(), true)
     }
 
     /// Call a LISP function (`c:` commands typed at the command line).
     fn lisp_call(&mut self, f: Value, label: String) -> crate::Result<Option<std::result::Result<Value, String>>> {
-        self.lisp_start(Machine::calling(f, Vec::new()), false, false, Vec::new(), label)
+        self.lisp_start(Machine::calling(f, Vec::new()), false, false, Vec::new(), label, false)
     }
 
     fn lisp_start(
@@ -287,6 +302,7 @@ impl Session {
         blocking: bool,
         inputs: Vec<Value>,
         label: String,
+        answer: bool,
     ) -> crate::Result<Option<std::result::Result<Value, String>>> {
         if self.lisp.active {
             return Err(crate::EngineError::Other("a LISP routine is already running".into()));
@@ -305,6 +321,7 @@ impl Session {
             before,
             inputs: inputs.into(),
             blocking,
+            answer,
             steps: 0,
             handler: false,
             string_bytes: 0,
@@ -368,6 +385,10 @@ impl Session {
             // [`Session::typed`] first, never opens a dialog. Restored after the slice, a panic
             // in it included, so a person's later command keeps its own origin.
             let program_input = std::mem::replace(&mut self.program_input, true);
+            // Set for every slice (callbacks run only inside one). An answer's callbacks
+            // (`vl-sort`'s comparator…) run inside one of its steps: they share what is left of
+            // its allowance instead of each taking a callback's own.
+            self.lisp.callback_ceiling = run.answer.then(|| self.lisp.callback_used.saturating_add(ANSWER_CAP.saturating_sub(run.steps)));
             let outcome = {
                 let machine = &mut run.machine;
                 let mut ctx = Ctx { s: self, env: &mut env, depth: 0 };
@@ -395,9 +416,21 @@ impl Session {
             // The work the slice did, which one step can take far past the slice. After a panic
             // `used` is still the previous slice's; the run ends with the error anyway.
             run.steps = run.steps.saturating_add(run.machine.used);
-            if run.blocking && run.steps > BLOCKING_CAP && matches!(outcome, Outcome::Wait(_)) {
+            // An answer that failed past its cap was stopped by the cap too: a callback that ran
+            // out of what was left ends here past the cap, since the step that called it counts.
+            let past_cap = if run.answer {
+                run.steps > ANSWER_CAP && matches!(outcome, Outcome::Wait(_) | Outcome::Error(_))
+            } else {
+                run.steps > BLOCKING_CAP && matches!(outcome, Outcome::Wait(_))
+            };
+            if run.blocking && past_cap {
+                let msg = if run.answer {
+                    format!("expression at a prompt stopped after {ANSWER_CAP} steps; run long routines at Command:, where Esc stops them")
+                } else {
+                    format!("routine stopped after {BLOCKING_CAP} steps")
+                };
                 self.lisp.run = Some(run);
-                self.lisp_error(LispError::quit(format!("routine stopped after {BLOCKING_CAP} steps")));
+                self.lisp_error(LispError::quit(msg));
                 return;
             }
             match outcome {
