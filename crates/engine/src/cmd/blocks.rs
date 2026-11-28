@@ -19,6 +19,7 @@ use crate::{Accept, AttribAsk, AttribEntry, EngineError, Input, Interactive, Ori
 
 mod attdef;
 mod attedit;
+mod bauthor;
 mod burst;
 mod description;
 mod dyngrip;
@@ -103,6 +104,7 @@ pub fn specs() -> Vec<CommandSpec> {
     .chain(refedit::specs())
     .chain(xclip::specs())
     .chain(bedit::specs())
+    .chain(bauthor::specs())
     .collect()
 }
 
