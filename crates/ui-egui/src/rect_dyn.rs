@@ -131,8 +131,10 @@ pub fn draw(app: &mut CadApp, p: &egui::Painter) -> bool {
     let (so, sw, sh) = (xf.to_screen(o), xf.to_screen(w_end), xf.to_screen(h_end));
     // The rectangle's middle on screen: each dimension line sits on the far side of its edge.
     let mid = so + ((sw - so) + (sh - so)) / 2.0;
+    let view = app.canvas.rect.unwrap_or_else(|| p.clip_rect());
     let line = Stroke::new(1.0, t.text_dim);
     let ext = Stroke::new(1.0, t.text_faint);
+    let mut fields = Vec::with_capacity(2);
     for (i, (a, b), live) in [(WIDTH, (so, sw), w.abs()), (HEIGHT, (so, sh), h.abs())] {
         let along = b - a;
         let len = along.length();
@@ -145,6 +147,10 @@ pub fn draw(app: &mut CadApp, p: &egui::Painter) -> bool {
         };
         let mut n = vec2(-dir.y, dir.x);
         if n.dot((a + along / 2.0) - mid) < 0.0 {
+            n = -n;
+        }
+        // Outside the view (an edge near the canvas border): the line goes inside the edge.
+        if !view.contains(a + along / 2.0 + n * 24.0) && view.contains(a + along / 2.0 - n * 24.0) {
             n = -n;
         }
         let off = n * 24.0;
@@ -163,9 +169,59 @@ pub fn draw(app: &mut CadApp, p: &egui::Painter) -> bool {
         } else {
             cadcraft_engine::units::format_distance(live, lu, lp)
         };
-        crate::grip_dyn::field(p, a + off + along / 2.0, &text, &font, active, locked.is_some() && !typing, locked.is_none() && !typing);
+        let lock = locked.is_some() && !typing;
+        let size = field_size(p, &text, &font, lock);
+        fields.push((a + off + along / 2.0, size, text, active, lock, locked.is_none() && !typing));
+    }
+    if let [wf, hf] = fields.as_mut_slice() {
+        let [wa, ha] = place(view, [(wf.0, wf.1), (hf.0, hf.1)]);
+        (wf.0, hf.0) = (wa, ha);
+    }
+    for (at, _, text, active, lock, live) in &fields {
+        crate::grip_dyn::field(p, *at, text, &font, *active, *lock, *live);
     }
     true
+}
+
+/// The size [`crate::grip_dyn::field`] draws a field of `text` at.
+fn field_size(p: &egui::Painter, text: &str, font: &egui::FontId, locked: bool) -> egui::Vec2 {
+    let g = p.layout_no_wrap(text.to_owned(), font.clone(), Tokens::get().text);
+    let lock_w = if locked { 11.0 } else { 0.0 };
+    vec2((g.size().x + 10.0 + lock_w).max(40.0), g.size().y + 6.0)
+}
+
+/// Where the width and height fields go, given where their dimension lines want them (centre,
+/// size): each is kept inside `view`, and when the two overlap (a small rectangle, or one pressed
+/// against an edge) they are pushed apart along the axis that overlaps least.
+fn place(view: egui::Rect, [(wa, ws), (ha, hs)]: [(Pos2, egui::Vec2); 2]) -> [Pos2; 2] {
+    const GAP: f32 = 4.0;
+    let keep_in = |c: Pos2, s: egui::Vec2| {
+        let half = s / 2.0 + vec2(2.0, 2.0);
+        let (lo, hi) = (view.min + half, view.max - half);
+        let axis = |v: f32, lo: f32, hi: f32, mid: f32| if lo <= hi { v.clamp(lo, hi) } else { mid };
+        egui::pos2(axis(c.x, lo.x, hi.x, view.center().x), axis(c.y, lo.y, hi.y, view.center().y))
+    };
+    let (mut w, mut h) = (keep_in(wa, ws), keep_in(ha, hs));
+    let box_of = |c: Pos2, s: egui::Vec2| egui::Rect::from_center_size(c, s + vec2(GAP, GAP));
+    for _ in 0..2 {
+        let o = box_of(w, ws).intersect(box_of(h, hs));
+        if o.width() <= 0.0 || o.height() <= 0.0 {
+            break;
+        }
+        // Away from the width field; the height field moves first, the width field takes what
+        // the view's edge leaves over.
+        let away = h - w;
+        let push = if o.width() < o.height() {
+            vec2(if away.x < 0.0 { -o.width() } else { o.width() }, 0.0)
+        } else {
+            vec2(0.0, if away.y < 0.0 { -o.height() } else { o.height() })
+        };
+        let moved = keep_in(h + push, hs);
+        let left = push - (moved - h);
+        h = moved;
+        w = keep_in(w - left, ws);
+    }
+    [w, h]
 }
 
 /// A small filled arrowhead with its tip at `tip`, pointing along `dir` backwards (into the line).
@@ -346,5 +402,70 @@ mod tests {
         }
         assert!(text.contains("Specify other corner point"), "{text}");
         assert!(!text.lines().any(|l| l == "X" || l == "Y"), "no pointer boxes:\n{text}");
+    }
+
+    #[test]
+    fn centre_mode_types_the_whole_width_and_height() {
+        // CEnter: the first point is the centre, so the picked corner is half the size away.
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx, Vec::new());
+        let o = app.canvas.xf.map_or(pos2(700.0, 450.0), |x| x.to_screen(Vec2::ZERO));
+        app.cmdline("rectang");
+        app.session.input(Input::Keyword("CEnter".into())).unwrap();
+        app.session.input(Input::Point(Vec2::ZERO)).unwrap();
+        run_frame(&mut app, &ctx, vec![Event::PointerMoved(o + vec2(130.0, -70.0))]);
+        assert!(rect(&mut app).is_some_and(|r| r.center), "centre-mode fields");
+        typed(&mut app, &ctx, "10");
+        tab(&mut app, &ctx);
+        typed(&mut app, &ctx, "4");
+        tab(&mut app, &ctx);
+        // Both locked: the cursor holds the corner half the size from the centre.
+        let c = app.canvas.cursor.unwrap();
+        assert!(close(c, 5.0, 2.0), "{c:?}");
+        run_frame(&mut app, &ctx, key(egui::Key::Enter));
+        assert!(app.session.running.is_none());
+        let (lo, hi) = last_rect(&app);
+        assert!(close(lo, -5.0, -2.0) && close(hi, 5.0, 2.0), "{lo:?} {hi:?}");
+    }
+
+    #[test]
+    fn fields_are_drawn_with_the_pointer_on_the_first_corner() {
+        // Both sides have no length: the dimension lines fall back to the rectangle's own
+        // directions, and both fields still show (with zero), apart from each other.
+        // The first corner in the middle of the view (the origin is at the canvas's edge).
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx, Vec::new());
+        let (xf, pointer) = (app.canvas.xf.unwrap(), app.canvas.rect.unwrap().center());
+        app.cmdline("rectang");
+        app.session.input(Input::Point(xf.to_world(pointer))).unwrap();
+        run_frame(&mut app, &ctx, vec![Event::PointerMoved(pointer)]);
+        app.ui.show_ucs_icon = false;
+        let text = crate::canvas::tests::painted_text(&mut app, &ctx, pointer);
+        let (lu, lp) = crate::canvas::length_units(&app.session);
+        let zero = cadcraft_engine::units::format_distance(0.0, lu, lp);
+        assert_eq!(text.lines().filter(|l| *l == zero).count(), 2, "two {zero} fields in:\n{text}");
+        assert!(!text.lines().any(|l| l == "X" || l == "Y"), "no pointer boxes:\n{text}");
+    }
+
+    #[test]
+    fn fields_stay_in_the_view_and_apart() {
+        let view = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0));
+        let s = vec2(60.0, 18.0);
+        let inside = |c: Pos2| view.contains_rect(Rect::from_center_size(c, s));
+        // Past the right and bottom edges: pulled back in.
+        let [w, h] = place(view, [(pos2(420.0, 150.0), s), (pos2(200.0, 330.0), s)]);
+        assert!(inside(w) && inside(h), "{w:?} {h:?}");
+        // On top of each other (a tiny rectangle): pushed apart.
+        let [w, h] = place(view, [(pos2(200.0, 150.0), s), (pos2(205.0, 152.0), s)]);
+        assert!(!Rect::from_center_size(w, s).intersects(Rect::from_center_size(h, s)), "{w:?} {h:?}");
+        // Overlapping in a corner: apart and still inside.
+        let [w, h] = place(view, [(pos2(395.0, 295.0), s), (pos2(398.0, 290.0), s)]);
+        assert!(inside(w) && inside(h), "{w:?} {h:?}");
+        assert!(!Rect::from_center_size(w, s).intersects(Rect::from_center_size(h, s)), "{w:?} {h:?}");
+        // Already apart and inside: left where the dimension lines put them.
+        let (a, b) = (pos2(100.0, 100.0), pos2(300.0, 200.0));
+        assert_eq!(place(view, [(a, s), (b, s)]), [a, b]);
     }
 }
