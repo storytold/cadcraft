@@ -143,3 +143,43 @@ fn old_serialized_loops_keep_locally_created_flags() {
     }
     assert_eq!(flags_written(&drawing), expected);
 }
+
+#[test]
+fn derived_boundary_writes_pixel_size_before_seeds() {
+    use cadcraft_io::{SaveOptions, Version, write_with};
+
+    for version in [Version::R2000, Version::R2018] {
+        for (flags, derived) in [([7, 22], true), ([3, 2], false), ([3, 6], true), ([7, 2], true)] {
+            let drawing = read_dxf(logo([flags[0], flags[1], flags[0], flags[1]]).as_bytes()).unwrap();
+            let bytes = write_with(&drawing, "test.dxf", &SaveOptions { version: Some(version), binary: false }).unwrap();
+            let text = String::from_utf8(bytes).unwrap();
+            let lines: Vec<_> = text.lines().collect();
+            let pairs: Vec<_> = lines.as_chunks::<2>().0.iter().map(|p| (p[0].trim(), p[1].trim())).collect();
+            let hatches: Vec<_> = pairs
+                .iter()
+                .enumerate()
+                .filter(|(_, pair)| **pair == ("0", "HATCH"))
+                .map(|(start, _)| {
+                    let end = pairs.iter().skip(start + 1).position(|(code, _)| *code == "0").map_or(pairs.len(), |n| start + 1 + n);
+                    &pairs[start..end]
+                })
+                .collect();
+            assert_eq!(hatches.len(), 2);
+            for hatch in hatches {
+                let written_flags: Vec<i64> = hatch.iter().filter(|(code, _)| *code == "92").map(|(_, value)| value.parse().unwrap()).collect();
+                assert_eq!(written_flags, flags);
+                let seeds = hatch.iter().position(|(code, _)| *code == "98").unwrap();
+                let pixels: Vec<_> = hatch.iter().enumerate().filter(|(_, (code, _))| *code == "47").collect();
+                if derived {
+                    assert_eq!(pixels.len(), 1, "{version:?}: derived hatch needs group 47");
+                    assert_eq!(pixels[0].0 + 1, seeds);
+                    assert_eq!(pixels[0].1.1.parse::<f64>().unwrap(), 0.0);
+                    assert_eq!(hatch[seeds - 2].0, "76");
+                } else {
+                    assert!(pixels.is_empty());
+                    assert_eq!(hatch[seeds - 1].0, "76");
+                }
+            }
+        }
+    }
+}

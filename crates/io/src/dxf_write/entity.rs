@@ -714,6 +714,9 @@ fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
                 }
             }
         }
+        if h.loops.iter().any(|l| l.boundary_flags.unwrap_or(0) & 4 != 0) {
+            w.f(47, 0.0);
+        }
         w.i(98, 0);
         if let Some(g) = &h.gradient {
             gradient(w, g);

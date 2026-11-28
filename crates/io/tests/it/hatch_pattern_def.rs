@@ -146,3 +146,15 @@ fn hostile_pattern_definitions_are_capped() {
     d.add(&Space::Model, Common::default(), EntityKind::Hatch(h)).expect("add");
     let _ = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default());
 }
+
+#[test]
+fn derived_pattern_writes_pixel_size_after_pattern_lines() {
+    let mut h = hatch("MYPAT", 1.0, 0.0, Vec2::ZERO, custom_lines());
+    h.loops[0].boundary_flags = Some(4);
+    let p = pairs(&save(h));
+    let start = pattern_data(&p);
+    let seeds = p.iter().skip(start).position(|(code, _)| *code == 98).unwrap() + start;
+    assert_eq!(p[seeds - 2].0, 79);
+    assert_eq!(p[seeds - 1].0, 47);
+    assert_eq!(p[seeds - 1].1.parse::<f64>().unwrap(), 0.0);
+}
