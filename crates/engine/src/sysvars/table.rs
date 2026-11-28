@@ -67,6 +67,8 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("OFFSETDIST", Kind::AnyReal, Def::Real(-1.0)),
     ("OFFSETERASE", Kind::Choice(&[0, 1]), Def::Int(0)),
     ("OFFSETLAYER", Kind::Choice(&[0, 1]), Def::Int(0)),
+    // The width a new polyline starts at; PLINE's Width and Halfwidth answers set it.
+    ("PLINEWID", Kind::Real { min: 0.0, strict: false }, Def::Real(0.0)),
     ("POLYSIDES", Kind::Int(3, 1024), Def::Int(4)),
     ("PROJMODE", Kind::Choice(&[0, 1, 2]), Def::Int(1)),
     ("REVCLOUDARCLEN", Kind::Real { min: 0.0, strict: true }, Def::Units(0.5, 15.0)),
@@ -89,8 +91,11 @@ const LINEWEIGHTS: [i64; 24] = [0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53,
 /// On/off session settings: name, read, write.
 type Toggle = (&'static str, fn(&Settings) -> bool, fn(&mut Settings, bool));
 const SETTINGS: &[Toggle] = &[
-    ("AUDITCTL", |s| s.auditctl, |s, v| s.auditctl = v),
+    // ATTDIA 1 (the default): INSERT typed or from a menu asks for attribute values in the Edit
+    // Attributes dialog; 0: at the command line. ATTREQ 0: INSERT gives every attribute its default.
+    ("ATTDIA", |s| s.attdia, |s, v| s.attdia = v),
     ("ATTREQ", |s| s.attreq, |s, v| s.attreq = v),
+    ("AUDITCTL", |s| s.auditctl, |s, v| s.auditctl = v),
     ("TRANSPARENCYDISPLAY", |s| s.transparency_display, |s, v| s.transparency_display = v),
 ];
 

@@ -55,6 +55,8 @@ pub enum Preference {
     Bosnian,
     #[serde(rename = "vi")]
     Vietnamese,
+    #[serde(rename = "ta")]
+    Tamil,
 }
 impl Preference {
     pub const ALL: [Self; 22] = [
@@ -80,14 +82,15 @@ impl Preference {
         Self::Georgian,
         Self::Bosnian,
         Self::Vietnamese,
+        Self::Tamil,
     ];
 
     /// Every preference in the order the Interface Language dialog lists them: Auto, then English
     /// (the source language), then the rest by the language's own name with accents folded, so
     /// Čeština sits under C and Magyar under M. Names in other scripts follow the Latin ones in
-    /// code point order: Greek, Cyrillic, Arabic, then the CJK languages. The order follows the
-    /// registry's native name even where the dialog shows an English label instead (Korean
-    /// without a Hangul face), so the list does not reorder when a font appears.
+    /// code point order: Greek, Cyrillic, Arabic, Tamil, Georgian, then the CJK languages. The
+    /// order follows the registry's native name even where the dialog shows an English label
+    /// instead (Korean without a Hangul face), so the list does not reorder when a font appears.
     pub fn for_picker() -> Vec<Self> {
         let mut rest: Vec<Self> = Self::ALL.into_iter().filter(|p| !matches!(p, Self::Auto | Self::English)).collect();
         rest.sort_by_cached_key(|p| name_sort_key(p.native_name()));
@@ -132,6 +135,7 @@ impl Preference {
             Self::Georgian => "ka",
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
+            Self::Tamil => "ta",
         }
     }
 
@@ -180,6 +184,15 @@ impl Preference {
                     "Vietnamese"
                 }
             }
+            // Its letters need a Tamil font, loaded only in the Tamil interface
+            // ([`crate::theme::shows_tamil`]); elsewhere the picker reads the English name.
+            Self::Tamil => {
+                if crate::theme::shows_tamil(CURRENT.with(Cell::get)) {
+                    "தமிழ்"
+                } else {
+                    "Tamil"
+                }
+            }
         }
     }
 
@@ -215,6 +228,7 @@ impl Preference {
             Self::Georgian => "ka",
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
+            Self::Tamil => "ta",
             Self::Auto => locales.iter().find_map(|s| locale_language(s)).unwrap_or("en"),
         }
     }
@@ -291,6 +305,11 @@ pub static LANGUAGES: [Language; 21] = [
     // Vietnamese doesn't inflect a noun for number ("3 commit"), so like Korean it has one form.
     Language {
         code: "vi", name: "Tiếng Việt", source: include_str!("i18n/vi.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new()
+    },
+    // தமிழ் (Tamil) plurals follow the English rule: one (1), other. Its letters come from an
+    // installed Tamil font or the craft-fonts `Taml` face (`theme::can_show`).
+    Language {
+        code: "ta", name: "தமிழ்", source: include_str!("i18n/ta.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new()
     },
 ];
 
@@ -537,6 +556,7 @@ mod picker_order_tests {
         assert!(pos(Preference::Bosnian) < pos(Preference::Czech), "Bosanski sorts under B");
         assert!(pos(Preference::Swedish) < pos(Preference::Vietnamese), "Tiếng Việt sorts under T");
         assert!(pos(Preference::Vietnamese) < pos(Preference::Turkish), "Tiếng comes before Türkçe");
+        assert!(pos(Preference::Arabic) < pos(Preference::Tamil) && pos(Preference::Tamil) < pos(Preference::Georgian), "தமிழ் sorts by code point");
         assert_eq!(name_sort_key("Türkçe"), "turkce");
     }
 }

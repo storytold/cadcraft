@@ -18,7 +18,9 @@ CADCraft runs AutoLISP routines (`.lsp` files). What is here and what is not yet
   keep their names.
 - **At the command line**, `(expression)` evaluates and shows the value, and `!variable` shows a
   variable. Typed at a command's prompt (not a free-text one), an expression's value answers it:
-  `CIRCLE 0,0 (* 2 r)`.
+  `CIRCLE 0,0 (* 2 r)`. The prompt waits for that value, so the window doesn't redraw and Esc
+  doesn't reach the expression until it ends: one that takes more than 20 million steps (its
+  callbacks included) stops with an error. Run long routines at `Command:` instead.
 - **Programmatically** (scripts, the control channel, MCP, the CLI): `lisp {code, inputs?}` and
   `appload {path} | {name, text | data}` run to the end and return `{value, output, error?}`.
   `appload` also returns `commands`, the `c:` commands the file defined, and a JSON call never
@@ -48,9 +50,10 @@ frame, so the window stays live and Esc stops it too.
 
 ## The language
 
-Integers are 32-bit and wrap as AutoLISP's do; any real makes arithmetic real. Variables are
-dynamically scoped: a function's arguments and its locals (after `/`) are bound while it runs.
-Symbols are case-insensitive. Reals print with six significant digits.
+Integers are 32-bit and wrap as AutoLISP's do; any real makes arithmetic real. A whole number
+past that range read from text (source, `read`, `atoi`) or JSON, or made by `fix` or `gcd`, is a
+real instead. Variables are dynamically scoped: a function's arguments and its locals (after `/`)
+are bound while it runs. Symbols are case-insensitive. Reals print with six significant digits.
 
 Nothing a routine does can crash the program: deep recursion is the error "internal stack limit
 reached", malformed source is a reader error, and every built-in checks its arguments.

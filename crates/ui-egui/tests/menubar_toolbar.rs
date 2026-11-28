@@ -98,6 +98,7 @@ fn menubar_started_from_the_ui_offers_the_bar_as_shown_now() {
 fn enter_through_the_control_api_applies_the_bar_before_the_next_request() {
     let mut app = app();
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     app.ui.show_toolbar = false;
     app.start("toolbar");
     let (req, _pending) = cadcraft_ui_egui::control::ControlRequest::new("cmdline.key", serde_json::json!({ "key": "enter" }));

@@ -233,6 +233,7 @@ fn picks_merge_into_the_state() {
 
 fn frames(app: &mut CadApp) -> egui::Context {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     app.logic(&ctx);
     let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))), ..Default::default() };
     // Enough frames for a window that grows each frame to show it.
@@ -301,6 +302,28 @@ fn a_failed_ok_keeps_the_dialog_open_with_the_error() {
     let st = app.hatch_dlg.clone().unwrap();
     assert!(st.error.is_some_and(|e| !e.is_empty()));
     assert_eq!(app.session.doc().unwrap().model.len(), n, "drawing unchanged");
+}
+
+/// A user alias of HATCH typed alone opens the dialog as HATCH does, also with the Greek layout
+/// active (ΚΡ is KR); with more on the line it goes to the engine with those inputs.
+#[test]
+fn a_lone_user_alias_of_hatch_opens_the_dialog() {
+    let _aliases = crate::aliasdlg::lock_alias_store();
+    let (mut app, _) = app_with_rect();
+    app.session.execute("aliasedit", &json!({ "set": { "kr": "hatch", "gra": "gradient" } })).unwrap();
+    for (typed, gradient) in [("kr", false), ("KR", false), ("ΚΡ", false), ("gra", true)] {
+        app.ui.dialog = None;
+        app.cmdline(typed);
+        assert_eq!(app.ui.dialog.as_deref(), Some("hatch"), "{typed}");
+        assert_eq!(app.hatch_dlg.clone().unwrap().fill.gradient, gradient, "{typed}");
+        assert!(app.session.running.is_none(), "{typed}");
+    }
+    app.ui.dialog = None;
+    app.cmdline("kr p ansi31");
+    assert_eq!(app.ui.dialog, None, "the rest of the line goes to the engine");
+    assert!(app.session.running.is_some());
+    app.session.cancel();
+    app.session.execute("aliasedit", &json!({ "remove": ["kr", "gra"] })).unwrap();
 }
 
 #[test]

@@ -10,6 +10,7 @@ use crate::theme::Tokens;
 
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     crate::mtext_editor::show(app, ctx);
+    crate::attentry::show(app, ctx);
     crate::line_editor::show(app, ctx);
     crate::quick::quick_properties(app, ctx);
     let Some(d) = app.ui.dialog.clone() else { return };
@@ -23,14 +24,17 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "dsettings" => dsettings(app, ctx, &mut open),
         "units" => units(app, ctx, &mut open),
         "hatch" => crate::hatchdlg::dialog(app, ctx, &mut open),
+        "array" => crate::arraydlg::dialog(app, ctx, &mut open),
         "aliasedit" => crate::aliasdlg::dialog(app, ctx, &mut open),
         "find" => crate::finddlg::dialog(app, ctx, &mut open),
         crate::keys::DIALOG => crate::keys::dialog(app, ctx, &mut open),
         "about" => about(ctx, &mut open),
         "preview" => crate::exchange::dialog(app, ctx, &mut open),
+        "pdfimport" => crate::exchange::pdf_dialog(app, ctx, &mut open),
         "commands" => commands(app, ctx, &mut open),
         "bedit" => crate::bedit::dialog(app, ctx, &mut open),
         "authoring" => crate::bedit::authoring_dialog(app, ctx, &mut open),
+        "wblock" => crate::wblock::dialog(app, ctx, &mut open),
         "stylesmanager" => crate::plotstyles::dialog(app, ctx, &mut open),
         o if o == "options" || o.starts_with("options:") => crate::options::dialog(app, ctx, o, &mut open),
         o if o.starts_with("textedit:") => crate::textdlg::dialog(app, ctx, o, &mut open),
@@ -96,7 +100,7 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             let mut deg = current;
             ui.horizontal(|ui| {
                 let label = ui.label(crate::tl!("Increment angle"));
-                let combo = craft_ui::ComboBox::from_id_salt("polarang").selected_text(format!("{deg}")).show_ui(ui, |ui| {
+                let combo = egui::ComboBox::from_id_salt("polarang").selected_text(format!("{deg}")).show_ui(ui, |ui| {
                     for a in [90.0, 45.0, 30.0, 22.5, 18.0, 15.0, 10.0, 5.0] {
                         ui.selectable_value(&mut deg, a, format!("{a}"));
                     }
@@ -242,7 +246,7 @@ const INSERTION_UNITS: [&str; 25] = [
 /// A combo box over `(value, label)` options.
 fn pick(ui: &mut egui::Ui, salt: &str, value: &mut i64, options: &[(i64, String)]) {
     let current = options.iter().find(|o| o.0 == *value).map(|o| o.1.clone()).unwrap_or_default();
-    craft_ui::ComboBox::from_id_salt(salt).selected_text(current).width(180.0).show_ui(ui, |ui| {
+    egui::ComboBox::from_id_salt(salt).selected_text(current).width(180.0).show_ui(ui, |ui| {
         for (k, label) in options {
             ui.selectable_value(value, *k, label);
         }
@@ -352,7 +356,8 @@ fn about(ctx: &egui::Context, open: &mut bool) {
                 1 => crate::credits::contributors_ui(ui),
                 2 => crate::credits::models_ui(ui),
                 _ => {
-                    ui.heading(crate::tl!("CADCraft"));
+                    // The channel name, so a Nightly bug report names the channel it came from.
+                    ui.heading(crate::os_window::drawn_name());
                     ui.label(crate::tf!("Version {version}", version = env!("CARGO_PKG_VERSION")));
                     ui.label(crate::tl!("Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust."));
                     ui.add_space(6.0);
@@ -410,7 +415,7 @@ fn commands(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
 /// Interface Language combo; selecting a language runs `ui.language` with its code.
 fn language(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     egui::Window::new(crate::tl!("Interface Language")).id(egui::Id::unique("interface_language")).open(open).resizable(false).show(ctx, |ui| {
-        craft_ui::ComboBox::from_id_salt("interface_language_choice").selected_text(app.ui.interface_language.name()).show_ui(ui, |ui| {
+        egui::ComboBox::from_id_salt("interface_language_choice").selected_text(app.ui.interface_language.name()).show_ui(ui, |ui| {
             for preference in crate::i18n::Preference::for_picker() {
                 if ui.selectable_label(app.ui.interface_language == preference, preference.name()).clicked() {
                     let _ = app.run("ui.language", serde_json::json!({"lang": preference.code()}));

@@ -195,6 +195,8 @@ impl Objects {
 
     /// Layouts' UCSs: the World UCS, unusable axes or no such layout leave it unset.
     fn apply_layout_ucss(&self, d: &mut Drawing, rx: &Rx) {
+        let layout_at = super::document::layout_positions(d);
+        let ucs_names = crate::dxf_ext::UcsNames::new(&d.ucss);
         for (name, origin, x, y, named) in &self.layout_ucss {
             let usable = origin.is_finite() && crate::dxf_ext::usable_axes(*x, *y);
             // The named UCS group 345 points at, only while the layout's frame is still that
@@ -202,14 +204,14 @@ impl Objects {
             let ucs_name = named
                 .as_ref()
                 .and_then(|h| rx.ucss.get(&h.trim().to_ascii_uppercase()))
-                .and_then(|n| crate::dxf_ext::named_ucs(&d.ucss, n, *origin, *x, *y))
+                .and_then(|n| ucs_names.named(n, *origin, *x, *y))
                 .map(|u| u.name.clone())
                 .unwrap_or_default();
             let world = origin.len() <= 1e-12 && (*x - Vec3::new(1.0, 0.0, 0.0)).len() <= 1e-12 && (*y - Vec3::new(0.0, 1.0, 0.0)).len() <= 1e-12;
             if !usable || (world && ucs_name.is_empty()) {
                 continue;
             }
-            if let Some(l) = d.layouts.iter_mut().find(|l| l.name == *name) {
+            if let Some(l) = layout_at.get(name).and_then(|&i| d.layouts.get_mut(i)) {
                 l.ucs = Some(Ucs { name: ucs_name, origin: *origin, x_axis: *x, y_axis: *y });
             }
         }
@@ -348,8 +350,9 @@ impl Objects {
         }
         self.apply_mleader_styles(d, rx);
         crate::dxf_mleader::apply(d, &rx.mleader_fix, &self.names);
+        let layout_at = super::document::layout_positions(d);
         for (name, view) in &self.layout_views {
-            if let Some(l) = d.layouts.iter_mut().find(|l| l.name == *name) {
+            if let Some(l) = layout_at.get(name).and_then(|&i| d.layouts.get_mut(i)) {
                 l.view = Some(*view);
             }
         }
@@ -445,6 +448,7 @@ pub(super) fn page_setup(t: &T, tags: &[Tag]) -> PageSetup {
         Some(0) => "display",
         Some(1) => "extents",
         Some(2) => "limits",
+        Some(3) => "view",
         Some(4) => "window",
         _ => "layout",
     }
@@ -455,6 +459,9 @@ pub(super) fn page_setup(t: &T, tags: &[Tag]) -> PageSetup {
     // 0,0 is what a page without one writes, so it reads back as none.
     p.image_origin =
         t.f(148).zip(t.f(149)).map(|(x, y)| Vec2::new(x, y)).filter(|o| o.is_finite() && o.x.abs() < 1e12 && o.y.abs() < 1e12 && *o != Vec2::ZERO);
+    if let Some(start) = t.0.iter().position(|tag| tag.code == 100 && tag.str() == "AcDbPlotSettings") {
+        p.file_plot_settings = Some(Box::new(cadcraft_doc::FilePlotSettings { tags: t.0[start + 1..].to_vec(), page: p.clone() }));
+    }
     p
 }
 

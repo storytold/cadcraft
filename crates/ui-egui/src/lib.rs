@@ -19,6 +19,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 
 pub mod aliasdlg;
 pub mod animation;
+pub mod attentry;
 pub mod autosave;
 pub mod bedit;
 pub mod canvas;
@@ -34,7 +35,9 @@ pub mod dialogs;
 pub mod docking;
 mod drawing_fonts;
 pub mod fault;
+pub mod framework;
 // The Find and Replace window behind the FIND command.
+pub mod arraydlg;
 pub mod finddlg;
 pub mod hatchdlg;
 mod line_editor;
@@ -62,6 +65,7 @@ pub mod menus;
 pub mod modal;
 pub mod opening;
 pub mod options;
+pub mod os_window;
 pub mod palettes;
 pub mod parametric;
 pub mod plotstyles;
@@ -73,6 +77,7 @@ pub mod theme;
 pub mod updates_ui;
 pub mod viewcube;
 pub mod vpscale;
+pub mod wblock;
 
 pub mod exchange;
 
@@ -244,7 +249,14 @@ pub struct Services {
     pub no_file_system: bool,
     /// Pick a `.pgp` alias file, starting in the folder given (the last import's).
     pub pick_pgp: Option<Box<dyn Fn(Option<&str>) -> Option<String>>>,
+    /// The app binary's last step as the app leaves, run once at the end of its `on_exit`. On
+    /// macOS every quit ends the process inside AppKit's terminate, after `on_exit`, so code
+    /// after `eframe::run_native` never runs there (the Nightly session record is finished here).
+    pub at_exit: Option<AtExitFn>,
 }
+
+/// Runs once when the app leaves ([`Services::at_exit`]).
+pub type AtExitFn = Box<dyn FnOnce()>;
 
 /// The file dialog to show: Open, Save with the suggested file name, APPLOAD's `.lsp` picker or
 /// ALIASEDIT's `.pgp` picker, starting in the given folder (empty for the default one).
@@ -312,15 +324,23 @@ pub struct CadApp {
     /// Admitted `ui.screenshot` requests, including completed-but-undrained ones.
     pub(crate) shots: capture::Shots,
     pub synthetic: Vec<egui::Event>,
+    /// Paste commands waiting for the system clipboard ([`clipboard::defer`]).
+    pub(crate) paste: clipboard::Paste,
     /// Keys, text and clipboard events a floating panel's own OS window left over, with the
     /// modifiers held there, for the main window's next input ([`Self::forward_native_input`]).
     forwarded: Vec<egui::Event>,
     forwarded_modifiers: Option<egui::Modifiers>,
+    /// The Copy, Cut and Paste a floating panel's window fired as framework commands, as the clipboard events the
+    /// shortcuts read ([`Self::queue_fired_edits`]).
+    fired_edits: Vec<egui::Event>,
     /// The main window's own modifiers, put back the frame after forwarded keys went in.
     restore_modifiers: Option<egui::Modifiers>,
-    /// A panel opened from a menu or command, whose floating window comes to the front on the
-    /// next frame (craft-ui's `DockArea::raise_panel`).
-    pub raise_panel: Option<docking::Panel>,
+    /// The panel arrangement the dock shows and the panels' specs ([`docking::LiveDock`]).
+    pub(crate) dock: docking::LiveDock,
+    /// Who CADCraft is to the framework's dock and dialogs ([`framework`]).
+    framework_host: std::sync::Arc<craft_host::Host>,
+    /// The framework dialogs CADCraft keeps open (the update dialogs), run after its own UI.
+    pub framework_dialogs: craft_ui::dialog::DialogHost,
     /// One synthetic batch has been put into `RawInput` and is waiting for a real `App::ui` call.
     synthetic_injected: bool,
     /// Counts settled UI passes (one per painted frame; never hidden logic-only ticks or
@@ -339,8 +359,6 @@ pub struct CadApp {
     shown_follows_system: bool,
     /// Whether egui was last told to animate (`None` until the first frame).
     shown_animations: Option<bool>,
-    /// The interface scale last handed to egui (`None` until the first frame).
-    shown_interface_scale: Option<f32>,
     pub frame_ms: f64,
     pub quit_requested: bool,
     /// The app may close although drawings have unsaved changes (they were dealt with, or the
@@ -368,8 +386,12 @@ pub struct CadApp {
     pub alias_dlg: Option<aliasdlg::AliasDlgState>,
     /// The Hatch and Gradient dialog while open or picking ([`hatchdlg`]).
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
+    /// The Array dialog while open or picking ([`arraydlg`]).
+    pub array_dlg: Option<arraydlg::ArrayDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    /// The Write Block dialog ([`wblock`]).
+    pub wblock: wblock::State,
     /// A file dialog shown with [`Services::start_pick`]: its answer, and what to do with it.
     pending_pick: Option<PendingPick>,
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
@@ -402,10 +424,14 @@ impl CadApp {
             capture_identity_epoch: 0,
             shots: capture::Shots::default(),
             synthetic: Vec::new(),
+            paste: clipboard::Paste::default(),
             forwarded: Vec::new(),
             forwarded_modifiers: None,
+            fired_edits: Vec::new(),
             restore_modifiers: None,
-            raise_panel: None,
+            dock: docking::LiveDock::default(),
+            framework_host: framework::host(),
+            framework_dialogs: craft_ui::dialog::DialogHost::default(),
             synthetic_injected: false,
             ui_frames: 0,
             #[cfg(not(target_arch = "wasm32"))]
@@ -415,7 +441,6 @@ impl CadApp {
             shown_theme: None,
             shown_follows_system: false,
             shown_animations: None,
-            shown_interface_scale: None,
             frame_ms: 0.0,
             quit_requested: false,
             quit_confirmed: false,
@@ -430,7 +455,9 @@ impl CadApp {
             autosave_notice: None,
             alias_dlg: None,
             hatch_dlg: None,
+            array_dlg: None,
             bedit: bedit::State::default(),
+            wblock: wblock::State::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
             pending_pick: None,
@@ -612,6 +639,13 @@ impl CadApp {
 
     /// Start a command as if typed (interactive when it has prompts).
     pub fn start(&mut self, name: &str) {
+        if clipboard::defer(self, name, None) {
+            return;
+        }
+        // Starting another command drops a paste still waiting for the clipboard.
+        if !self.paste.running {
+            self.paste.cancel();
+        }
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
             return;
         }
@@ -642,7 +676,26 @@ impl CadApp {
             let name = cadcraft_engine::keyboard::latin_keys(first)
                 .filter(|_| !self.session.greek_word_is_a_command(first))
                 .unwrap_or_else(|| first.to_ascii_lowercase());
+            // A typed command drops a paste still waiting for the clipboard (a typed paste is held anew below).
+            if !first.is_empty() && !self.paste.running {
+                self.paste.cancel();
+            }
+            // A user alias typed alone routes as its command does: an alias of HATCH opens the Hatch
+            // dialog, typed as is or with the Greek layout active. With more on the line
+            // (`KR P ANSI31`) it goes to the engine, which runs the command with those inputs.
+            let alone = text.split_whitespace().nth(1).is_none();
+            let name = if alone {
+                cadcraft_engine::cmd::file::user_alias_command(first)
+                    .or_else(|| cadcraft_engine::cmd::file::user_alias_command(&name))
+                    .unwrap_or(name)
+            } else {
+                name
+            };
             if !first.is_empty() && !json_form && menus::run_ui_command(self, &name, &Value::Null).is_some() {
+                return None;
+            }
+            // A bare PASTECLIP, PASTEBLOCK or PASTEORIG reads the system clipboard first.
+            if text.trim() == first && clipboard::defer(self, &cadcraft_engine::cmd::resolve_alias(&name), Some(text)) {
                 return None;
             }
         }
@@ -746,6 +799,12 @@ impl CadApp {
         }
     }
 
+    /// Whether the window may answer a request for the system clipboard (Edit > Paste) later than
+    /// the next frame, as native Wayland does; elsewhere it never does ([`clipboard::Paste::set_late_answers`]).
+    pub fn set_clipboard_late_answers(&mut self, late: bool) {
+        self.paste.set_late_answers(late);
+    }
+
     /// Make the system cursor the interface default (`on`) and turn it on; saved preferences and
     /// resets never turn it off then.
     pub fn set_system_cursor_default(&mut self, on: bool) {
@@ -775,7 +834,8 @@ impl CadApp {
 
     /// Open the drawing at `path`. Natively the file is read on a worker thread while an
     /// "Opening ..." card shows ([`opening`]); [`Self::finish_opening`] adds it when ready. On the
-    /// web it opens at once.
+    /// web it opens at once. An already open drawing is selected without re-reading it, retaining
+    /// its unsaved edits and view; window drops and Open Recent use this same entry point.
     pub fn open_path(&mut self, path: &Path) {
         // A LISP file (dropped on the window): loaded as APPLOAD loads it.
         if is_lisp_file(path) {
@@ -783,6 +843,9 @@ impl CadApp {
                 Some(text) => self.load_lisp(&path.to_string_lossy(), &text),
                 None => self.open_failed(format!("APPLOAD: can't read {}", path.display())),
             }
+            return;
+        }
+        if self.select_open_drawing(path) {
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -815,6 +878,10 @@ impl CadApp {
     /// OPEN is reported. Called every frame.
     pub fn finish_opening(&mut self) {
         for (path, outcome) in self.opening.poll() {
+            // A drawing may have been opened or saved at this path while the read was pending.
+            if self.select_open_drawing(&path) {
+                continue;
+            }
             // A recent file that is gone can never be opened again: drop it from the list. A path
             // whose existence can't be checked (a folder that denies access) stays.
             if outcome.is_err() && matches!(path.try_exists(), Ok(false)) {
@@ -830,6 +897,22 @@ impl CadApp {
             }
             self.opened(r);
         }
+    }
+
+    /// Reuse the existing document through the normal tab-switch command, including symlink paths.
+    fn select_open_drawing(&mut self, path: &Path) -> bool {
+        let existing = self.session.docs.iter().position(|d| d.path.as_deref().is_some_and(|p| opening::same_path(Path::new(p), path)));
+        let Some(index) = existing else { return false };
+        match self.run("document.switch", json!({"index": index})) {
+            Ok(_) => {
+                self.ui.start_tab = false;
+                if let Some(path) = self.session.docs.get(index).and_then(|d| d.path.clone()) {
+                    self.remember_recent(path);
+                }
+            }
+            Err(error) => self.open_failed(error),
+        }
+        true
     }
 
     /// Load a LISP file: its routine runs and may wait for the user (APPLOAD typed or from the
@@ -931,17 +1014,13 @@ impl CadApp {
         self.gpu_fault_tick(ctx);
         managers::plot_window_resume(self, ctx);
         hatchdlg::resume(self);
+        wblock::resume(self);
         // What follows is frame work, once per layout frame or hidden tick.
         if ctx.current_pass_index() != 0 {
             return;
         }
         if self.restore_modifiers.is_some() {
             ctx.request_repaint();
-        }
-        // Closing the window with unsaved changes asks first. `run_logic` refreshes viewport
-        // close/focus state, so this must also work while hidden.
-        if ctx.input(|i| i.viewport().close_requested()) && self.request_quit() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
         // A long AutoLISP routine runs one bounded slice per frame, including hidden web/native
         // ticks; it must not depend on a paint or `RequestPaintWhileHidden`.
@@ -1052,9 +1131,9 @@ impl CadApp {
             // The batch reached an actual Ui callback; a discarded pass still consumed it.
             self.synthetic_injected = false;
         }
-        // `will_discard()` is false on the settled (final) pass of a frame, whether the frame is
-        // single-pass or the second pass after a layout discard; a discarded pass is skipped.
-        if !ctx.will_discard() {
+        // `will_rerun` is false on the settled (final) pass of a frame, whether the frame is
+        // single-pass or the second pass after a layout discard; a pass that will run again is skipped.
+        if !craft_ui::runtime::frame::will_rerun(&ctx) {
             self.ui_frames = self.ui_frames.saturating_add(1);
             capture::issue(self, &ctx);
         }
@@ -1096,13 +1175,6 @@ impl CadApp {
         if !animate {
             animation::unsmooth_scroll(ctx);
         }
-        // Applied only when the saved scale changes, so egui's own keyboard zoom keeps working
-        // within a session (and is never saved).
-        let scale = self.options.interface_scale;
-        if self.shown_interface_scale != Some(scale) {
-            ctx.set_zoom_factor(scale);
-            self.shown_interface_scale = Some(scale);
-        }
         // Wait for the frame cap on a painted pass, where a wait cannot delay a hidden tick.
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(cap) = &mut self.frame_cap {
@@ -1115,6 +1187,7 @@ impl CadApp {
     /// Input-derived work, once per layout frame.
     fn ui_input(&mut self, ctx: &egui::Context) {
         menus::shortcuts(self, ctx);
+        self.zoom_keys(ctx, egui::ViewportId::ROOT);
         #[cfg(not(target_arch = "wasm32"))]
         {
             let dropped = ctx.input_mut(|input| std::mem::take(&mut input.raw.dropped_files));
@@ -1154,6 +1227,7 @@ impl CadApp {
             if has_doc {
                 docking::show(self, ui);
             } else {
+                self.canvas.shown = None;
                 chrome::start_page(self, ui);
             }
         });
@@ -1167,6 +1241,7 @@ impl CadApp {
         autosave::show(self, ui.ctx());
         autosave::gpu_notice(self, ui.ctx());
         autosave::failure_notice(self, ui.ctx());
+        self.run_framework_dialogs(ui);
         self.frame_ms = now_ms() - t0;
     }
 
@@ -1286,6 +1361,7 @@ mod tests {
         start(&mut single);
         start(&mut twice);
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         frame(&mut single, &ctx, None);
         two_pass_frame(&mut twice, &ctx);
         let counter = |app: &CadApp| match app.session.lisp_var("CC-TWO") {
@@ -1309,6 +1385,7 @@ mod tests {
         let (request, reply) = ControlRequest::new("engine.execute", json!({ "command": "line", "params": { "points": [[0.0, 0.0], [10.0, 0.0]] } }));
         tx.send(request).expect("the request is queued");
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         two_pass_frame(&mut app, &ctx);
         let entities = app.session.doc().map(cadcraft_doc::Drawing::entity_count).unwrap_or_default();
         assert_eq!(entities, 1, "one command ran once, in the first pass");
@@ -1321,6 +1398,7 @@ mod tests {
     fn hidden_logic_does_not_run_frame_only_work() {
         let mut a = app();
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         // A logic-only call (what eframe runs for a hidden window) reports pass index zero too.
         a.logic(&ctx);
         assert_eq!(a.ui_frames, 0, "no real Ui callback ran");
@@ -1337,6 +1415,7 @@ mod tests {
 
         let mut a = CadApp::new(Session::new(), Services::default());
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         let started = a
             .session
             .lisp_eval("(setq cc-hidden 0) (while (< cc-hidden 400000) (setq cc-hidden (1+ cc-hidden)))", false, false, Vec::new())
@@ -1360,6 +1439,7 @@ mod tests {
     fn one_synthetic_batch_waits_for_a_real_ui_pass() {
         let mut a = app();
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         a.synthetic.push(egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE });
         let mut first = egui::RawInput::default();
         a.raw_input_hook(&ctx, &mut first);
@@ -1395,6 +1475,7 @@ mod tests {
         assert_eq!(b.ui.theme, ThemePref::Light, "bad prefs are ignored");
         // A fixed choice ignores the OS; the tokens and egui follow the choice.
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         frame(&mut b, &ctx, Some(egui::Theme::Dark));
         assert_eq!(Tokens::get(), Tokens::LIGHT);
         assert_eq!(ctx.theme(), egui::Theme::Light);
@@ -1412,6 +1493,7 @@ mod tests {
         let mut a = app();
         a.start("ui.theme.system");
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         frame(&mut a, &ctx, Some(egui::Theme::Light));
         assert_eq!(Tokens::get(), Tokens::LIGHT);
         assert_eq!(ctx.theme(), egui::Theme::Light);
@@ -1430,6 +1512,7 @@ mod tests {
         let mut a = app();
         a.start("ui.theme.system");
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         frame(&mut a, &ctx, Some(egui::Theme::Light));
         // A concrete Light would pin the native window appearance and hide later OS changes.
         assert_eq!(ctx.options(|o| o.theme_preference), egui::ThemePreference::System);

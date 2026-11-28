@@ -1,6 +1,8 @@
 use super::common::T;
 use super::{Color, EntityKind, Gradient, Handle, Hatch, HatchLoop, PolyVertex, Rgb, Spline, Tag, Vec2};
 
+mod chain;
+
 /// Upper bound on the points the elliptic and spline edges of one HATCH's boundary are sampled
 /// into: the point budget the renderer gives one hatch's loops
 /// ([`cadcraft_geom::MAX_TESSELLATED_POINTS`]).
@@ -73,7 +75,7 @@ pub(super) fn hatch(tags: &[Tag], t: &T, curves: &mut CurvePoints) -> Option<Ent
             verts.pop();
         }
         let sources = boundary_sources(tags, &mut i);
-        loops.push(HatchLoop { vertices: verts, outer, sources });
+        loops.push(HatchLoop { vertices: verts, outer, boundary_flags: Some(flags), sources });
     }
     curves.left = curves.left.saturating_sub(start_left.saturating_sub(budget.left));
     if budget.cut {
@@ -129,25 +131,33 @@ fn polyline_boundary(tags: &[Tag], index: &mut usize) -> Option<Vec<PolyVertex>>
     Some(vertices)
 }
 
+/// An edge path's vertices. Each edge is read on its own, then [`chain::chain`] joins them.
 fn edge_boundary(tags: &[Tag], index: &mut usize, budget: &mut EdgeBudget) -> Option<Vec<PolyVertex>> {
     let get = |i: usize| tags.get(i);
     seek_code(tags, index, 93);
     let count = get(*index)?.i64().clamp(0, 1_000_000) as usize;
     *index += 1;
-    let mut vertices = Vec::new();
+    // Every edge's points back to back, and where each edge's are.
+    let (mut points, mut edges) = (Vec::new(), Vec::new());
+    let mut edge = Vec::new();
     for _ in 0..count {
         seek_code(tags, index, 72);
         let kind = get(*index)?.i64();
         *index += 1;
         match kind {
-            1 => line_edge(tags, index, &mut vertices),
-            2 => circular_edge(tags, index, &mut vertices),
-            3 => elliptic_edge(tags, index, &mut vertices, budget),
-            4 => spline_edge(tags, index, &mut vertices, budget),
+            1 => line_edge(tags, index, &mut edge),
+            2 => circular_edge(tags, index, &mut edge),
+            3 => elliptic_edge(tags, index, &mut edge, budget),
+            4 => spline_edge(tags, index, &mut edge, budget),
             _ => {}
         }
+        if !edge.is_empty() {
+            let start = points.len();
+            points.append(&mut edge);
+            edges.push(start..points.len());
+        }
     }
-    Some(vertices)
+    Some(chain::chain(&points, &edges))
 }
 
 fn edge_value(tags: &[Tag], index: usize) -> f64 {
@@ -215,7 +225,8 @@ fn elliptic_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>
     if !ccw {
         points.reverse();
     }
-    vertices.extend(points.into_iter().map(PolyVertex::new));
+    let skip = usize::from(vertices.last().zip(points.first()).is_some_and(|(last, point)| last.p.near(*point, 1e-9)));
+    vertices.extend(points.into_iter().skip(skip).map(PolyVertex::new));
 }
 
 fn spline_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>, budget: &mut EdgeBudget) {

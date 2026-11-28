@@ -17,6 +17,12 @@ is `cadcraft-control-<port>.token` in the per-user runtime directory (`$XDG_RUNT
 from that file — which requires the desktop user's own filesystem access — and includes it on each
 line. The MCP bridge (`cadcraft-cli mcp --connect`) does this automatically.
 
+The server checks the token only once it has read the whole line, so until a request on a
+connection has carried the right token, a line may be at most 64 KiB; a longer one gets an error
+reply and the connection is closed. To send a longer request (a script, a drawing as base64) on a
+new connection, first send a short one with the token, such as `ping`, and wait for its reply.
+The MCP bridge does this too.
+
 Errors come back as `{"id": …, "ok": false, "error": "message"}`. An unknown method's error points
 to `control.methods`, which lists the methods the server answers.
 
@@ -25,7 +31,8 @@ bytes that aren't UTF-8) gets one error reply and the server closes the connecti
 after it runs. Blank lines are skipped.
 
 The server bounds what a client can hold: 16 connections at once (more get an error line and are
-closed), 256 MiB per request line (longer closes the connection), 64 queued requests (more are
+closed), 256 MiB per request line (64 KiB until the connection has shown the token; longer closes
+the connection), 64 queued requests (more are
 answered `{"ok": false, "error": "busy: …", "state": "not-run"}`), and 10 minutes idle or 30 seconds
 per blocked reply write before the socket is closed.
 
@@ -194,8 +201,9 @@ Select a language with `engine.execute` and the UI command `ui.language`:
 {"id":1,"method":"engine.execute","params":{"command":"ui.language","params":{"lang":"uk"}}}
 ```
 
-Supported values are `auto`, `en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, `bs`, `el` and `ka`.
-Chinese needs an installed CJK font, Arabic an installed Arabic font; Korean needs a font covering the Korean interface from the
+Supported values are `auto`, `en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, `bs`, `el`, `ka` and `ta`.
+Chinese needs an installed CJK font, Arabic an installed Arabic font, Tamil an installed Tamil font
+or the `Taml` face from craft-fonts; Korean needs a font covering the Korean interface from the
 optional craft-fonts input or the operating system; Georgian needs the `Geor` face from craft-fonts (an installed font
 does not count). Without a suitable font, the saved choice is
 retained and the result's `shown` is `en`. `ui.set` also accepts

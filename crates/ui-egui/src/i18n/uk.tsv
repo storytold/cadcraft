@@ -1461,6 +1461,8 @@
 	ENTER	Клавіша Enter
 	Shortcut Menu: always enabled	Контекстне меню: завжди
 	Shortcut Menu: enabled when command options are present	Контекстне меню: коли команда має параметри
+	Check for updates when CADCraft starts	Перевіряти оновлення під час запуску CADCraft
+	Turned off, CADCraft never offers an update on its own; Help ▸ Check for Updates… still looks.	Якщо вимкнено, CADCraft ніколи сам не пропонує оновлення; Довідка ▸ Перевірити оновлення… усе одно перевіряє.
 
 # ArtCraft feature naming
 	Additional Tools	Додаткові інструменти
@@ -1653,3 +1655,7 @@
 	Alt prefix and suffix	Префікс і суфікс альтернативних одиниць
 	Alt zero suppression	Приховування нулів альтернативних одиниць
 	Tolerance zero suppression	Приховування нулів допусків
+	Edit Attributes	Редагування атрибутів
+	Block name:	Ім’я блока:
+	Tag: {tag}	Мітка: {tag}
+	Values typed at the command line work too	Значення, введені в командному рядку, теж приймаються

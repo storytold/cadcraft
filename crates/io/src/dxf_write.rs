@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use cadcraft_color::Color;
 use cadcraft_doc::{
     AssocSnap, Attrib, Block, Common, DimAssoc, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, EntityStore, Gradient, Group, HAlign,
-    HVal, Handle, Hatch, Insert, Layout, Leader, Line, Lineweight, LwPolyline, MLeader, MLeaderStyle, MText, PageSetup, Point, Solid, Space, Table,
+    HVal, Handle, Hatch, Layout, Leader, Line, Lineweight, LwPolyline, MLeader, MLeaderStyle, MText, PageSetup, Point, Solid, Space, Table,
     TableStyle, Text, Transparency, Ucs, VAlign, VportConfig, VportTile,
 };
 use cadcraft_geom::{Bounds2, Vec2, Vec3};
@@ -156,19 +156,89 @@ pub fn tags(d: &Drawing, version: Version) -> Vec<Tag> {
 
 /// [`tags`], with the foreign objects the file keeps, by their handles in the drawing.
 fn tags_kept(d: &Drawing, version: Version) -> (Vec<Tag>, std::collections::HashSet<cadcraft_doc::Handle>) {
-    let (mut tags, kept) = sections::tags_kept_for(d, version, version, version < Version::R2004, false);
+    let (mut tags, kept, _) = sections::tags_kept_for(d, version, version, version < Version::R2004, false);
     // Kept proxies in this version's layout (#3229). Not for the DWG bridge, whose writer reads
     // them in the layout of the DWG they came from.
     proxy::proxy_layout(&mut tags, version);
     (tags, kept)
 }
 
+/// The most dash elements a linetype keeps in a DWG. The DWG writer (acadrust) stores the count in
+/// one byte, so a longer pattern would come back with its count modulo 256 (none at all for 256),
+/// and a DWG save keeps the first 255 instead ([`dwg_notes`] says so).
+pub const DWG_MAX_LINETYPE_ELEMENTS: usize = 255;
+
 /// The R2000 DXF the DWG bridge converts to a `dwg` version DWG: its entity types are the DWG
-/// version's (MULTILEADER from 2007).
-pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> String {
-    let mut tags = tags_for(d, Version::R2000, dwg, false);
+/// version's (MULTILEADER from 2007), and its linetypes have at most
+/// [`DWG_MAX_LINETYPE_ELEMENTS`] elements.
+pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> (String, craft_dwg::Unwritten) {
+    let (mut tags, kept, _) = sections::tags_kept_for(d, Version::R2000, dwg, false, true);
+    let mut unwritten = craft_dwg::Unwritten::new();
+    if dwg == Version::R2007 {
+        let omitted = legacy_visualstyles_kept(d, &kept);
+        if omitted != 0 {
+            let mut source = d.clone();
+            std::sync::Arc::make_mut(&mut source.foreign).objects.retain(|object| !legacy_visual_style(object));
+            tags = tags_for(&source, Version::R2000, dwg, false);
+            unwritten.insert("VISUALSTYLE".into(), omitted);
+        }
+    }
     bridge_markers(&mut tags);
-    craft_dxf::write_ascii(&tags)
+    (craft_dxf::write_ascii(&tags), unwritten)
+}
+
+/// Version-specific DWG compatibility omissions, counted from the actual saved view.
+/// Hosts use this before saving and when reporting saves through their byte-only I/O hooks.
+pub fn dwg_compat_lost(d: &Drawing, version: Version) -> craft_dwg::Unwritten {
+    let mut lost = craft_dwg::Unwritten::new();
+    if version == Version::R2007 && d.foreign.objects.iter().any(legacy_visual_style) {
+        let (_, kept, _) = sections::tags_kept_for(d, Version::R2000, version, false, true);
+        let omitted = legacy_visualstyles_kept(d, &kept);
+        if omitted != 0 {
+            lost.insert("VISUALSTYLE".into(), omitted);
+        }
+    }
+    lost
+}
+
+/// What a DWG keeps of `d` only in part, as notes for the user: one counting the linetypes with
+/// more dash elements than a DWG counts, which it saves with their first
+/// [`DWG_MAX_LINETYPE_ELEMENTS`]. Empty when the DWG keeps every linetype whole.
+pub fn dwg_notes(d: &Drawing) -> Vec<String> {
+    let max = DWG_MAX_LINETYPE_ELEMENTS;
+    if d.linetypes.iter().all(|l| l.pattern.len() <= max) {
+        return Vec::new();
+    }
+    // The writer decides which linetypes the file holds (an xref's own only when a layer uses
+    // them), so it does the counting; the LTYPE table is the same in every DWG version.
+    let (_, _, cut) = sections::tags_kept_for(d, Version::R2000, Version::R2004, false, true);
+    match cut {
+        0 => Vec::new(),
+        1 => vec![format!("DWG: 1 linetype has more than {max} dash elements; only its first {max} were saved.")],
+        n => vec![format!("DWG: {n} linetypes have more than {max} dash elements; only the first {max} of each were saved.")],
+    }
+}
+
+fn legacy_visualstyles_kept(d: &Drawing, kept: &HashSet<cadcraft_doc::Handle>) -> usize {
+    d.foreign.objects.iter().filter(|object| kept.contains(&object.handle) && legacy_visual_style(object)).count()
+}
+
+/// The fixed-property VISUALSTYLE layout in the 2007/2010 DXF Reference has no 176/177
+/// property pairs. The bridge cannot faithfully save this layout as a 2007 DWG.
+fn legacy_visual_style(object: &cadcraft_doc::foreign::ForeignObject) -> bool {
+    if !object.kind.trim().eq_ignore_ascii_case("VISUALSTYLE") {
+        return false;
+    }
+    let mut properties = object.tags.iter().skip_while(|tag| tag.code != 100 || tag.value.trim() != "AcDbVisualStyle");
+    properties.next();
+    let mut fixed = false;
+    for tag in properties.take_while(|tag| tag.code != 100 && tag.code < 1000) {
+        if matches!(tag.code, 176 | 177) {
+            return false;
+        }
+        fixed |= matches!(tag.code, 40 | 71);
+    }
+    fixed
 }
 
 /// Proxy type names and lookup-parameter subclass names must match the bridge reader's spelling.

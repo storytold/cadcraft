@@ -72,6 +72,8 @@ Layout:
 
 Checks for the crates you changed: `cargo test -p <crate>`, `cargo clippy -p <crate> --all-targets -- -D warnings`, `cargo xtask layers`, `cargo xtask assets`, `cargo xtask wasm`, `cargo xtask parity` (regenerates `docs/parity-checklist.md`).
 
+Headless column ([RFC-0052](https://github.com/storytold/craft-contrib/blob/main/rfcs/0052-headless-reach.md)): `cargo xtask parity` marks a covered menu item `headless: yes` because its command is in the engine registry that `cadcraft-cli` and the MCP server load. An uncovered item takes `no`/`partial` and a `reach` (`window`, `os`, `engine-gap`) from `HEADLESS` in `xtask/src/parity.rs` (a path ending in ` > ` covers its submenu), or reads `unknown`. Never write `yes` there. A covered leaf is `yes` whatever its marks say, so a submenu mark stays while any leaf under it is uncovered; drop a mark only once commands cover every leaf it matches (the check then fails on it as stale).
+
 Paths and conventions:
 
 - No crate allows `unsafe` (`unsafe_code = "forbid"` in the workspace).

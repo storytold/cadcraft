@@ -252,7 +252,7 @@ impl State {
 /// Hiding the panel leaves its expression, history and variables intact.
 pub(crate) fn toggle(app: &mut CadApp) -> Result<Value, String> {
     let panel = crate::docking::Panel::QuickCalc;
-    if app.ui.docking.layout.contains(&panel) {
+    if app.ui.docking.layout().contains(&panel) {
         crate::docking::command(app, false, &json!({ "operation": "close", "panel": panel.id() }))
     } else {
         open(app)
@@ -263,7 +263,7 @@ pub(crate) fn toggle(app: &mut CadApp) -> Result<Value, String> {
 /// returns where it was closed.
 pub fn open(app: &mut CadApp) -> Result<Value, String> {
     let panel = crate::docking::Panel::QuickCalc;
-    let first = !app.ui.docking.layout.contains(&panel) && !app.ui.docking.hidden.iter().any(|(p, _)| *p == panel);
+    let first = !app.ui.docking.layout().contains(&panel) && !app.ui.docking.hidden().iter().any(|(p, _)| *p == panel);
     let r = crate::docking::command(app, false, &json!({ "operation": "open", "panel": panel.id() }))?;
     if !first {
         return Ok(r);
@@ -371,7 +371,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             egui::Grid::new("qc-units-grid").num_columns(2).spacing(vec2(6.0, 4.0)).show(ui, |ui| {
                 ui.label(crate::tl!("Type"));
                 let kind_label = KINDS.get(st.kind).map_or("", |k| k.1);
-                craft_ui::ComboBox::from_id_salt("qc-kind").selected_text(crate::i18n::t(kind_label)).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt("qc-kind").selected_text(crate::i18n::t(kind_label)).show_ui(ui, |ui| {
                     for (i, (_, label)) in KINDS.iter().enumerate() {
                         if ui.selectable_label(st.kind == i, crate::i18n::t(label)).clicked() {
                             st.kind = i;
@@ -386,7 +386,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
                     ui.label(label);
                     let sel = if which == 0 { &mut st.from } else { &mut st.to };
                     let shown = list.get(*sel).map(|u| u.1.clone()).unwrap_or_default();
-                    craft_ui::ComboBox::from_id_salt(salt).selected_text(shown).show_ui(ui, |ui| {
+                    egui::ComboBox::from_id_salt(salt).selected_text(shown).show_ui(ui, |ui| {
                         for (i, (_, sym)) in list.iter().enumerate() {
                             if ui.selectable_label(*sel == i, sym).clicked() {
                                 *sel = i;

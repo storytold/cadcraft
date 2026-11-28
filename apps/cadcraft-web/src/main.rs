@@ -54,11 +54,12 @@ mod web {
             if let Some(bridge) = &self.2 {
                 bridge.report_dirty(&self.0);
             }
+            self.0.close_path(ctx);
         }
-        /// Forward raw input to the web `CadApp` and capture Tab at the command line.
+        /// Forward raw input to the web `CadApp` and hand the frame's root values to the UI runtime.
         fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
             self.0.raw_input_hook(ctx, raw);
-            cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
+            self.0.before_input(ctx);
         }
         /// Preferences and validated panel placement survive reloads; egui memory is not kept.
         fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -119,10 +120,17 @@ mod web {
             write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
             plot: Some(|d, space, opts| cadcraft_io::plotter::plot(d, space, opts).map_err(|e| e.to_string())),
         });
+        // The same writers, with what an image draws short of the drawing (dashed lines past the
+        // dash limit), so EXPORT, SAVEAS and PLOT can say so.
+        cadcraft_engine::cmd::file::set_noted_io(cadcraft_engine::cmd::file::NotedIo {
+            write: |d, name| cadcraft_io::write_framed_noted(d, name, None).map_err(|e| e.to_string()),
+            plot: |d, space, opts| cadcraft_io::plotter::plot_noted(d, space, opts).map_err(|e| e.to_string()),
+        });
         cadcraft_engine::cmd::file::set_image_decoder(|b| cadcraft_io::raster::decode(b).map_err(|e| e.to_string()));
         cadcraft_engine::cmd::file::set_write_as(|d, name, o| {
             cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())
         });
+        cadcraft_engine::cmd::exchange::set_pdf_import(|bytes, options| cadcraft_io::pdf_read::read_json(bytes, options).map_err(|e| e.to_string()));
         // AutoLISP's entget, entmake and entmod see entities as DXF groups.
         cadcraft_engine::cmd::file::set_entity_codec(cadcraft_engine::cmd::file::EntityCodec {
             groups: cadcraft_io::entity_groups,
@@ -132,6 +140,8 @@ mod web {
         cadcraft_engine::cmd::file::set_object_records(cadcraft_io::object_records);
         // What a DXF before 2007 leaves out for its proxies' string streams (#3229).
         cadcraft_engine::cmd::file::set_proxies_lost(cadcraft_io::proxies_lost);
+        cadcraft_engine::cmd::file::set_dwg_compat_lost(cadcraft_io::dwg_compat_lost);
+        cadcraft_engine::cmd::file::set_dwg_notes(cadcraft_io::dwg_notes);
         let Some(canvas) = app_canvas() else {
             log::error!("missing <canvas id=\"{CANVAS_ID}\">");
             return;
@@ -164,6 +174,7 @@ mod web {
                     canvas,
                     options,
                     Box::new(move |cc| {
+                        cadcraft_ui_egui::framework::install_headless(&cc.egui_ctx);
                         // Embedded, the host sends the drawing: start on the Start tab, not Drawing1.
                         let session = if app_bridge.is_some() { Session::empty() } else { Session::new() };
                         let control = crate::api::install(cc.egui_ctx.clone());

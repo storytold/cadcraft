@@ -18,6 +18,7 @@ fn call(app: &mut CadApp, ctx: &egui::Context, method: &str, params: Value) -> V
 fn ui_set_keeps_only_shortcuts_the_preferences_would() {
     let mut app = CadApp::new(Session::new(), Services::default());
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     let v = call(
         &mut app,
         &ctx,

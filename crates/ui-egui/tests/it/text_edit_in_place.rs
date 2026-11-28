@@ -26,13 +26,17 @@ fn harness() -> (Harness<'static, CadApp>, Drawing) {
     let dim = handle(&app.run("dimlinear", json!({ "p1": [0, -10], "p2": [20, -10], "at": [10, -14] })).unwrap());
     app.session.execute("view.set", &json!({ "center": [10, 0], "height": 40 })).unwrap();
     app.canvas.zoom_pending = false;
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(cadcraft_ui_egui::framework::install_headless)
+        .with_size(vec2(1600.0, 1000.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(5);
     (h, Drawing { text, attdef, dim })
 }

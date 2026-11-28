@@ -100,25 +100,30 @@ pub fn absolute(paths: &[PathBuf]) -> Option<Vec<String>> {
 
 /// Decide what this launch does. `files` are absolute ([`absolute`]); `may_hand_off` is false
 /// when the launch asked for anything besides opening files, so it gets its own window.
-pub fn claim(files: &[String], may_hand_off: bool) -> Claim {
+/// `profile` is the Nightly profile root: its socket then lives in the profile, so a nightly launch
+/// can never hand its files to a running stable CADCraft (and the reverse).
+pub fn claim(files: &[String], may_hand_off: bool, profile: Option<&std::path::Path>) -> Claim {
     #[cfg(windows)]
     {
-        match socket_path() {
+        match socket_path(profile) {
             Some(path) => claim_at(&path, files, may_hand_off),
             None => Claim::Alone,
         }
     }
     #[cfg(not(windows))]
     {
-        let _ = (files, may_hand_off);
+        let _ = (files, may_hand_off, profile);
         Claim::Alone
     }
 }
 
-/// The socket in `%LOCALAPPDATA%\CADCraft`.
+/// The socket in `%LOCALAPPDATA%\CADCraft`, or `<profile>\single-instance` for a Nightly launch.
 #[cfg(windows)]
-fn socket_path() -> Option<std::path::PathBuf> {
+fn socket_path(profile: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
     let name = socket_name(std::env::var("SESSIONNAME").ok().as_deref());
+    if let Some(root) = profile {
+        return Some(root.join("single-instance").join(name));
+    }
     std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()).map(|d| std::path::PathBuf::from(d).join("CADCraft").join(name))
 }
 

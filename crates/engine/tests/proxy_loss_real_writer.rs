@@ -22,6 +22,8 @@ fn install() {
         cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())
     });
     set_proxies_lost(cadcraft_io::proxies_lost);
+    cadcraft_engine::cmd::file::set_dwg_compat_lost(cadcraft_io::dwg_compat_lost);
+    cadcraft_engine::cmd::file::set_dwg_notes(cadcraft_io::dwg_notes);
 }
 
 /// A proxy entity of class 500 (WIDGETX) in `owner`, with a string stream of `strings` bytes.
@@ -85,6 +87,89 @@ fn three_proxies(owner: &str) -> Vec<Vec<(String, String)>> {
 
 fn not_saved(r: &Value) -> Value {
     r.get("notSaved").cloned().unwrap_or(Value::Null)
+}
+
+#[test]
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+fn legacy_visualstyles_warn_only_for_2007_dwg() {
+    install();
+    cadcraft_io::dwg_worker::allow_in_process();
+    let source = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1021\n9\n$HANDSEED\n5\n100\n0\nENDSEC\n\
+                  0\nSECTION\n2\nENTITIES\n0\nLINE\n5\n30\n100\nAcDbEntity\n8\n0\n100\nAcDbLine\n10\n0\n20\n0\n30\n0\n11\n10\n21\n5\n31\n0\n0\nENDSEC\n\
+                  0\nSECTION\n2\nOBJECTS\n0\nDICTIONARY\n5\nC\n330\n0\n100\nAcDbDictionary\n3\nACAD_VISUALSTYLE\n350\n20\n\
+                  0\nDICTIONARY\n5\n20\n330\nC\n100\nAcDbDictionary\n281\n1\n3\nSynthetic\n350\n21\n\
+                  0\nVISUALSTYLE\n5\n21\n330\n20\n100\nAcDbVisualStyle\n2\nSynthetic\n70\n0\n71\n1\n72\n1\n73\n1\n90\n0\n40\n1.0\n41\n0.5\n63\n7\n\
+                  74\n2\n91\n0\n64\n7\n65\n7\n75\n1\n175\n1\n42\n30.0\n92\n0\n66\n7\n43\n1.0\n76\n1\n77\n0\n78\n0\n67\n7\n79\n1\n\
+                  170\n0\n171\n0\n290\n0\n174\n0\n93\n0\n44\n0.0\n173\n0\n291\n0\n0\nENDSEC\n0\nEOF\n";
+    let drawing = cadcraft_io::read_dxf(source.as_bytes()).unwrap();
+    let mut session = Session::empty();
+    session.open_drawing(drawing, "styles.dxf", None);
+    assert_eq!(cadcraft_engine::cmd::file::loss_on_save(&session, "styles.dwg").get("VISUALSTYLE"), Some(&1));
+    for (format, version) in [("dwg", 2007), ("dwg", 2013), ("dxf", 2007)] {
+        let start = session.log.len();
+        let result = session.execute("document.bytes", &json!({"format": format, "version": version})).unwrap();
+        if format == "dwg" && version == 2007 {
+            assert_eq!(not_saved(&result), json!({"VISUALSTYLE": 1}));
+            assert!(session.log[start..].iter().any(|message| message.contains("VISUALSTYLE")));
+        } else {
+            assert_eq!(not_saved(&result), Value::Null);
+            assert!(!session.log[start..].iter().any(|message| message.contains("VISUALSTYLE")));
+        }
+    }
+}
+
+/// A linetype with more dash elements than a DWG counts is saved with its first 255, and each
+/// way of writing a DWG says so in one note (#1923, F-05); a DXF keeps it whole and says nothing.
+#[test]
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+fn a_dwg_save_notes_the_linetypes_it_cuts() {
+    use cadcraft_engine::doc::{Common, DashElement, EntityKind, Line, Linetype, Space};
+    use cadcraft_engine::geom::Vec3;
+    install();
+    cadcraft_io::dwg_worker::allow_in_process();
+    let dir = TempDir::new("ltype-notes");
+    let linetype = |name: &str, n: usize| Linetype {
+        name: name.into(),
+        description: String::new(),
+        pattern: (0..n).map(|i| DashElement::dash(if i % 2 == 0 { 1.0 } else { -0.5 })).collect(),
+    };
+    let mut d = Drawing::new_metric();
+    d.linetypes.extend([linetype("LONG", 256), linetype("FITS", 255)]);
+    // Lines drawn with it in model space and on a sheet, so WBLOCK and LAYOUT SAVEAS keep it.
+    let line = EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) });
+    let common = Common { linetype: "LONG".into(), ..Common::default() };
+    let model_line = d.add(&Space::Model, common.clone(), line.clone()).unwrap();
+    d.add(&Space::Paper("Layout1".into()), common, line).unwrap();
+    let mut s = Session::empty();
+    s.open_drawing(d, "ltypes.dxf", None);
+    let one_note = |r: &Value| matches!(r["warnings"].as_array().map(Vec::as_slice), Some([note]) if note.as_str().is_some_and(|t| t.contains("1 linetype") && t.contains("255")));
+    let notes_since = |s: &Session, n: usize| s.log[n..].iter().filter(|l| l.contains("dash elements")).count();
+    let dwg = dir.path_str("out.dwg");
+    let writes = [
+        ("saveas", json!({ "path": dwg })),
+        ("document.bytes", json!({ "format": "dwg" })),
+        ("export", json!({ "format": "dwg" })),
+        ("wblock", json!({ "path": dir.path_str("all.dwg"), "name": "*" })),
+        ("layout.saveas", json!({ "name": "Layout1", "path": dir.path_str("sheet.dwg") })),
+        ("-wblock", json!({ "path": dir.path_str("line.dwg"), "handles": [model_line.0] })),
+    ];
+    for (cmd, p) in writes {
+        let n = s.log.len();
+        let r = s.execute(cmd, &p).unwrap();
+        assert!(one_note(&r), "{cmd}: {r}");
+        assert_eq!(notes_since(&s, n), 1, "{cmd}: {:?}", &s.log[n..]);
+    }
+    // -WBLOCK at the command line says it too (a DWG file has no precision prompt).
+    let n = s.log.len();
+    let path = dir.path_str("typed.dwg").replace('\\', "/");
+    s.cmdline(&format!("(command \"_.-WBLOCK\" \"{path}\" \"*\")")).unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(notes_since(&s, n), 1, "{:?}", &s.log[n..]);
+    let back = cadcraft_io::read(&std::fs::read(&dwg).unwrap(), "out.dwg").unwrap();
+    assert_eq!(back.linetype("LONG").map(|l| l.pattern.len()), Some(255));
+    let n = s.log.len();
+    let r = s.execute("saveas", &json!({ "path": dir.path_str("out.dxf") })).unwrap();
+    assert!(r.get("warnings").is_none() && !s.log[n..].iter().any(|l| l.contains("dash elements")), "{r} {:?}", &s.log[n..]);
 }
 
 #[test]

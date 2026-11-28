@@ -219,6 +219,12 @@ fn window(v: Option<&Value>) -> Option<Bounds2> {
 
 /// Plot with JSON options (the engine's `plot` hook).
 pub fn plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
+    plot_noted(d, space, opts).map(|(bytes, _)| bytes)
+}
+
+/// [`plot`], also returning the dashed runs its pages drew continuous because of a dash limit
+/// ([`cadcraft_render::DisplayList::undashed`]).
+pub fn plot_noted(d: &Drawing, space: &Space, opts: &Value) -> Result<(Vec<u8>, usize)> {
     validate_plot_offset_json(opts)?;
     // `layouts: [name | "Model"] | "all"` plots those sheets into one file, one page each,
     // instead of `space`; "all" = Model if it has objects, then the layouts in tab order.
@@ -245,7 +251,7 @@ pub fn plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
                 Ok((Space::Model, po))
             })
             .collect::<Result<Vec<_>>>()?;
-        return pdf_items(d, &items, &o);
+        return pdf_items_noted(d, &items, &o);
     }
     match opts.get("layouts") {
         Some(Value::String(a)) if a.eq_ignore_ascii_case("all") => {
@@ -253,7 +259,7 @@ pub fn plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
             layouts.sort_by_key(|l| l.tab_order);
             let model = (!d.model.is_empty()).then_some(Space::Model);
             let spaces: Vec<Space> = model.into_iter().chain(layouts.iter().map(|l| Space::Paper(l.name.clone()))).collect();
-            pdf_sheets(d, &spaces, &o)
+            pdf_items_noted(d, &sheet_items(&spaces, &o), &o)
         }
         Some(v) => {
             let names = v.as_array().ok_or_else(|| IoError::Format("`layouts` must be a list of layout names".into()))?;
@@ -268,9 +274,9 @@ pub fn plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
                     None => Err(IoError::Format("`layouts` must be a list of layout names".into())),
                 })
                 .collect::<Result<Vec<_>>>()?;
-            pdf_sheets(d, &spaces, &o)
+            pdf_items_noted(d, &sheet_items(&spaces, &o), &o)
         }
-        None => pdf(d, space, &o),
+        None => pdf_noted(d, space, &o),
     }
 }
 
@@ -346,6 +352,12 @@ pub fn pdf(d: &Drawing, space: &Space, o: &PdfOptions) -> Result<Vec<u8>> {
     pdf_sheets(d, std::slice::from_ref(space), o)
 }
 
+/// [`pdf`], also returning the dashed runs it drew continuous because of a dash limit
+/// ([`cadcraft_render::DisplayList::undashed`]).
+pub fn pdf_noted(d: &Drawing, space: &Space, o: &PdfOptions) -> Result<(Vec<u8>, usize)> {
+    pdf_items_noted(d, &sheet_items(std::slice::from_ref(space), o), o)
+}
+
 /// The name of a sheet: `Model` or the layout's.
 fn sheet_name(space: &Space) -> String {
     space.tab_name().to_string()
@@ -354,17 +366,27 @@ fn sheet_name(space: &Space) -> String {
 /// Write a vector PDF with one page per space (at most [`MAX_PAGES`]), each labelled with its
 /// layout name. The options apply to every sheet; layouts use their own page setups.
 pub fn pdf_sheets(d: &Drawing, spaces: &[Space], o: &PdfOptions) -> Result<Vec<u8>> {
+    pdf_items(d, &sheet_items(spaces, o), o)
+}
+
+/// The items [`pdf_sheets`] plots: each space with `o`, at most one past [`MAX_PAGES`].
+fn sheet_items(spaces: &[Space], o: &PdfOptions) -> Vec<(Space, PdfOptions)> {
     // Links are file-wide (`pdf_items` reads them from `o`), so a sheet's own options carry none:
     // a copy of the list per sheet multiplied it by the sheet count.
     let sheet = PdfOptions { links: Vec::new(), ..o.clone() };
-    let items: Vec<(Space, PdfOptions)> = spaces.iter().take(MAX_PAGES + 1).map(|s| (s.clone(), sheet.clone())).collect();
-    pdf_items(d, &items, o)
+    spaces.iter().take(MAX_PAGES + 1).map(|s| (s.clone(), sheet.clone())).collect()
 }
 
 /// Write a vector PDF with one page per `(space, options)` item (at most [`MAX_PAGES`]): each
 /// page plots with its own options (window, paper, orientation); `o` supplies the file-wide
 /// ones (compression, title, layers, links).
 pub fn pdf_items(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions) -> Result<Vec<u8>> {
+    pdf_items_noted(d, items, o).map(|(bytes, _)| bytes)
+}
+
+/// [`pdf_items`], also returning the dashed runs its pages drew continuous because of a dash
+/// limit ([`cadcraft_render::DisplayList::undashed`]).
+pub fn pdf_items_noted(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions) -> Result<(Vec<u8>, usize)> {
     if items.iter().any(|(_, io)| io.offset.is_some_and(|offset| !valid_plot_offset(offset))) {
         return Err(IoError::Format("plot offset must contain two finite values within ±100000 mm".into()));
     }
@@ -420,8 +442,9 @@ impl Failure {
 }
 
 /// Write the file, one sheet at a time: each sheet's display list is built, written as its page
-/// and dropped before the next.
-fn write_pdf(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions, text_as_geometry: bool) -> std::result::Result<Vec<u8>, Failure> {
+/// and dropped before the next. Also the dashed runs the pages drew continuous because of a dash
+/// limit ([`cadcraft_render::DisplayList::undashed`]).
+fn write_pdf(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions, text_as_geometry: bool) -> std::result::Result<(Vec<u8>, usize), Failure> {
     write::guard(|| {
         // Layers that are off plot on PDF layers that start hidden: draw them from a copy with
         // them on.
@@ -456,6 +479,7 @@ fn write_pdf(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions, text_as
         // Link annotations of the whole file: each page keeps its own copy of the targets, so the
         // pages times the links must not multiply without a bound.
         let mut annotations_left = MAX_FILE_ANNOTATIONS;
+        let mut undashed = 0usize;
         for (s, po) in items {
             // Once the budget is spent no link is built (scanned and cloned) for later pages.
             let mut page = sheet(drawn, s, po, if annotations_left == 0 { &links[..0] } else { &links })?;
@@ -467,11 +491,12 @@ fn write_pdf(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions, text_as
             // Groups are added to the document, so they must exist before the page starts.
             groups.add(doc, d, &page.layers);
             write_page(doc, &page, &groups, &mut fonts)?;
+            undashed = undashed.saturating_add(page.list.undashed);
         }
         if items.len() == 1 && !groups.ids.is_empty() {
             writer.document_mut().set_optional_content_page_mode(true);
         }
-        Ok(writer.finish()?)
+        Ok((writer.finish()?, undashed))
     })
 }
 

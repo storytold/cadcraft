@@ -857,7 +857,7 @@ pub fn section(app: &mut CadApp, ui: &mut egui::Ui) {
         let w = (ui.available_width() - 150.0).max(80.0);
         ui.add(egui::TextEdit::singleline(&mut st.filter).hint_text(crate::tl!("Filter")).desired_width(w));
         let view_label = ui.label(crate::tl!("View"));
-        craft_ui::ComboBox::from_id_salt("blocks-view")
+        egui::ComboBox::from_id_salt("blocks-view")
             .selected_text(st.view.label())
             .show_ui(ui, |ui| {
                 for v in View::ALL {
@@ -1562,7 +1562,7 @@ mod tests {
         let d = Drawing::new_metric();
         assert!(too_much(&d, EntityKind::Wipeout(Wipeout { boundary: points.clone() })));
         assert!(too_much(&d, EntityKind::MLine(MLine::new(&MLineStyle::default(), &points, false, MLineJust::default(), 1.0))));
-        let region = Region { loops: vec![HatchLoop { vertices: vertices.clone(), outer: true, sources: Vec::new() }] };
+        let region = Region { loops: vec![HatchLoop { vertices: vertices.clone(), outer: true, boundary_flags: None, sources: Vec::new() }] };
         assert!(too_much(&d, EntityKind::Region(region)));
         // An object with nothing in it still takes a visit, for each cell of an array.
         let mut empty = Block::new("EMPTY");

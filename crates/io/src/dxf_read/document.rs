@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use super::common::T;
-use super::entities::{entity_extras, entity_plot_style, entity_with_table_budget, insert_attribs, polyline_entity};
+use super::entities::{entity_extras, entity_plot_style, entity_with_table_budget, insert_attribs, polyline_entity, reference_left_tilted};
 use super::objects::{MAX_OBJECTS, Objects, page_setup};
 use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, Vec2, record_slices};
 
@@ -83,7 +83,8 @@ pub(super) fn parse_entities(
             }
             "INSERT" if t.i(66) == Some(1) => {
                 let ins_layer = kindent.as_ref().map(|(c, _)| c.layer.clone()).unwrap_or_default();
-                let attribs = insert_attribs(recs, &mut i, &ins_layer);
+                let left_tilted = kindent.as_ref().is_some_and(|(c, _)| reference_left_tilted(c.extrusion));
+                let attribs = insert_attribs(recs, &mut i, &ins_layer, left_tilted);
                 if let Some((_, EntityKind::Insert(ins))) = kindent.as_mut() {
                     ins.attribs = attribs;
                 }
@@ -213,6 +214,7 @@ pub(super) fn setup_layouts(d: &mut Drawing, layout_objs: &mut [LayoutDef], rx: 
     layout_objs.sort_by_key(|l| l.1);
     for (name, order, br, page, limits) in layout_objs.iter() {
         if name.eq_ignore_ascii_case("Model") {
+            d.model_page = Some(page.clone());
             continue;
         }
         d.layouts.push(Layout { page: page.clone(), limits: *limits, ..Layout::new(name, *order) });
@@ -250,10 +252,23 @@ impl LayerSet {
     }
 }
 
+/// The position of the first layout of each name, so finding the layout of each of many objects
+/// is a map lookup rather than a scan of the layouts: a file of N layouts and N objects in the
+/// last of them read in N² name comparisons (#1924). The reader keeps the layouts' names and order
+/// while it fills them.
+pub(super) fn layout_positions(d: &Drawing) -> std::collections::BTreeMap<String, usize> {
+    let mut at = std::collections::BTreeMap::new();
+    for (i, l) in d.layouts.iter().enumerate() {
+        at.entry(l.name.clone()).or_insert(i);
+    }
+    at
+}
+
 /// Place the BLOCKS entities: model and paper space blocks go to their space, the rest become
 /// block definitions.
 pub(super) fn place_blocks(d: &mut Drawing, blocks: Vec<BlockDef>, rx: &mut Rx, paper_block_for: &HashMap<String, String>, first_layout: &str) {
     let mut layers = LayerSet::new(d);
+    let layout_at = layout_positions(d);
     for (name, base, description, ents, xref) in blocks {
         let up = name.to_ascii_uppercase();
         if up == "*MODEL_SPACE" {
@@ -264,8 +279,8 @@ pub(super) fn place_blocks(d: &mut Drawing, blocks: Vec<BlockDef>, rx: &mut Rx, 
             continue;
         }
         if up.starts_with("*PAPER_SPACE") {
-            let lname = paper_block_for.get(&up).cloned().unwrap_or_else(|| first_layout.to_string());
-            if let Some(l) = d.layouts.iter_mut().find(|l| l.name == lname) {
+            let lname = paper_block_for.get(&up).map_or(first_layout, String::as_str);
+            if let Some(l) = layout_at.get(lname).and_then(|&i| d.layouts.get_mut(i)) {
                 for (_, _, e) in ents {
                     l.entities.push(e);
                 }
@@ -323,11 +338,12 @@ pub(super) fn place_entities(
     first_layout: &str,
 ) {
     let mut layers = LayerSet::new(d);
+    let layout_at = layout_positions(d);
     for (owner, paper, e) in entities {
         layers.ensure(d, &e.common.layer);
         match paper_layout(owner, paper, rx, paper_block_for, first_layout) {
             Some(lname) => {
-                if let Some(l) = d.layouts.iter_mut().find(|l| l.name == lname) {
+                if let Some(l) = layout_at.get(&lname).and_then(|&i| d.layouts.get_mut(i)) {
                     l.entities.push(e);
                 }
             }
@@ -416,6 +432,7 @@ pub(super) fn apply_sortents(
         Some(if up.starts_with("*PAPER_SPACE") { paper_for.get(&up).cloned().unwrap_or_else(|| first_layout.to_string()) + "\0paper" } else { up })
     };
     let last: HashMap<String, usize> = tables.iter().enumerate().filter_map(|(i, (owner, _))| Some((target(owner)?, i))).collect();
+    let layout_at = layout_positions(d);
     for (i, (owner, map)) in tables.iter().enumerate() {
         if target(owner).and_then(|t| last.get(&t)) != Some(&i) {
             continue;
@@ -431,7 +448,7 @@ pub(super) fn apply_sortents(
             d.model.sort_by_key(key);
         } else if up.starts_with("*PAPER_SPACE") {
             let lname = paper_for.get(&up).map(String::as_str).unwrap_or(first_layout);
-            if let Some(l) = d.layouts.iter_mut().find(|l| l.name == lname) {
+            if let Some(l) = layout_at.get(lname).and_then(|&i| d.layouts.get_mut(i)) {
                 l.entities.sort_by_key(key);
             }
         } else if let Some(b) = d.blocks.get_mut(name.as_str()) {

@@ -33,6 +33,8 @@ fn check_version(case: &str, original: &Drawing, expected: &Drawing, version: Ve
 }
 
 fn check_version_with(case: &str, original: &Drawing, expected: &Drawing, version: Version, extra: impl Fn(&Drawing, &Drawing, &str)) {
+    let expected_dimensions = compare::authored_text_dimensions(expected);
+    let expected = &expected_dimensions;
     for binary in [false, true] {
         let options = SaveOptions { version: Some(version), binary };
         let mut current = original.clone();

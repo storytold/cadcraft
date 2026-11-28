@@ -45,10 +45,17 @@ fn install_io() {
         write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
         plot: Some(|d, space, opts| cadcraft_io::plotter::plot(d, space, opts).map_err(|e| e.to_string())),
     });
+    // The same writers, with what an image draws short of the drawing (dashed lines past the
+    // dash limit), so EXPORT, SAVEAS and PLOT can say so.
+    cadcraft_engine::cmd::file::set_noted_io(cadcraft_engine::cmd::file::NotedIo {
+        write: |d, name| cadcraft_io::write_framed_noted(d, name, None).map_err(|e| e.to_string()),
+        plot: |d, space, opts| cadcraft_io::plotter::plot_noted(d, space, opts).map_err(|e| e.to_string()),
+    });
     cadcraft_engine::cmd::file::set_image_decoder(|b| cadcraft_io::raster::decode(b).map_err(|e| e.to_string()));
     cadcraft_engine::cmd::file::set_write_as(|d, name, o| {
         cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())
     });
+    cadcraft_engine::cmd::exchange::set_pdf_import(|bytes, options| cadcraft_io::pdf_read::read_json(bytes, options).map_err(|e| e.to_string()));
     // AutoLISP's entget, entmake and entmod see entities as DXF groups.
     cadcraft_engine::cmd::file::set_entity_codec(cadcraft_engine::cmd::file::EntityCodec {
         groups: cadcraft_io::entity_groups,
@@ -58,6 +65,8 @@ fn install_io() {
     cadcraft_engine::cmd::file::set_object_records(cadcraft_io::object_records);
     // What a DXF before 2007 leaves out for its proxies' string streams (#3229).
     cadcraft_engine::cmd::file::set_proxies_lost(cadcraft_io::proxies_lost);
+    cadcraft_engine::cmd::file::set_dwg_compat_lost(cadcraft_io::dwg_compat_lost);
+    cadcraft_engine::cmd::file::set_dwg_notes(cadcraft_io::dwg_notes);
 }
 
 /// `path` as text, for the engine and io calls that take a file name as a string.
@@ -95,7 +104,7 @@ where
         Ok(cli) => cli,
         Err(e) => {
             let to: &mut dyn Write = if e.use_stderr() { err } else { out };
-            return match write!(to, "{}", e.render()) {
+            return match write!(to, "{}", e.render()).and_then(|()| to.flush()) {
                 Err(w) if w.kind() != std::io::ErrorKind::BrokenPipe => {
                     let _ = writeln!(err, "error: can't write the output: {w}");
                     1
@@ -163,6 +172,25 @@ mod tests {
         assert_eq!(run(["--help"], &mut FailingWriter(std::io::ErrorKind::StorageFull), &mut err), 1);
         assert!(String::from_utf8_lossy(&err).starts_with("error: "));
         assert_eq!(run(["--help"], &mut FailingWriter(std::io::ErrorKind::BrokenPipe), &mut Vec::new()), 0);
+    }
+
+    struct FailingFlush(std::io::ErrorKind);
+
+    impl Write for FailingFlush {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(self.0.into())
+        }
+    }
+
+    #[test]
+    fn a_failed_flush_of_help_exits_1_unless_the_pipe_is_closed() {
+        let mut err = Vec::new();
+        assert_eq!(run(["--help"], &mut FailingFlush(std::io::ErrorKind::StorageFull), &mut err), 1);
+        assert!(String::from_utf8_lossy(&err).starts_with("error: "));
+        assert_eq!(run(["--help"], &mut FailingFlush(std::io::ErrorKind::BrokenPipe), &mut Vec::new()), 0);
     }
 
     #[test]
