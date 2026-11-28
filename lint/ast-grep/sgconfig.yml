@@ -1,0 +1,6 @@
+# Structural rules for the command-line code (RFC-0012), run by .github/workflows/ast-grep.yml.
+# Each rule in rules/ has its cases in rule-tests/, which CI checks before the scan.
+ruleDirs:
+  - rules
+testConfigs:
+  - testDir: rule-tests

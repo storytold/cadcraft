@@ -9,7 +9,7 @@
 
 use cadcraft_color::Color;
 use cadcraft_doc::{CellBorder, CellStyle, DataLink, Lineweight, MAX_CELL_STYLES, MAX_TABLE_PARTS, Table, TableBreak, TableStyle};
-use cadcraft_dxf::Tag;
+use craft_dxf::Tag;
 use serde::{Deserialize, Serialize};
 
 use crate::dxf_ext::{APP, xdata};

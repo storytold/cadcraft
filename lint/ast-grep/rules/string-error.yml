@@ -1,0 +1,21 @@
+id: string-error
+language: rust
+severity: error
+message: String as an error type
+note: |
+  Return a #[derive(thiserror::Error)] enum, so a caller can match on what failed and the
+  messages live with their variants.
+rule:
+  any:
+    - pattern:
+        context: type T = Result<$OK, String>;
+        selector: generic_type
+    - pattern: Err(format!($$$))
+    - pattern: Err($S.to_string())
+    - pattern: Err(String::from($$$))
+    - all:
+        - pattern: Err($S)
+        - has:
+            kind: arguments
+            has:
+              kind: string_literal

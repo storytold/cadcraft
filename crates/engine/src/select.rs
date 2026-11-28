@@ -6,36 +6,81 @@ use cadcraft_geom::{Bounds2, Line, Vec2, point_in_polygon};
 use crate::spatial::{self, SpatialIndex};
 use crate::{Accept, Prompt};
 
+/// A dimension kept as read whose graphics are a reference to its `*D` block (#3438).
+fn draws_a_block(e: &Entity) -> bool {
+    matches!(&e.kind, EntityKind::Unknown(u) if u.graphics.iter().any(|g| matches!(g.kind, EntityKind::Insert(_))))
+}
+
 /// Polylines approximating an entity for hit testing, tessellated at `tol`.
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
+    if matches!(e.kind, EntityKind::Insert(_)) {
+        let list = insert_geometry(d, e, tol);
+        return list
+            .prims
+            .iter()
+            .flat_map(|p| match p.kind {
+                cadcraft_render::Kind::Tris | cadcraft_render::Kind::Mask => {
+                    list.points(p).as_chunks::<3>().0.iter().map(|t| vec![t[0], t[1], t[2], t[0]]).collect()
+                }
+                cadcraft_render::Kind::Infinite { ray } => match list.points(p) {
+                    [base, dir] => {
+                        let far = 1e9;
+                        vec![vec![if ray { *base } else { *base - *dir * far }, *base + *dir * far]]
+                    }
+                    _ => Vec::new(),
+                },
+                // An image's points are its unclipped corners: it is hit on the outline of what
+                // it shows, so a clipped-away part doesn't pick the reference.
+                cadcraft_render::Kind::Image { index } => match list.images.get(index as usize) {
+                    Some(img) if img.clips.is_empty() => {
+                        let [a, b, c, d] = img.corners();
+                        vec![vec![a, b, c, d, a]]
+                    }
+                    Some(img) => shown_image_tris(img).as_chunks::<3>().0.iter().map(|t| vec![t[0], t[1], t[2], t[0]]).collect(),
+                    None => Vec::new(),
+                },
+                _ => vec![list.points(p).to_vec()],
+            })
+            .collect();
+    }
     match &e.kind {
         EntityKind::Text(_)
         | EntityKind::MText(_)
-        | EntityKind::Insert(_)
         | EntityKind::Dimension(_)
         | EntityKind::AttDef(_)
         | EntityKind::Table(_)
         | EntityKind::Tolerance(_)
         | EntityKind::MLeader(_)
-        | EntityKind::Image(_) => {
-            // Text-like objects are hit inside their box.
+        | EntityKind::Image(_)
+        | EntityKind::Unknown(_)
+            if !matches!(e.kind, EntityKind::Unknown(_)) || draws_a_block(e) =>
+        {
+            // Text-like objects are hit inside their box; a dimension kept as read that draws its
+            // block, like a dimension.
             let b = entity_bounds(d, e, 0);
             if b.is_empty() {
                 return Vec::new();
             }
             let c = b.corners();
             let mut v = vec![vec![c[0], c[1], c[2], c[3], c[0]]];
-            if matches!(e.kind, EntityKind::Dimension(_) | EntityKind::Insert(_) | EntityKind::MLeader(_)) {
+            if matches!(e.kind, EntityKind::Dimension(_) | EntityKind::MLeader(_)) || draws_a_block(e) {
                 let list = cadcraft_render::build_entities(
                     d,
                     std::iter::once(e),
-                    &cadcraft_render::Options { tolerance: tol, text: false, ..Default::default() },
+                    &cadcraft_render::Options { tolerance: tol, text: false, linetypes: false, ..Default::default() },
                 );
                 v = list.prims.iter().map(|p| list.points(p).to_vec()).collect();
                 v.push(vec![c[0], c[1], c[2], c[3], c[0]]);
             }
             v
         }
+        // An OLE object's frame is drawn, so it is picked on its outline (the corners the extents and
+        // the renderer use); a frame with no width or height is drawn as a line, so it is picked as
+        // one. It stays out of prims(), which TRIM, object snap and the dimension commands read.
+        EntityKind::Unknown(u) if u.is_ole_frame() => match cadcraft_doc::ole_frame(&u.tags) {
+            Some(q) => vec![q.to_vec()],
+            None => Vec::new(),
+        },
         kind => {
             let mut out = Vec::new();
             for p in kind.prims() {
@@ -77,6 +122,44 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
     }
 }
 
+fn insert_geometry(d: &Drawing, e: &Entity, tol: f64) -> cadcraft_render::DisplayList {
+    cadcraft_render::build_entities(d, std::iter::once(e), &cadcraft_render::Options { tolerance: tol, linetypes: false, ..Default::default() })
+}
+
+/// The part of an image its clips leave showing, as triangles (three points each); empty when a
+/// clip has no outline to cut with.
+fn shown_image_tris(img: &cadcraft_render::DImage) -> Vec<Vec2> {
+    let [a, b, c, d] = img.corners();
+    let mut tris = vec![a, b, c, a, c, d];
+    for outline in &img.clips {
+        let Some(clip) = cadcraft_render::clip::PolyClip::new(outline) else { return Vec::new() };
+        tris = clip.clip_triangles(&tris);
+        if tris.is_empty() {
+            break;
+        }
+    }
+    tris
+}
+
+fn insert_fill_hits_box(d: &Drawing, e: &Entity, bx: &Bounds2, tol: f64) -> bool {
+    let list = insert_geometry(d, e, tol);
+    list.prims.iter().any(|p| {
+        if let cadcraft_render::Kind::Image { index } = p.kind {
+            let Some(img) = list.images.get(index as usize) else { return false };
+            return !cadcraft_render::clip::clip_triangles(&shown_image_tris(img), bx).is_empty();
+        }
+        if !matches!(p.kind, cadcraft_render::Kind::Tris | cadcraft_render::Kind::Mask) {
+            return false;
+        }
+        list.points(p).as_chunks::<3>().0.iter().any(|t| {
+            let triangle = [t[0], t[1], t[2]];
+            bx.corners().iter().any(|q| point_in_polygon(&triangle, *q))
+                || triangle.iter().any(|q| bx.contains(*q))
+                || (0..3).any(|i| seg_hits_box(triangle[i], triangle[(i + 1) % 3], bx))
+        })
+    })
+}
+
 fn dist_to_polyline(pts: &[Vec2], p: Vec2) -> f64 {
     if pts.len() == 1 {
         return pts.first().map(|q| q.dist(p)).unwrap_or(f64::INFINITY);
@@ -90,7 +173,7 @@ pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
     let mut best = polys.iter().map(|pl| dist_to_polyline(pl, p)).fold(f64::INFINITY, f64::min);
     let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Table(_))
         || matches!(e.kind, EntityKind::Tolerance(_));
-    if (filled && entity_bounds(d, e, 0).contains(p)) || in_text(d, e, p) {
+    if (filled && entity_bounds(d, e, 0).contains(p)) || in_blank_mtext(d, e, p) || in_text(d, e, p) {
         best = 0.0;
     }
     // A solid hatch fills its loops with odd parity under its island style, as it is drawn, not
@@ -117,11 +200,15 @@ fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
         // A dimension with a block (as AutoCAD saves them) is drawn from that block: its text is
         // the text there, not the text the dimension's own geometry would place.
         EntityKind::Dimension(dm) => match dm.block.as_ref().and_then(|n| d.block(n)) {
-            Some(blk) => blk.entities.iter().any(|be| match &be.kind {
-                EntityKind::MText(t) => in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p),
-                EntityKind::Text(_) => entity_bounds(d, be, 0).contains(p),
-                _ => false,
-            }),
+            // The block draws translated by the insertion point (group 12): test there (#2634).
+            Some(blk) => {
+                let p = p - dm.insertion_point.xy();
+                blk.entities.iter().any(|be| match &be.kind {
+                    EntityKind::MText(t) => in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p),
+                    EntityKind::Text(_) => entity_bounds(d, be, 0).contains(p),
+                    _ => false,
+                })
+            }
             None => {
                 let g = cadcraft_render::dimension_in(d, dm);
                 in_box(g.text.iter().flatten().chain(g.text_glyphs.iter().flatten().flatten()).copied(), g.text_angle, p)
@@ -141,17 +228,158 @@ fn in_box(pts: impl Iterator<Item = Vec2>, angle: f64, p: Vec2) -> bool {
     !b.is_empty() && b.contains(turn(p))
 }
 
-fn selectable(d: &Drawing, e: &Entity) -> bool {
-    d.is_visible(e)
+/// Whether `e` is on one of the layers in `frozen`: the layers frozen in a layout viewport, which
+/// does not draw their objects. The names are compared as the renderer compares them.
+pub(crate) fn on_frozen_layer(frozen: &[String], e: &Entity) -> bool {
+    frozen.iter().any(|l| l.eq_ignore_ascii_case(&e.common.layer))
+}
+
+/// The last object of `store`, in draw order, that is not on one of the layers in `frozen`, the
+/// layers frozen in the layout viewport the selection is made through: what the Last option
+/// takes there. With no such layers it is the last object, whether the drawing shows it or not.
+/// A proxy is passed over: no selection takes one in ([`kept_as_read`]).
+pub(crate) fn last_in(store: &cadcraft_doc::EntityStore, frozen: &[String]) -> Option<Handle> {
+    store.iter_rev().find(|e| !kept_as_read(&e.kind) && !on_frozen_layer(frozen, e)).map(|e| e.handle)
+}
+
+/// Whether a selection can take `e`: the drawing shows it ([`Drawing::is_visible`]), it is not
+/// on one of the layers in `frozen`, the layers frozen in the layout viewport the selection is
+/// made through ([`crate::DocState::viewport_frozen`]; empty anywhere else), and commands can
+/// edit it. A viewport shows model space, so `frozen` goes with a selection in model space only.
+/// A proxy (or another record CADCraft keeps as it was read) is drawn and snapped to, but never
+/// selected: commands can't edit it, and saving writes its record as it was read.
+pub(crate) fn selectable(d: &Drawing, e: &Entity, frozen: &[String]) -> bool {
+    d.is_visible(e) && !on_frozen_layer(frozen, e) && !kept_as_read(&e.kind)
+}
+
+/// Whether `k` is a record CADCraft keeps as it was read and commands can't edit: every
+/// [`EntityKind::Unknown`] but an OLE2FRAME, which moves and scales with its frame.
+pub(crate) fn kept_as_read(k: &EntityKind) -> bool {
+    matches!(k, EntityKind::Unknown(u) if !u.is_ole_frame())
 }
 
 /// Entities to test, in the order to test them, each with its bounds when already known.
 pub(crate) type Cands<'a> = Box<dyn Iterator<Item = (&'a Entity, Option<Bounds2>)> + 'a>;
 
-pub(crate) fn bounds_of(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
-    known.unwrap_or_else(|| entity_bounds(d, e, 0))
+/// Whether an MTEXT's contents draw nothing (empty, or only spaces and `\~`): it has no glyph
+/// strokes, and the document's bounds for it are empty so it stays out of the drawing extents.
+/// Called for every MTEXT when the spatial index is built, so it does not allocate.
+fn is_blank_mtext(t: &cadcraft_doc::MText) -> bool {
+    t.contents.split(r"\~").all(|s| s.chars().all(char::is_whitespace))
 }
 
+/// The frame a blank MTEXT is picked in (#2810), for a top-level MTEXT and for a multileader's
+/// MTEXT content: its insertion point, rotation and the box before turning (`x0, x1, y0, y1`
+/// about the insertion point): its width (the text height when it has none) by its text height,
+/// placed by its attachment point, at the size it draws at the current annotation scale (the
+/// shared `anno_scaled`, which also moves a multileader's text about its landing). `None` for any
+/// other entity, a multileader without text content, a blank MTEXT without a usable size or
+/// position, or an annotative one the current annotation scale hides.
+fn blank_mtext_frame(d: &Drawing, e: &Entity) -> Option<(Vec2, f64, [f64; 4])> {
+    // Kind and blankness first: scaling clones the entity, so only blank text pays for it.
+    let text = match &e.kind {
+        EntityKind::MText(t) => t,
+        EntityKind::MLeader(m) => m.text.as_ref()?,
+        _ => return None,
+    };
+    if !is_blank_mtext(text) {
+        return None;
+    }
+    let f = match d.anno_draw(e) {
+        cadcraft_doc::AnnoDraw::Plain => 1.0,
+        cadcraft_doc::AnnoDraw::Scaled(f) if f.is_finite() && f > 0.0 => f,
+        cadcraft_doc::AnnoDraw::Scaled(_) => 1.0,
+        cadcraft_doc::AnnoDraw::Hidden => return None,
+    };
+    let scaled;
+    let e = if f != 1.0 {
+        scaled = cadcraft_doc::anno_scaled(e, f);
+        &scaled
+    } else {
+        e
+    };
+    let t = match &e.kind {
+        EntityKind::MText(t) => t,
+        EntityKind::MLeader(m) => m.text.as_ref()?,
+        _ => return None,
+    };
+    if !t.height.is_finite() || t.height <= 0.0 || !t.insert.xy().is_finite() || !t.rotation.is_finite() {
+        return None;
+    }
+    let w = if t.width.is_finite() && t.width > 0.0 { t.width } else { t.height };
+    let h = t.height;
+    let insert = t.insert.xy();
+    if !w.is_finite() || !h.is_finite() || !insert.is_finite() {
+        return None;
+    }
+    let dx = match t.attach {
+        2 | 5 | 8 => -w / 2.0,
+        3 | 6 | 9 => -w,
+        _ => 0.0,
+    };
+    let top = match t.attach {
+        4..=6 => h / 2.0,
+        7..=9 => h,
+        _ => 0.0,
+    };
+    // A top-level MTEXT that matches the layout orientation is drawn upright (the renderer draws
+    // non-blank text that way), so its blank frame is too; a multileader keeps its text's stored rotation.
+    let rotation = if matches!(e.kind, EntityKind::MText(_)) && e.common.matches_layout_orientation() { 0.0 } else { t.rotation };
+    Some((insert, rotation, [dx, dx + w, top - h, top]))
+}
+
+/// The box around a blank MTEXT's turned frame (a top-level MTEXT or a multileader's MTEXT
+/// content), for the spatial index and windows (a crossing window may catch a little extra near a
+/// corner, as it does for other text).
+fn blank_mtext_box(d: &Drawing, e: &Entity) -> Option<Bounds2> {
+    let (o, rot, [x0, x1, y0, y1]) = blank_mtext_frame(d, e)?;
+    let corners = [Vec2::new(x0, y1), Vec2::new(x1, y1), Vec2::new(x1, y0), Vec2::new(x0, y0)];
+    Some(Bounds2::from_points(corners.map(|c| o + c.rotate(rot))))
+}
+
+/// Whether `p` is on a blank MTEXT or a multileader's blank MTEXT content: inside its box turned
+/// with the text, not the larger box around it.
+fn in_blank_mtext(d: &Drawing, e: &Entity, p: Vec2) -> bool {
+    let Some((o, rot, [x0, x1, y0, y1])) = blank_mtext_frame(d, e) else { return false };
+    let q = (p - o).rotate(-rot);
+    q.x >= x0 && q.x <= x1 && q.y >= y0 && q.y <= y1
+}
+
+/// Drawn bounds extended by a blank MTEXT frame, including a multileader's text content.
+/// Use the same bounds for a scan and for the spatial index.
+pub(crate) fn pick_bounds(d: &Drawing, e: &Entity, drawn: Bounds2) -> Bounds2 {
+    match blank_mtext_box(d, e) {
+        Some(frame) => drawn.union(&frame),
+        None => drawn,
+    }
+}
+
+/// The insertion points snap's INS mode offers for a blank MTEXT or multileader (the stored
+/// points); empty for any other entity.
+fn blank_snap_points(e: &Entity) -> Vec<Vec2> {
+    // select.rs blank_snap_points must offer the same points as snap.rs's INS arms.
+    match &e.kind {
+        EntityKind::MText(t) if is_blank_mtext(t) => vec![t.insert.xy()],
+        EntityKind::MLeader(m) if m.text.as_ref().is_some_and(is_blank_mtext) => {
+            m.text.iter().map(|t| t.insert.xy()).chain(m.block.iter().map(|b| b.insert.xy())).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Whether `e` is within reach of a snap probe only through its blank MTEXT frame: the drawn
+/// geometry (expanded by `aperture`) misses `probe`, and no insertion point INS would offer (text
+/// or block content) is a candidate: one counts only when `ins` is on and it is within `aperture`
+/// of `cursor`, the distance snap accepts a candidate by (a corner of the square probe is not).
+/// Such an entity is for picking and selection, not a snap candidate.
+pub(crate) fn blank_frame_only(d: &Drawing, e: &Entity, probe: &Bounds2, cursor: Vec2, aperture: f64, ins: bool) -> bool {
+    let points = blank_snap_points(e);
+    !points.is_empty() && !(ins && points.iter().any(|p| p.dist(cursor) <= aperture)) && !entity_bounds(d, e, 0).expand(aperture).intersects(probe)
+}
+
+pub(crate) fn bounds_of(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
+    known.unwrap_or_else(|| pick_bounds(d, e, entity_bounds(d, e, 0)))
+}
 pub(crate) fn is_infinite(e: &Entity) -> bool {
     matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_))
 }
@@ -181,47 +409,61 @@ pub(crate) fn candidates<'a>(
     }
 }
 
-/// The topmost entity within `aperture` of `p`.
+/// The topmost entity within `aperture` of `p`: the one drawn last (on top in the draw order), not
+/// the nearest, as AutoCAD 2024 picks (two objects under the pickbox: the one drawn later is
+/// picked, and DRAWORDER changes which).
 pub fn pick(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Option<Handle> {
-    let ix = spatial::index(d, space);
-    pick_with(d, space, &ix, p, aperture)
+    pick_in(d, space, &[], p, aperture)
 }
 
-pub(crate) fn pick_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<SpatialIndex>>, p: Vec2, aperture: f64) -> Option<Handle> {
+/// [`pick`] through a layout viewport: the objects on the layers in `frozen`, the layers frozen
+/// in that viewport, are not drawn there and are not picked.
+pub fn pick_in(d: &Drawing, space: &Space, frozen: &[String], p: Vec2, aperture: f64) -> Option<Handle> {
+    let ix = spatial::index(d, space);
+    pick_with(d, space, &ix, frozen, p, aperture)
+}
+
+pub(crate) fn pick_with(
+    d: &Drawing,
+    space: &Space,
+    ix: &Option<std::sync::Arc<SpatialIndex>>,
+    frozen: &[String],
+    p: Vec2,
+    aperture: f64,
+) -> Option<Handle> {
     let probe = Bounds2::new(p, p).expand(aperture);
-    let mut best: Option<(f64, Handle)> = None;
+    // Candidates come topmost first: the first within the aperture is the one.
     for (e, known) in candidates(d, space, ix, &probe.expand(aperture), true, true)? {
-        if !selectable(d, e) {
+        if !selectable(d, e, frozen) {
             continue;
         }
         let infinite = is_infinite(e);
         if !infinite && !bounds_of(d, e, known).expand(aperture).intersects(&probe) {
             continue;
         }
-        let dist = entity_distance(d, e, p, aperture / 4.0);
-        if dist <= aperture && best.is_none_or(|(bd, _)| dist < bd - 1e-12) {
-            best = Some((dist, e.handle));
-            if dist == 0.0 {
-                break;
-            }
+        if entity_distance(d, e, p, aperture / 4.0) <= aperture {
+            return Some(e.handle);
         }
     }
-    best.map(|(_, h)| h)
+    None
 }
 
-/// Every entity within `aperture` of `p`, nearest first and topmost among equals (so the first is
-/// what [`pick`] chooses): the objects selection cycling lists.
+/// Every entity within `aperture` of `p`, topmost first (so the first is what [`pick`] chooses):
+/// the objects selection cycling lists.
 pub fn pick_all(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Vec<Handle> {
+    pick_all_in(d, space, &[], p, aperture)
+}
+
+/// [`pick_all`] through a layout viewport that freezes the layers in `frozen` ([`pick_in`]).
+pub fn pick_all_in(d: &Drawing, space: &Space, frozen: &[String], p: Vec2, aperture: f64) -> Vec<Handle> {
     let ix = spatial::index(d, space);
     let probe = Bounds2::new(p, p).expand(aperture);
     let Some(cands) = candidates(d, space, &ix, &probe.expand(aperture), true, true) else { return Vec::new() };
-    let mut hits: Vec<(f64, Handle)> = cands
-        .filter(|(e, known)| selectable(d, e) && (is_infinite(e) || bounds_of(d, e, *known).expand(aperture).intersects(&probe)))
-        .map(|(e, _)| (entity_distance(d, e, p, aperture / 4.0), e.handle))
-        .filter(|(dist, _)| *dist <= aperture)
-        .collect();
-    hits.sort_by(|a, b| a.0.total_cmp(&b.0));
-    hits.into_iter().map(|(_, h)| h).collect()
+    cands
+        .filter(|(e, known)| selectable(d, e, frozen) && (is_infinite(e) || bounds_of(d, e, *known).expand(aperture).intersects(&probe)))
+        .filter(|(e, _)| entity_distance(d, e, p, aperture / 4.0) <= aperture)
+        .map(|(e, _)| e.handle)
+        .collect()
 }
 
 /// Whether PREVIEWFILTER keeps `e` from being highlighted under the cursor: bits 1 objects on
@@ -246,14 +488,27 @@ fn seg_hits_box(a: Vec2, b: Vec2, bx: &Bounds2) -> bool {
 
 /// Window selection (entirely inside) or crossing selection (inside or touching).
 pub fn select_window(d: &Drawing, space: &Space, bx: Bounds2, crossing: bool) -> Vec<Handle> {
-    let ix = spatial::index(d, space);
-    select_window_with(d, space, &ix, bx, crossing)
+    select_window_in(d, space, &[], bx, crossing)
 }
 
-pub(crate) fn select_window_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<SpatialIndex>>, bx: Bounds2, crossing: bool) -> Vec<Handle> {
+/// [`select_window`] through a layout viewport: the objects on the layers in `frozen`, the layers
+/// frozen in that viewport, are not drawn there and are not selected.
+pub fn select_window_in(d: &Drawing, space: &Space, frozen: &[String], bx: Bounds2, crossing: bool) -> Vec<Handle> {
+    let ix = spatial::index(d, space);
+    select_window_with(d, space, &ix, frozen, bx, crossing)
+}
+
+pub(crate) fn select_window_with(
+    d: &Drawing,
+    space: &Space,
+    ix: &Option<std::sync::Arc<SpatialIndex>>,
+    frozen: &[String],
+    bx: Bounds2,
+    crossing: bool,
+) -> Vec<Handle> {
     let Some(cands) = candidates(d, space, ix, &bx, crossing, false) else { return Vec::new() };
     let tol = window_tol(&bx);
-    cands.filter(|(e, known)| selectable(d, e) && in_window(d, e, *known, &bx, crossing, tol)).map(|(e, _)| e.handle).collect()
+    cands.filter(|(e, known)| selectable(d, e, frozen) && in_window(d, e, *known, &bx, crossing, tol)).map(|(e, _)| e.handle).collect()
 }
 
 /// The tessellation tolerance window and crossing tests use for a box.
@@ -280,8 +535,15 @@ pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bo
             pl.windows(2).any(|w| w.first().zip(w.get(1)).is_some_and(|(a, b)| seg_hits_box(*a, *b, bx)))
         }
     });
-    // A crossing box entirely inside a text/block bounding rectangle also selects it.
-    if hit || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Insert(_))) {
+    // A crossing box inside a text bounding rectangle selects the text.
+    if hit
+        || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_)))
+        || (matches!(e.kind, EntityKind::Insert(_)) && insert_fill_hits_box(d, e, bx, tol))
+    {
+        return true;
+    }
+    // Likewise inside a blank MTEXT's frame (a multileader's too), where picking also selects it.
+    if blank_mtext_box(d, e).is_some_and(|frame| frame.contains_box(bx)) {
         return true;
     }
     // SOLID/TRACE are filled polygons. A crossing window wholly within the
@@ -299,11 +561,23 @@ pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bo
 
 /// Fence selection: entities crossed by the fence polyline.
 pub fn select_fence(d: &Drawing, space: &Space, fence: &[Vec2]) -> Vec<Handle> {
-    let ix = spatial::index(d, space);
-    select_fence_with(d, space, &ix, fence)
+    select_fence_in(d, space, &[], fence)
 }
 
-pub(crate) fn select_fence_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<SpatialIndex>>, fence: &[Vec2]) -> Vec<Handle> {
+/// [`select_fence`] through a layout viewport that freezes the layers in `frozen`
+/// ([`select_window_in`]).
+pub fn select_fence_in(d: &Drawing, space: &Space, frozen: &[String], fence: &[Vec2]) -> Vec<Handle> {
+    let ix = spatial::index(d, space);
+    select_fence_with(d, space, &ix, frozen, fence)
+}
+
+pub(crate) fn select_fence_with(
+    d: &Drawing,
+    space: &Space,
+    ix: &Option<std::sync::Arc<SpatialIndex>>,
+    frozen: &[String],
+    fence: &[Vec2],
+) -> Vec<Handle> {
     let fb = Bounds2::from_points(fence.iter().copied());
     let tol = (fb.width() + fb.height()).max(1e-9) / 2000.0;
     let probe = fb.expand(tol);
@@ -311,7 +585,7 @@ pub(crate) fn select_fence_with(d: &Drawing, space: &Space, ix: &Option<std::syn
     let mut out = Vec::new();
     for (e, known) in cands {
         // Infinite objects have no useful bounds; like window selection, test their geometry directly.
-        if !selectable(d, e) || (!is_infinite(e) && !bounds_of(d, e, known).intersects(&probe)) {
+        if !selectable(d, e, frozen) || (!is_infinite(e) && !bounds_of(d, e, known).intersects(&probe)) {
             continue;
         }
         let polys = hit_polylines(d, e, tol);
@@ -332,6 +606,12 @@ pub(crate) fn select_fence_with(d: &Drawing, space: &Space, ix: &Option<std::syn
 /// Window polygon selection (entities entirely inside `poly`) or crossing polygon selection
 /// (inside or crossing its edges). The polygon closes back to its first point.
 pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool) -> Vec<Handle> {
+    select_polygon_in(d, space, &[], poly, crossing)
+}
+
+/// [`select_polygon`] through a layout viewport that freezes the layers in `frozen`
+/// ([`select_window_in`]).
+pub fn select_polygon_in(d: &Drawing, space: &Space, frozen: &[String], poly: &[Vec2], crossing: bool) -> Vec<Handle> {
     let (Some(first), true) = (poly.first(), poly.len() >= 3) else { return Vec::new() };
     let ix = spatial::index(d, space);
     let pb = Bounds2::from_points(poly.iter().copied());
@@ -342,7 +622,7 @@ pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool)
     let mut out = Vec::new();
     for (e, known) in cands {
         let infinite = is_infinite(e);
-        if !selectable(d, e) || (infinite && !crossing) {
+        if !selectable(d, e, frozen) || (infinite && !crossing) {
             continue;
         }
         let eb = bounds_of(d, e, known);
@@ -371,9 +651,15 @@ pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool)
 /// The visible objects in `space` of the group called `name` (any case), or `None` when the
 /// drawing has no such group.
 pub fn select_group(d: &Drawing, space: &Space, name: &str) -> Option<Vec<Handle>> {
+    select_group_in(d, space, &[], name)
+}
+
+/// [`select_group`] through a layout viewport that freezes the layers in `frozen`: the group's
+/// objects on those layers are left out.
+pub fn select_group_in(d: &Drawing, space: &Space, frozen: &[String], name: &str) -> Option<Vec<Handle>> {
     let g = d.groups.iter().find(|g| g.name.eq_ignore_ascii_case(name.trim()))?;
     let store = d.space(space)?;
-    Some(g.members.iter().copied().filter(|h| store.get(*h).is_some_and(|e| d.is_visible(e))).collect())
+    Some(g.members.iter().copied().filter(|h| store.get(*h).is_some_and(|e| selectable(d, e, frozen))).collect())
 }
 
 /// A selection mode typed at "Select objects", collecting its points before it selects.
@@ -447,14 +733,19 @@ impl SelectMode {
     }
     /// The objects the mode selects, or `None` while it has too few points.
     pub fn select(&self, d: &Drawing, space: &Space) -> Option<Vec<Handle>> {
+        self.select_in(d, space, &[])
+    }
+    /// [`SelectMode::select`] through a layout viewport: the objects on the layers in `frozen`,
+    /// the layers frozen in that viewport, are not drawn there and are not selected.
+    pub fn select_in(&self, d: &Drawing, space: &Space, frozen: &[String]) -> Option<Vec<Handle>> {
         match (self.kind, self.pts.as_slice()) {
             (SelectKind::Window | SelectKind::Crossing, [a, b, ..]) => {
-                Some(select_window(d, space, Bounds2::new(*a, *b), self.kind == SelectKind::Crossing))
+                Some(select_window_in(d, space, frozen, Bounds2::new(*a, *b), self.kind == SelectKind::Crossing))
             }
-            (SelectKind::Box, [a, b, ..]) => Some(select_window(d, space, Bounds2::new(*a, *b), b.x < a.x)),
-            (SelectKind::Fence, pts) if pts.len() >= 2 => Some(select_fence(d, space, pts)),
+            (SelectKind::Box, [a, b, ..]) => Some(select_window_in(d, space, frozen, Bounds2::new(*a, *b), b.x < a.x)),
+            (SelectKind::Fence, pts) if pts.len() >= 2 => Some(select_fence_in(d, space, frozen, pts)),
             (SelectKind::WPolygon | SelectKind::CPolygon, pts) if pts.len() >= 3 => {
-                Some(select_polygon(d, space, pts, self.kind == SelectKind::CPolygon))
+                Some(select_polygon_in(d, space, frozen, pts, self.kind == SelectKind::CPolygon))
             }
             _ => None,
         }
@@ -464,7 +755,7 @@ impl SelectMode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cadcraft_doc::{Common, RayLine};
+    use cadcraft_doc::{Common, Image, Raster, RayLine};
     use cadcraft_geom::Vec3;
 
     fn fence_hits(kind: EntityKind, fence: [(f64, f64); 2]) -> usize {
@@ -485,6 +776,481 @@ mod tests {
         assert_eq!(fence_hits(EntityKind::Ray(line.clone()), [(-5.0, -5.0), (-5.0, 5.0)]), 0);
         assert_eq!(fence_hits(EntityKind::XLine(line.clone()), [(0.0, 1.0), (0.0, 5.0)]), 0);
         assert_eq!(fence_hits(EntityKind::Ray(line), [(5.0, 1.0), (5.0, 5.0)]), 0);
+    }
+
+    /// Two objects under the pickbox: AutoCAD 2024 picks the one drawn last, not the nearer one,
+    /// and DRAWORDER changes which (`(ssget pt)` in accoreconsole).
+    #[test]
+    fn a_pick_takes_the_object_drawn_last() {
+        let mut d = Drawing::new_metric();
+        let circle = d
+            .add(&Space::Model, Common::default(), EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::new(50.0, 50.0, 0.0), radius: 10.0 }))
+            .unwrap();
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(40.5, 45.0, 0.0), b: Vec3::new(40.5, 55.0, 0.0) });
+        let line = d.add(&Space::Model, Common::default(), line).unwrap();
+        // 0.05 from the circle and 0.45 from the line, both inside an aperture of 1.
+        let p = Vec2::new(40.05, 50.0);
+        assert_eq!(pick(&d, &Space::Model, p, 1.0), Some(line));
+        assert_eq!(pick_all(&d, &Space::Model, p, 1.0), vec![line, circle]);
+        d.model.send_to_back(line);
+        assert_eq!(pick(&d, &Space::Model, p, 1.0), Some(circle));
+        // Only one within reach: that one, whatever the order.
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(41.3, 50.0), 1.0), Some(line));
+    }
+
+    fn mtext_at(contents: &str, attach: u8, rotation: f64) -> EntityKind {
+        EntityKind::MText(cadcraft_doc::MText {
+            insert: Vec3::new(0.0, 0.0, 0.0),
+            height: 2.5,
+            width: 10.0,
+            attach,
+            rotation,
+            style: "Standard".into(),
+            contents: contents.into(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+        })
+    }
+
+    /// A blank MTEXT has no strokes and empty drawn bounds, but it is still an object: a click
+    /// inside its width x height box picks it, and a click outside does not (#2810).
+    #[test]
+    fn a_blank_mtext_is_picked_inside_its_box() {
+        let blank = |c: &str| matches!(mtext_at(c, 1, 0.0), EntityKind::MText(t) if is_blank_mtext(&t));
+        assert!(!blank(r"a\~"));
+        assert!(blank(r"\~ \~"));
+        for contents in ["", "   ", r"\~ "] {
+            let mut d = Drawing::new_metric();
+            let h = d.add(&Space::Model, Common::default(), mtext_at(contents, 1, 0.0)).unwrap();
+            let at = |x: f64, y: f64| pick(&d, &Space::Model, Vec2::new(x, y), 0.1);
+            assert_eq!(at(5.0, -1.0), Some(h), "{contents:?}");
+            assert_eq!(at(0.5, -2.0), Some(h), "{contents:?}");
+            assert_eq!(at(5.0, 3.0), None, "above the box, {contents:?}");
+            assert_eq!(at(12.0, -1.0), None, "right of the box, {contents:?}");
+            assert_eq!(pick_all(&d, &Space::Model, Vec2::new(5.0, -1.0), 0.1), vec![h]);
+            let w = Bounds2::new(Vec2::new(4.0, -2.0), Vec2::new(6.0, -1.0));
+            assert_eq!(select_window(&d, &Space::Model, w, true), vec![h], "crossing {contents:?}");
+        }
+    }
+
+    #[test]
+    fn a_blank_mleader_text_is_picked_inside_its_box() {
+        for contents in ["   ", ""] {
+            let mut s = crate::Session::new();
+            let result = s.execute("mleader", &serde_json::json!({ "points": [[0, 0], [20, 0]], "text": "   " })).unwrap();
+            let h = Handle::parse_hex(result["handle"].as_str().unwrap()).unwrap();
+            // The command omits the text object for an empty string. Preserve the box here to
+            // exercise a stored empty MTEXT, which can still exist in an imported MLEADER.
+            s.doc_mut()
+                .unwrap()
+                .modify_entity(h, |e| {
+                    let EntityKind::MLeader(m) = &mut e.kind else { panic!("mleader") };
+                    m.text.as_mut().unwrap().contents = contents.into();
+                })
+                .unwrap();
+            let d = s.doc().unwrap();
+            let EntityKind::MLeader(m) = &d.entity(h).unwrap().kind else { panic!("mleader") };
+            let t = m.text.as_ref().unwrap();
+            let p = t.insert.xy() + Vec2::new(t.height / 2.0, -t.height / 4.0);
+            let aperture = t.height / 100.0;
+            assert_eq!(pick(d, &Space::Model, p, aperture), Some(h), "{contents:?}");
+
+            let d = s.doc_mut().unwrap();
+            for i in 0..spatial::MIN_INDEXED {
+                let y = 100.0 + i as f64;
+                let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(50.0, y, 0.0), b: Vec3::new(60.0, y, 0.0) });
+                d.add(&Space::Model, Common::default(), line).unwrap();
+            }
+            assert!(spatial::index(d, &Space::Model).is_some());
+            assert_eq!(pick(d, &Space::Model, p, aperture), Some(h), "indexed {contents:?}");
+        }
+    }
+
+    #[test]
+    fn a_pick_away_from_normal_mleader_text_and_lines_misses() {
+        let mut s = crate::Session::new();
+        let result = s.execute("mleader", &serde_json::json!({ "points": [[0, 0], [20, 10]], "text": "Visible" })).unwrap();
+        let h = Handle::parse_hex(result["handle"].as_str().unwrap()).unwrap();
+        assert_eq!(pick(s.doc().unwrap(), &Space::Model, Vec2::new(2.0, 8.0), 0.05), None);
+        // Give the text a wide box: a click inside it, right of the glyphs and off the leader, is
+        // still a miss, since only blank text is picked by its frame.
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                let EntityKind::MLeader(m) = &mut e.kind else { panic!("mleader") };
+                m.text.as_mut().unwrap().width = 5.0;
+            })
+            .unwrap();
+        let d = s.doc().unwrap();
+        let EntityKind::MLeader(m) = &d.entity(h).unwrap().kind else { panic!("mleader") };
+        let t = m.text.as_ref().unwrap();
+        let p = t.insert.xy() + Vec2::new(t.width * 0.8, 0.0);
+        assert_eq!(pick(d, &Space::Model, p, 0.02), None, "right of the glyphs, inside the frame");
+        assert_eq!(pick(d, &Space::Model, t.insert.xy() + Vec2::new(0.3, 0.0), 0.02), Some(h), "on the glyphs");
+    }
+
+    /// Only blank MTEXT has a frame: an annotative non-blank MTEXT and an annotative LINE have none
+    /// (and the kind and blankness are decided before any annotation scaling).
+    #[test]
+    fn only_blank_mtext_has_a_frame_even_when_annotative() {
+        let mut d = Drawing::new_metric();
+        d.header.set_str("CANNOSCALE", "1:2");
+        let half = d.anno_scale("1:2").cloned().unwrap();
+        let common = || Common { anno_scales: vec![half.clone()], ..Common::default() };
+        let text = d.add(&Space::Model, common(), mtext_at("Visible", 1, 0.0)).unwrap();
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(5.0, 0.0, 0.0) });
+        let line = d.add(&Space::Model, common(), line).unwrap();
+        let blank = d.add(&Space::Model, common(), mtext_at(" ", 1, 0.0)).unwrap();
+        for (h, framed) in [(text, false), (line, false), (blank, true)] {
+            let e = d.entity(h).unwrap();
+            assert_eq!(blank_mtext_frame(&d, e).is_some(), framed);
+        }
+    }
+
+    /// A multileader whose text is blank, with the text 6 units right of the landing, 4 wide and
+    /// 2 high, attached top-left.
+    fn blank_mleader(s: &mut crate::Session) -> Handle {
+        let result = s.execute("mleader", &serde_json::json!({ "points": [[0, 0], [20, 0]], "text": "   " })).unwrap();
+        let h = Handle::parse_hex(result["handle"].as_str().unwrap()).unwrap();
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                let EntityKind::MLeader(m) = &mut e.kind else { panic!("mleader") };
+                let landing = m.landing;
+                let t = m.text.as_mut().unwrap();
+                t.insert = landing + Vec3::new(6.0, 0.0, 0.0);
+                t.width = 4.0;
+                t.height = 2.0;
+                t.attach = 1;
+                t.rotation = 0.0;
+            })
+            .unwrap();
+        h
+    }
+
+    /// A crossing window wholly inside a blank multileader text's box selects it, as a click does.
+    #[test]
+    fn a_crossing_window_inside_a_blank_mleader_text_box_selects_it() {
+        let mut s = crate::Session::new();
+        let h = blank_mleader(&mut s);
+        let d = s.doc().unwrap();
+        let EntityKind::MLeader(m) = &d.entity(h).unwrap().kind else { panic!("mleader") };
+        let o = m.text.as_ref().unwrap().insert.xy();
+        let inside = Bounds2::new(o + Vec2::new(1.0, -1.5), o + Vec2::new(2.0, -0.5));
+        assert_eq!(select_window(d, &Space::Model, inside, true), vec![h]);
+        let outside = Bounds2::new(o + Vec2::new(5.0, -1.5), o + Vec2::new(6.0, -0.5));
+        assert!(select_window(d, &Space::Model, outside, true).is_empty());
+    }
+
+    /// An annotative multileader's blank text is picked where it draws at the current annotation
+    /// scale: its size and its offset from the landing both scale.
+    #[test]
+    fn an_annotative_blank_mleader_text_is_picked_at_its_drawn_offset_and_size() {
+        let mut s = crate::Session::new();
+        let h = blank_mleader(&mut s);
+        let d = s.doc_mut().unwrap();
+        d.header.set_str("CANNOSCALE", "1:2");
+        let half = d.anno_scale("1:2").cloned().unwrap();
+        d.modify_entity(h, |e| e.common.anno_scales = vec![half]).unwrap();
+        let d = s.doc().unwrap();
+        let EntityKind::MLeader(m) = &d.entity(h).unwrap().kind else { panic!("mleader") };
+        let l = m.landing.xy();
+        // At 1:2 the box is 8 x 4 from the landing + (12, 0) (top-left): x 12..20, y -4..0.
+        let at = |x: f64, y: f64| pick(d, &Space::Model, l + Vec2::new(x, y), 0.02);
+        assert_eq!(at(16.0, -1.0), Some(h), "inside the scaled box, outside the unscaled one");
+        assert_eq!(at(19.5, -3.5), Some(h), "far corner of the scaled box");
+        assert_eq!(at(8.0, -1.0), None, "inside the unscaled box, outside the scaled one");
+        assert_eq!(at(22.0, -1.0), None, "right of the scaled box");
+    }
+
+    /// The box follows the attachment point and the rotation, and a width of 0 falls back to the
+    /// text height.
+    #[test]
+    fn a_blank_mtext_box_follows_attachment_and_rotation() {
+        let mut d = Drawing::new_metric();
+        // Middle-centre: the box spans x -5..5, y -1.25..1.25.
+        let h = d.add(&Space::Model, Common::default(), mtext_at(" ", 5, 0.0)).unwrap();
+        let at = |d: &Drawing, x: f64, y: f64| pick(d, &Space::Model, Vec2::new(x, y), 0.05);
+        assert_eq!(at(&d, -4.0, 1.0), Some(h));
+        assert_eq!(at(&d, 4.0, -1.0), Some(h));
+        assert_eq!(at(&d, 4.0, 2.0), None);
+        // Turned a quarter turn about the insertion point: the box spans x -1.25..1.25, y -5..5.
+        let mut d = Drawing::new_metric();
+        let h = d.add(&Space::Model, Common::default(), mtext_at(" ", 5, std::f64::consts::FRAC_PI_2)).unwrap();
+        assert_eq!(at(&d, 1.0, 4.0), Some(h));
+        assert_eq!(at(&d, 4.0, 1.0), None);
+        // No width: as wide as the text is high.
+        let mut d = Drawing::new_metric();
+        let EntityKind::MText(mut t) = mtext_at("", 1, 0.0) else { panic!("mtext") };
+        t.width = 0.0;
+        let h = d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
+        assert_eq!(at(&d, 2.0, -1.0), Some(h));
+        assert_eq!(at(&d, 5.0, -1.0), None);
+    }
+
+    /// A top-level MTEXT that matches the layout orientation is drawn upright, ignoring its stored
+    /// rotation, so its frame is the unturned one (the renderer and the extents do the same).
+    #[test]
+    fn rotated_blank_mtext_matching_layout_orientation_is_picked_in_its_unrotated_frame() {
+        let mut d = Drawing::new_metric();
+        let tag = |code: i32, value: &str| cadcraft_doc::RawTag { code, value: value.into() };
+        let common = Common { xdata: vec![tag(1001, "AcadAnnoPO"), tag(1070, "1")], ..Common::default() };
+        let h = d.add(&Space::Model, common, mtext_at(" ", 1, std::f64::consts::FRAC_PI_2)).unwrap();
+        let at = |x: f64, y: f64| pick(&d, &Space::Model, Vec2::new(x, y), 0.05);
+        // Unrotated frame x 0..10, y -2.5..0; the rotated one would be x 0..2.5, y 0..10.
+        assert_eq!(at(5.0, -1.0), Some(h), "inside the unrotated frame");
+        assert_eq!(at(1.0, 5.0), None, "inside only the rotated frame");
+    }
+
+    /// A turned blank MTEXT is hit in its turned box, not in the axis-aligned box around it (whose
+    /// empty corners lie off the text).
+    #[test]
+    fn a_turned_blank_mtext_is_picked_in_its_turned_box() {
+        let mut d = Drawing::new_metric();
+        let h = d.add(&Space::Model, Common::default(), mtext_at(" ", 1, 30f64.to_radians())).unwrap();
+        let at = |x: f64, y: f64| pick(&d, &Space::Model, Vec2::new(x, y), 0.05);
+        // Local (5, -1.25), the centre of the box.
+        assert_eq!(at(4.955, 1.418), Some(h));
+        // Inside the box around the turned one, but local (2.87, 2.96) is above the text.
+        assert_eq!(at(1.0, 4.0), None);
+    }
+
+    /// An annotative blank MTEXT is picked in the box it draws at the current annotation scale,
+    /// and not at all while that scale hides it.
+    #[test]
+    fn an_annotative_blank_mtext_is_picked_at_its_drawn_size() {
+        let mut d = Drawing::new_metric();
+        d.header.set_str("CANNOSCALE", "1:2");
+        let half = d.anno_scale("1:2").cloned().unwrap();
+        let common = Common { anno_scales: vec![half], ..Common::default() };
+        // Middle-centre at 1:2: twice the size, x -10..10, y -2.5..2.5.
+        let h = d.add(&Space::Model, common, mtext_at(" ", 5, 0.0)).unwrap();
+        let at = |d: &Drawing, x: f64, y: f64| pick(d, &Space::Model, Vec2::new(x, y), 0.05);
+        assert_eq!(at(&d, 8.0, 2.0), Some(h), "inside the scaled box");
+        assert_eq!(at(&d, 11.0, 0.0), None, "outside the scaled box");
+        let w = Bounds2::new(Vec2::new(7.0, 1.0), Vec2::new(9.0, 2.0));
+        assert_eq!(select_window(&d, &Space::Model, w, true), vec![h], "crossing the scaled box");
+        // At 1:1 with only supported scales shown, the object is hidden: nothing to pick.
+        d.header.set_str("CANNOSCALE", "1:1");
+        d.header.set_i64("ANNOALLVISIBLE", 0);
+        assert_eq!(at(&d, 0.0, 0.0), None, "hidden");
+        let w = Bounds2::new(Vec2::new(-1.0, -1.0), Vec2::new(1.0, 1.0));
+        assert!(select_window(&d, &Space::Model, w, true).is_empty(), "hidden, crossing");
+    }
+
+    /// A drawing large enough for the spatial index must still offer a blank MTEXT as a candidate.
+    #[test]
+    fn a_blank_mtext_is_picked_in_an_indexed_drawing() {
+        let mut d = Drawing::new_metric();
+        for i in 0..(crate::spatial::MIN_INDEXED + 10) {
+            let y = 100.0 + i as f64;
+            let l = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(50.0, y, 0.0), b: Vec3::new(60.0, y, 0.0) });
+            d.add(&Space::Model, Common::default(), l).unwrap();
+        }
+        let h = d.add(&Space::Model, Common::default(), mtext_at("", 1, 0.0)).unwrap();
+        assert!(spatial::index(&d, &Space::Model).is_some());
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(5.0, -1.0), 0.1), Some(h));
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(5.0, 3.0), 0.1), None);
+    }
+
+    /// Text with words is still picked by its drawn box only.
+    #[test]
+    fn a_click_far_from_a_normal_mtext_misses() {
+        let mut d = Drawing::new_metric();
+        let h = d.add(&Space::Model, Common::default(), mtext_at("AB", 1, 0.0)).unwrap();
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(1.0, -1.0), 0.1), Some(h));
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(8.0, -1.0), 0.1), None);
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(1.0, 5.0), 0.1), None);
+    }
+
+    /// An OLE2FRAME draws as its frame, so a click on an edge picks it (review on #2587); a click in
+    /// the middle of the frame, or on a frame without both corners, does not.
+    #[test]
+    fn clicking_an_ole_frame_edge_selects_it() {
+        let tag = |code: i32, value: &str| cadcraft_doc::RawTag { code, value: value.into() };
+        let frame =
+            |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags, graphics: Vec::new() });
+        let mut d = Drawing::new_metric();
+        let h = d.add(&Space::Model, Common::default(), frame(vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")])).unwrap();
+        d.add(&Space::Model, Common::default(), frame(vec![tag(10, "80"), tag(20, "80")])).unwrap();
+        let line = d.add(&Space::Model, Common::default(), frame(vec![tag(10, "60"), tag(20, "-19"), tag(11, "60"), tag(21, "-22")])).unwrap();
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(32.5, -19.0), 0.2), Some(h), "top edge");
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(35.0, -20.5), 0.2), Some(h), "right edge");
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(32.5, -20.5), 0.2), None, "inside the frame");
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(80.0, 80.0), 0.2), None, "a frame without a second corner");
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(60.0, -20.0), 0.2), Some(line), "a frame with no width is drawn as a line and picked as one");
+    }
+
+    /// A block holding a diagonal dashed line, inserted at `scale`.
+    fn dashed_block(length: f64, scale: f64) -> (Drawing, Handle) {
+        let mut d = Drawing::new_imperial();
+        d.linetypes.extend(cadcraft_doc::library::standard_linetypes().into_iter().filter(|l| l.name == "DASHED"));
+        let mut line =
+            Entity::new(Handle(1), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(length, length, 0.0) }));
+        line.common.linetype = "DASHED".into();
+        let mut blk = cadcraft_doc::Block::new("B");
+        blk.entities.push(line);
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        let insert = cadcraft_doc::Insert {
+            block: "B".into(),
+            insert: Vec3::new(0.0, 0.0, 0.0),
+            scale: Vec3::new(scale, scale, 1.0),
+            rotation: 0.0,
+            attribs: Vec::new(),
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+            clip: None,
+        };
+        let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
+        (d, h)
+    }
+
+    /// Every mouse move over a block hit-tests what it draws. Two blocks with a fine pattern on
+    /// long lines (inserted at 0.001) made 5.8 million dashes, and half a second, per move (#1285).
+    #[test]
+    fn hit_testing_a_block_does_not_lay_out_its_dashes() {
+        let (d, h) = dashed_block(20_000.0, 0.001);
+        let e = d.entity(h).unwrap();
+        let drawn = cadcraft_render::build_entities(&d, std::iter::once(e.as_ref()), &cadcraft_render::Options { text: false, ..Default::default() });
+        assert!(drawn.prims.len() > 10_000, "the pattern draws {} dashes", drawn.prims.len());
+        // Hit testing uses the line without laying out every dash.
+        assert_eq!(hit_polylines(&d, e, 0.01).len(), 1);
+    }
+
+    /// A dashed line in a block is hit across its gaps, as one outside a block is.
+    #[test]
+    fn a_dashed_line_in_a_block_is_picked_in_a_gap() {
+        let (d, h) = dashed_block(100.0, 1.0);
+        let e = d.entity(h).unwrap();
+        let drawn = cadcraft_render::build_entities(&d, std::iter::once(e.as_ref()), &cadcraft_render::Options { text: false, ..Default::default() });
+        let (a, b) = (drawn.prims.first().unwrap(), drawn.prims.get(1).unwrap());
+        let (end, start) = (*drawn.points(a).last().unwrap(), *drawn.points(b).first().unwrap());
+        assert!(end.dist(start) > 0.01, "a gap between the first two dashes");
+        let gap = end + (start - end) * 0.5;
+        assert_eq!(pick(&d, &Space::Model, gap, end.dist(start) / 8.0), Some(h));
+    }
+
+    #[test]
+    fn crossing_a_transformed_block_requires_its_drawn_geometry() {
+        let mut d = Drawing::new_metric();
+        let mut block = cadcraft_doc::Block::new("two lines");
+        for y in [0.0, 5.0] {
+            block.entities.push(Entity::new(
+                Handle(10 + y as u64),
+                EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(10.0, y, 0.0) }),
+            ));
+        }
+        d.blocks.insert(block.name.clone(), std::sync::Arc::new(block));
+        let insert = cadcraft_doc::Insert {
+            block: "two lines".into(),
+            insert: Vec3::new(30.0, 40.0, 0.0),
+            scale: Vec3::new(2.0, 2.0, 1.0),
+            rotation: std::f64::consts::FRAC_PI_2,
+            attribs: Vec::new(),
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+            clip: None,
+        };
+        let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
+        let bx = |a, b| Bounds2::new(a, b);
+        let empty = bx(Vec2::new(24.0, 48.0), Vec2::new(26.0, 52.0));
+        let crossed = bx(Vec2::new(19.0, 48.0), Vec2::new(21.0, 52.0));
+        assert!(select_window(&d, &Space::Model, empty, true).is_empty());
+        assert_eq!(select_window(&d, &Space::Model, crossed, true), vec![h]);
+        assert!(select_window(&d, &Space::Model, crossed, false).is_empty());
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(25.0, 40.0), 0.1), None);
+    }
+
+    #[test]
+    fn crossing_a_block_fill_uses_the_filled_shape() {
+        let mut d = Drawing::new_metric();
+        let mut block = cadcraft_doc::Block::new("filled triangle");
+        let a = Vec3::new(0.0, 0.0, 0.0);
+        let b = Vec3::new(10.0, 0.0, 0.0);
+        let c = Vec3::new(0.0, 10.0, 0.0);
+        block.entities.push(Entity::new(Handle(10), EntityKind::Solid(cadcraft_doc::Solid { corners: [a, b, c, c] })));
+        d.blocks.insert(block.name.clone(), std::sync::Arc::new(block));
+        let insert = cadcraft_doc::Insert {
+            block: "filled triangle".into(),
+            insert: Vec3::new(0.0, 0.0, 0.0),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            attribs: Vec::new(),
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+            clip: None,
+        };
+        let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
+        let empty = Bounds2::new(Vec2::new(7.0, 7.0), Vec2::new(8.0, 8.0));
+        let filled = Bounds2::new(Vec2::new(2.0, 2.0), Vec2::new(3.0, 3.0));
+        assert!(select_window(&d, &Space::Model, empty, true).is_empty());
+        assert_eq!(select_window(&d, &Space::Model, filled, true), vec![h]);
+    }
+
+    #[test]
+    fn crossing_a_block_ray_and_xline_uses_their_direction() {
+        for (kind, behind) in [(true, false), (false, true)] {
+            let mut d = Drawing::new_metric();
+            let mut block = cadcraft_doc::Block::new("infinite");
+            let line = RayLine { base: Vec3::new(100.0, 100.0, 0.0), dir: Vec3::new(1.0, 0.0, 0.0) };
+            block.entities.push(Entity::new(Handle(10), if kind { EntityKind::Ray(line) } else { EntityKind::XLine(line) }));
+            block
+                .entities
+                .push(Entity::new(Handle(11), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(200.0, 0.0, 0.0) })));
+            block.entities.push(Entity::new(
+                Handle(12),
+                EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(200.0, 0.0, 0.0), b: Vec3::new(200.0, 200.0, 0.0) }),
+            ));
+            block.entities.push(Entity::new(
+                Handle(13),
+                EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(200.0, 200.0, 0.0), b: Vec3::new(0.0, 200.0, 0.0) }),
+            ));
+            block
+                .entities
+                .push(Entity::new(Handle(14), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 200.0, 0.0), b: Vec3::new(0.0, 0.0, 0.0) })));
+            d.blocks.insert(block.name.clone(), std::sync::Arc::new(block));
+            let insert = cadcraft_doc::Insert { block: "infinite".into(), ..Default::default() };
+            let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
+            let ahead = Bounds2::new(Vec2::new(149.0, 99.0), Vec2::new(151.0, 101.0));
+            let back = Bounds2::new(Vec2::new(49.0, 99.0), Vec2::new(51.0, 101.0));
+            assert_eq!(select_window(&d, &Space::Model, ahead, true), vec![h]);
+            assert_eq!(select_window(&d, &Space::Model, back, true).contains(&h), behind);
+        }
+    }
+
+    #[test]
+    fn crossing_a_block_image_respects_its_clip() {
+        let mut d = Drawing::new_metric();
+        d.rasters.insert("map.png", std::sync::Arc::new(Raster::new(2, 2, vec![255; 16]).unwrap()));
+        let mut block = cadcraft_doc::Block::new("picture");
+        block.entities.push(Entity::new(
+            Handle(10),
+            EntityKind::Image(Image {
+                insert: Vec3::ZERO,
+                u: Vec3::new(5.0, 0.0, 0.0),
+                v: Vec3::new(0.0, 5.0, 0.0),
+                size: Vec2::new(2.0, 2.0),
+                path: "map.png".into(),
+                clipping: true,
+                clip: vec![Vec2::new(-0.5, -0.5), Vec2::new(0.5, 1.5)],
+                ..Default::default()
+            }),
+        ));
+        d.blocks.insert(block.name.clone(), std::sync::Arc::new(block));
+        let h = d
+            .add(&Space::Model, Common::default(), EntityKind::Insert(cadcraft_doc::Insert { block: "picture".into(), ..Default::default() }))
+            .unwrap();
+        let visible = Bounds2::new(Vec2::new(2.0, 4.0), Vec2::new(3.0, 6.0));
+        let hidden = Bounds2::new(Vec2::new(7.0, 4.0), Vec2::new(8.0, 6.0));
+        assert_eq!(select_window(&d, &Space::Model, visible, true), vec![h]);
+        assert!(select_window(&d, &Space::Model, hidden, true).is_empty());
     }
 }
 
@@ -547,7 +1313,7 @@ mod hatch_pattern_pick_tests {
 
     fn square(lo: f64, hi: f64, outer: bool) -> HatchLoop {
         let vertices = [(lo, lo), (hi, lo), (hi, hi), (lo, hi)].iter().map(|&(x, y)| PolyVertex::new(Vec2::new(x, y))).collect();
-        HatchLoop { vertices, outer, sources: Vec::new() }
+        HatchLoop { vertices, outer, boundary_flags: None, sources: Vec::new() }
     }
 
     fn ansi31_hatch(loops: Vec<HatchLoop>) -> Drawing {
@@ -613,6 +1379,7 @@ mod hatch_pattern_pick_tests {
         let tri = HatchLoop {
             vertices: [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)].iter().map(|&(x, y)| PolyVertex::new(Vec2::new(x, y))).collect(),
             outer: true,
+            boundary_flags: None,
             sources: Vec::new(),
         };
         let d = solid_hatch(vec![tri], 0);
@@ -633,5 +1400,39 @@ mod hatch_pattern_pick_tests {
         // Ignore style fills over the island.
         let d = solid_hatch(loops(), 2);
         assert!(pick(&d, &Space::Model, Vec2::new(5.0, 5.0), 0.05).is_some());
+    }
+
+    /// A window around everything a blank multileader draws (its geometry and its text frame)
+    /// selects it, at either annotation scale: the stored insertion points snap offers do not
+    /// widen the box a window has to contain (#2810).
+    #[test]
+    fn window_around_a_blank_multileader_still_selects_it() {
+        use cadcraft_geom::Vec3;
+        for scale in ["1:2", "2:1"] {
+            let mut s = crate::Session::new();
+            let r = s.execute("mleader", &serde_json::json!({ "points": [[0, 0], [20, 0]], "text": "   " })).unwrap();
+            let h = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+            let d = s.doc_mut().unwrap();
+            d.header.set_str("CANNOSCALE", scale);
+            let sc = d.anno_scale(scale).cloned().unwrap();
+            d.modify_entity(h, |e| {
+                e.common.anno_scales = vec![sc];
+                let EntityKind::MLeader(m) = &mut e.kind else { return };
+                let landing = m.landing;
+                if let Some(t) = m.text.as_mut() {
+                    t.insert = landing + Vec3::new(6.0, 0.0, 0.0);
+                    t.width = 4.0;
+                    t.height = 2.0;
+                    t.attach = 1;
+                    t.rotation = 0.0;
+                }
+            })
+            .unwrap();
+            let d = &*d;
+            let e = d.entity(h).unwrap();
+            let frame = blank_mtext_box(d, e).expect("a blank multileader has a frame");
+            let bx = entity_bounds(d, e, 0).union(&frame).expand(0.01);
+            assert!(select_window(d, &Space::Model, bx, false).contains(&h), "scale {scale}");
+        }
     }
 }

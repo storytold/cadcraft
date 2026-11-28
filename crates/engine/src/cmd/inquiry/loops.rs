@@ -13,7 +13,8 @@ use cadcraft_doc::{EntityKind, Handle};
 use cadcraft_geom::{Arc as GeoArc, EPS, Vec2};
 use serde_json::{Value, json};
 
-use super::super::*;
+use super::super::bad;
+
 use crate::{Result, Session};
 
 const CMD: &str = "loops";
@@ -116,21 +117,7 @@ pub fn run(s: &mut Session, p: &Value) -> Result<Value> {
 
     // Endpoints closer than the tolerance meet. Transitive components of three or more ends are
     // branch junctions; a component of exactly two is a simple joint.
-    let mut parent: Vec<usize> = (0..n).collect();
-    for i in 0..n {
-        let Some(a) = ends.get(i) else { continue };
-        for j in (i + 1)..n {
-            let Some(b) = ends.get(j) else { continue };
-            if a.at.dist(b.at) <= tol {
-                let (ra, rb) = (find(&mut parent, i), find(&mut parent, j));
-                if ra != rb
-                    && let Some(slot) = parent.get_mut(ra)
-                {
-                    *slot = rb;
-                }
-            }
-        }
-    }
+    let mut parent = merge_ends(&ends, tol);
     let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for i in 0..n {
         let root = find(&mut parent, i);
@@ -139,54 +126,8 @@ pub fn run(s: &mut Session, p: &Value) -> Result<Value> {
 
     // Junctions are reported and their pieces left out of the chains: not resolved.
     let mut excluded = vec![false; pieces.len()];
-    let mut junctions: Vec<Value> = Vec::new();
-    let mut joints: Vec<(usize, usize)> = Vec::new();
-    for group in groups.values() {
-        match group.as_slice() {
-            &[a, b] => joints.push((a, b)),
-            [_, _, ..] => {
-                let scale = group.len() as f64;
-                let mut at = Vec2::ZERO;
-                let mut members: Vec<Handle> = Vec::new();
-                for &e in group {
-                    let Some(end) = ends.get(e) else { continue };
-                    at += end.at / scale;
-                    let Some(piece) = pieces.get(end.piece) else { continue };
-                    if !members.contains(&piece.handle) {
-                        members.push(piece.handle);
-                    }
-                    if let Some(slot) = excluded.get_mut(end.piece) {
-                        *slot = true;
-                    }
-                }
-                junctions.push(json!({
-                    "at": [at.x, at.y],
-                    "ends": group.len(),
-                    "members": members.iter().map(|h| h.hex()).collect::<Vec<_>>(),
-                }));
-            }
-            _ => {}
-        }
-    }
-
-    // A joint links the two ends for the walk. A joint into an excluded piece is not a link, and
-    // a line whose own ends meet within a huge tolerance is a spur, not a zero-area loop.
-    let mut link: Vec<Option<usize>> = vec![None; n];
-    for (a, b) in joints {
-        let (Some(ea), Some(eb)) = (ends.get(a), ends.get(b)) else { continue };
-        if ea.piece == eb.piece && pieces.get(ea.piece).is_some_and(|p| p.arc.is_none()) {
-            continue;
-        }
-        if excluded.get(ea.piece).copied().unwrap_or(true) || excluded.get(eb.piece).copied().unwrap_or(true) {
-            continue;
-        }
-        if let Some(slot) = link.get_mut(a) {
-            *slot = Some(b);
-        }
-        if let Some(slot) = link.get_mut(b) {
-            *slot = Some(a);
-        }
-    }
+    let (joints, junctions) = sort_groups(&groups, &ends, &pieces, &mut excluded);
+    let link = joint_links(joints, &ends, &pieces, &excluded);
 
     let mut visited = vec![false; pieces.len()];
     let mut loops: Vec<Value> = Vec::new();
@@ -224,6 +165,84 @@ pub fn run(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// A report with nothing analyzed: an empty drawing, or one past the pair cap.
+/// Union-find over the ends: ends closer than `tol` share a root. Returns each end's parent.
+fn merge_ends(ends: &[End], tol: f64) -> Vec<usize> {
+    let n = ends.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+    for i in 0..n {
+        let Some(a) = ends.get(i) else { continue };
+        for j in (i + 1)..n {
+            let Some(b) = ends.get(j) else { continue };
+            if a.at.dist(b.at) <= tol {
+                let (ra, rb) = (find(&mut parent, i), find(&mut parent, j));
+                if ra != rb
+                    && let Some(slot) = parent.get_mut(ra)
+                {
+                    *slot = rb;
+                }
+            }
+        }
+    }
+    parent
+}
+
+/// Each group of two ends is a joint (end indices); each of three or more is a junction, reported
+/// with its pieces marked `excluded`.
+fn sort_groups(groups: &BTreeMap<usize, Vec<usize>>, ends: &[End], pieces: &[Piece], excluded: &mut [bool]) -> (Vec<(usize, usize)>, Vec<Value>) {
+    let mut joints: Vec<(usize, usize)> = Vec::new();
+    let mut junctions: Vec<Value> = Vec::new();
+    for group in groups.values() {
+        match group.as_slice() {
+            &[a, b] => joints.push((a, b)),
+            [_, _, ..] => {
+                let scale = group.len() as f64;
+                let mut at = Vec2::ZERO;
+                let mut members: Vec<Handle> = Vec::new();
+                for &e in group {
+                    let Some(end) = ends.get(e) else { continue };
+                    at += end.at / scale;
+                    let Some(piece) = pieces.get(end.piece) else { continue };
+                    if !members.contains(&piece.handle) {
+                        members.push(piece.handle);
+                    }
+                    if let Some(slot) = excluded.get_mut(end.piece) {
+                        *slot = true;
+                    }
+                }
+                junctions.push(json!({
+                    "at": [at.x, at.y],
+                    "ends": group.len(),
+                    "members": members.iter().map(|h| h.hex()).collect::<Vec<_>>(),
+                }));
+            }
+            _ => {}
+        }
+    }
+    (joints, junctions)
+}
+
+/// The link each end takes from the joints. A joint into an excluded piece is not a link, and
+/// a line whose own ends meet within a huge tolerance is a spur, not a zero-area loop.
+fn joint_links(joints: Vec<(usize, usize)>, ends: &[End], pieces: &[Piece], excluded: &[bool]) -> Vec<Option<usize>> {
+    let mut link: Vec<Option<usize>> = vec![None; ends.len()];
+    for (a, b) in joints {
+        let (Some(ea), Some(eb)) = (ends.get(a), ends.get(b)) else { continue };
+        if ea.piece == eb.piece && pieces.get(ea.piece).is_some_and(|p| p.arc.is_none()) {
+            continue;
+        }
+        if excluded.get(ea.piece).copied().unwrap_or(true) || excluded.get(eb.piece).copied().unwrap_or(true) {
+            continue;
+        }
+        if let Some(slot) = link.get_mut(a) {
+            *slot = Some(b);
+        }
+        if let Some(slot) = link.get_mut(b) {
+            *slot = Some(a);
+        }
+    }
+    link
+}
+
 fn empty_report(offset: usize, tol: f64, pair_tests: usize, pair_tests_needed: usize, pair_limit: usize, capped: bool, skipped: Skipped) -> Value {
     json!({
         "schema": 1,

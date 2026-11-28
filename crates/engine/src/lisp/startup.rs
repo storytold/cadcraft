@@ -42,7 +42,7 @@ impl Session {
             if once && self.lisp.acad_loaded && !per_drawing {
                 continue;
             }
-            let Some(text) = super::builtins::read_text_file(&dir.join(name).to_string_lossy()) else { continue };
+            let Some(text) = super::builtins::read_text_file(dir.join(name)) else { continue };
             if once {
                 self.lisp.acad_loaded = true;
             }

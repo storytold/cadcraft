@@ -7,6 +7,7 @@ use cadcraft_ui_egui::{CadApp, Services};
 /// The cursor icon the app asks for with the pointer in the middle of the drawing area.
 fn canvas_cursor(app: &mut CadApp) -> egui::CursorIcon {
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     let mut icon = egui::CursorIcon::Default;
     // A few frames: layout settles and the pointer hover is known from the second frame on.
     for _ in 0..3 {
@@ -34,4 +35,24 @@ fn system_cursor_stays_visible_over_the_canvas_when_requested() {
     app.run("ui.toggle.systemcursor", serde_json::json!({ "on": true })).ok();
     assert!(app.ui.system_cursor);
     assert_eq!(canvas_cursor(&mut app), egui::CursorIcon::Crosshair, "systemCursor keeps an OS cursor for magnifiers");
+}
+
+/// The host's default (the desktop app's `CADCRAFT_SYSTEM_CURSOR`) turns it on; a saved `false`
+/// and the resets keep it.
+#[test]
+fn the_host_default_survives_saved_profiles_and_resets() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.run("options", serde_json::json!({ "reset": true })).unwrap();
+    assert!(!app.ui.system_cursor, "off without a host default");
+
+    app.set_system_cursor_default(true);
+    assert!(app.ui.system_cursor);
+    app.load_profile(r#"{"systemCursor": false}"#);
+    assert!(app.ui.system_cursor);
+    app.ui.system_cursor = false;
+    app.run("options", serde_json::json!({ "reset": true })).unwrap();
+    assert!(app.ui.system_cursor);
+    app.ui.system_cursor = false;
+    app.run("ui.resetpalettes", serde_json::json!({})).unwrap();
+    assert!(app.ui.system_cursor);
 }

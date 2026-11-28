@@ -60,6 +60,43 @@ fn wipeout_hides_what_is_drawn_before_it() {
 }
 
 #[test]
+fn implicit_and_explicit_closure_draw_the_same_mask_and_frame() {
+    for reversed in [false, true] {
+        let mut implicit = drawing(false);
+        let handle = implicit.model.iter().find(|e| matches!(e.kind, EntityKind::Wipeout(_))).unwrap().handle;
+        if reversed {
+            implicit.model.modify(handle, |e| {
+                let EntityKind::Wipeout(w) = &mut e.kind else { panic!("wipeout") };
+                w.boundary.reverse();
+            });
+        }
+        let mut explicit = implicit.clone();
+        explicit.model.modify(handle, |e| {
+            let EntityKind::Wipeout(w) = &mut e.kind else { panic!("wipeout") };
+            w.boundary.push(w.boundary[0]);
+        });
+        for frame in [0, 1, 2] {
+            implicit.header.set_i64("WIPEOUTFRAME", frame);
+            explicit.header.set_i64("WIPEOUTFRAME", frame);
+            for plot in [false, true] {
+                let draw = if plot { build_plot } else { build };
+                let a = draw(&implicit, &Space::Model, &Options::default());
+                let b = draw(&explicit, &Space::Model, &Options::default());
+                assert_eq!(a.prims, b.prims);
+                assert_eq!(a.verts, b.verts);
+                assert_eq!(a.tris, b.tris);
+                for primitive in b.prims.iter().filter(|p| p.handle == handle && p.kind == Kind::Polyline) {
+                    let points = b.points(primitive);
+                    assert_eq!(points.len(), 5, "four corners and exactly one closing point");
+                    assert_eq!(points.first(), points.last());
+                }
+                assert_eq!(dark_pixels(&a), dark_pixels(&b));
+            }
+        }
+    }
+}
+
+#[test]
 fn wipeoutframe_controls_the_frame() {
     // Polylines in the list: the line, plus the frame when it is drawn.
     let polylines = |d: &Drawing, plot: bool| {

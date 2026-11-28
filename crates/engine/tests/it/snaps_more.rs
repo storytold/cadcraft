@@ -43,12 +43,14 @@ fn insertion_snaps_to_a_multileader_text() {
 #[test]
 fn geometric_center_of_a_closed_spline() {
     let mut s = Session::new();
-    // A closed fit spline symmetric about (5,5): its centroid is the centre.
+    // A closed fit spline through the corners of a square: the centroid of its area, as AutoCAD
+    // 2024 gives it (MASSPROP of its region; the curve is not symmetric, its tangent where it
+    // closes comes from the first points).
     s.execute("spline", &json!({"fit": [[0, 5], [5, 0], [10, 5], [5, 10]], "closed": true})).unwrap();
-    let c = Vec2::new(5.0, 5.0);
+    let c = Vec2::new(5.02693946, 5.04916453);
     let hit = snap::osnap(s.doc().unwrap(), &Space::Model, c + Vec2::new(0.05, 0.0), 0.5, mode::GCEN, None, false).expect("a geometric center");
     assert_eq!(hit.mode, mode::GCEN);
-    assert!(hit.point.dist(c) < 1e-3, "{:?}", hit.point);
+    assert!(hit.point.dist(c) < 1e-5, "{:?}", hit.point);
     // An open spline has none.
     let mut s = Session::new();
     s.execute("spline", &json!({"fit": [[0, 5], [5, 0], [10, 5], [5, 10]]})).unwrap();

@@ -47,6 +47,9 @@
 	Add: Pick points	Προσθήκη: επιλέξτε σημεία
 	Add: Select objects	Προσθήκη: επιλέξτε αντικείμενα
 	Additional angles	Πρόσθετες γωνίες
+	Add…	Προσθήκη…
+	Alias	Ψευδώνυμο
+	Alias file: {file}	Αρχείο ψευδωνύμων: {file}
 	Align	Στοίχιση
 	Align Multileaders	Στοίχιση πολλαπλών γραμμών υπόδειξης (Multileaders)
 	Align Text	Στοίχιση κειμένου
@@ -57,6 +60,8 @@
 	All Scales	Όλες οι κλίμακες
 	All Used Layers	Όλα τα χρησιμοποιούμενα επίπεδα (Layers)
 	An array that would create more objects than this is refused.	Απορρίπτεται η διάταξη επειδή θα δημιουργούσε περισσότερα αντικείμενα από το επιτρεπτό όριο.
+	Analyze Shapes	Ανάλυση σχημάτων
+	Analyze Usage	Ανάλυση χρήσης
 	Angle	Γωνία
 	Angular	Γωνιακό
 	Animation Effects	Εφέ κίνησης
@@ -89,6 +94,7 @@
 	Automatic save file location	Θέση αρχείων αυτόματης αποθήκευσης
 	Axis, End	Άξονας, τέλος
 	B	B
+	Backup copy	Αντίγραφο ασφαλείας
 	Base	Βάση
 	Baseline	Γραμμή βάσης (Baseline)
 	Batch Publish	Μαζική δημοσίευση
@@ -100,6 +106,7 @@
 	Blend	Ομαλή σύνδεση (Blend)
 	Block	Μπλοκ (Block)
 	Block Attribute Manager...	Διαχείριση ιδιοτήτων μπλοκ (Block Attributes)...
+	Block Description...	Περιγραφή μπλοκ...
 	Block Editor	Επεξεργαστής μπλοκ (Block Editor)
 	Block Reference	Αναφορά μπλοκ (Block Reference)
 	Block to create or edit	Μπλοκ προς δημιουργία ή επεξεργασία
@@ -117,6 +124,7 @@
 	Box	Κουτί (Box)
 	Break	Διακοπή (Break)
 	Break At Point	Διακοπή σε σημείο (Break at Point)
+	Break-line Symbol	Σύμβολο γραμμής διακοπής (Break-line Symbol)
 	Bring Above Objects	Μεταφορά πάνω από τα αντικείμενα
 	Bring Annotations to Front	Μεταφορά σχολιασμών στο προσκήνιο
 	Bring to Front	Μεταφορά στο προσκήνιο
@@ -144,10 +152,13 @@
 	Center, Start, Length	Κέντρο, αρχή, μήκος
 	Centered	Κεντραρισμένο
 	Chamfer	Λοξότμηση (Chamfer)
+	Change	Αλλαγή
+	Change Properties	Αλλαγή ιδιοτήτων (Change Properties)
 	Change Space	Αλλαγή χώρου σχεδίασης
 	Change to Current Layer	Μεταφορά στο τρέχον επίπεδο (Layer)
 	Changed: {n}	Αλλαγές: {n}
 	Changes apply at once and are kept for next time.	Οι αλλαγές εφαρμόζονται αμέσως και διατηρούνται για την επόμενη φορά.
+	Choose the command the alias starts.	Επιλέξτε την εντολή που εκκινεί το ψευδώνυμο.
 	Circle	Κύκλος
 	Circumference	Περιφέρεια
 	Clear	Εκκαθάριση
@@ -165,6 +176,16 @@
 	Close Array Editing	Κλείσιμο επεξεργασίας διάταξης
 	Close Block Editor	Κλείσιμο επεξεργαστή μπλοκ
 	Close Comparison	Κλείσιμο σύγκρισης
+	Command	Εντολή
+	Convert Text to Mtext	Μετατροπή κειμένου σε πολυγραμμικό κείμενο (MText)
+	Create backup copy with each save	Δημιουργία αντιγράφου ασφαλείας σε κάθε αποθήκευση
+	Customize	Προσαρμογή
+	Define each corner of the selection window with a separate click.	Ορίστε κάθε γωνία του παραθύρου επιλογής με ξεχωριστό κλικ.
+	Discard	Απόρριψη
+	Don't Save	Να μην αποθηκευτεί
+	Edit Command Aliases (PGP)...	Επεξεργασία ψευδωνύμων εντολών (PGP)...
+	Edit…	Επεξεργασία…
+	Explode Attributes to Text	Διάσπαση ιδιοτήτων (Attributes) σε κείμενο
 	Export Comparison	Εξαγωγή σύγκρισης
 	Closed	Κλειστό
 	Coincident	Σύμπτωση (Coincident)
@@ -196,6 +217,29 @@
 	Constraint Bars	Γραμμές περιορισμών
 	Constraint Settings	Ρυθμίσεις περιορισμών
 	Construction Line	Βοηθητική ευθεία (Construction Line)
+	Express Tools	Εργαλεία Express (Express Tools)
+	Font	Γραμματοσειρά
+	Imperial (inches)	Αγγλοσαξονικό (ίντσες)
+	Implied Loops	Έμμεσοι βρόχοι
+	Interface scale	Κλίμακα περιβάλλοντος
+	Island	Νησίδα
+	Metric (millimetres)	Μετρικό (χιλιοστά)
+	More than {n} aliases.	Περισσότερα από {n} ψευδώνυμα.
+	Move/Copy/Rotate	Μετακίνηση/Αντιγραφή/Περιστροφή
+	Multiple Insert	Πολλαπλή εισαγωγή (Multiple Insert)
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Τα νέα σχέδια και το πρώτο σχέδιο κατά την εκκίνηση χρησιμοποιούν αυτές τις μονάδες, εκτός αν έχει οριστεί προεπιλεγμένο πρότυπο (QNEWTEMPLATE).
+	No alias file loaded. REINIT replaces these aliases with a file's.	Δεν έχει φορτωθεί αρχείο ψευδωνύμων. Η εντολή REINIT αντικαθιστά αυτά τα ψευδώνυμα με αυτά ενός αρχείου.
+	Save Layout as Template	Αποθήκευση διάταξης ως πρότυπο (Save Layout as Template)
+	Save alias	Αποθήκευση ψευδωνύμου
+	Save changes to block "{name}"?	Να αποθηκευτούν οι αλλαγές στο μπλοκ «{name}»;
+	Save changes to {name}?	Να αποθηκευτούν οι αλλαγές στο {name};
+	Select boundaries to remove	Επιλέξτε περιγράμματα για αφαίρεση
+	Select using two clicks only	Επιλογή μόνο με δύο κλικ
+	Type an alias name.	Πληκτρολογήστε ένα όνομα ψευδωνύμου.
+	Units	Μονάδες
+	Units of new drawings	Μονάδες νέων σχεδίων
+	Your changes will be lost if you don't save them.	Οι αλλαγές σας θα χαθούν αν δεν τις αποθηκεύσετε.
+	built-in	ενσωματωμένο
 	contains authoring elements. Open in Block Editor?	περιέχει στοιχεία δημιουργίας. Άνοιγμα στον επεξεργαστή μπλοκ;
 	Contents	Περιεχόμενα
 	Continue	Συνέχεια
@@ -336,7 +380,7 @@
 	Enter a vertex editing option	Εισαγάγετε επιλογή επεξεργασίας κορυφής
 	Enter an option	Εισαγάγετε επιλογή
 	Enter angle of xline	Εισαγάγετε γωνία βοηθητικής ευθείας
-	Enter angle of xline (0) or	Εισαγάγετε γωνία βοηθητικής ευθείας (0) ή
+	Enter angle of xline (0)	Εισαγάγετε γωνία βοηθητικής ευθείας (0)
 	Enter area of rectangle in current units	Εισαγάγετε το εμβαδόν ορθογωνίου στις τρέχουσες μονάδες
 	Enter attribute prompt	Εισαγάγετε μήνυμα προτροπής ιδιότητας
 	Enter attribute tag name	Εισαγάγετε όνομα ετικέτας ιδιότητας
@@ -347,7 +391,7 @@
 	Enter default attribute value	Εισαγάγετε προεπιλεγμένη τιμή ιδιότητας
 	Enter degree of spline	Εισαγάγετε βαθμό καμπύλης spline
 	Enter delta angle	Εισαγάγετε μεταβολή γωνίας
-	Enter delta length or	Εισαγάγετε μεταβολή μήκους ή
+	Enter delta length	Εισαγάγετε μεταβολή μήκους
 	Enter dimension text	Εισαγάγετε κείμενο διάστασης
 	Enter dimension text (<> = measurement)	Εισαγάγετε κείμενο διάστασης (<> = μέτρηση)
 	Enter dimension value or [name=expression]	Εισαγάγετε τιμή διάστασης ή [όνομα=έκφραση]
@@ -640,6 +684,7 @@
 	Name	Όνομα
 	Name (A–Z)	Όνομα (Α–Ω)
 	Named	Με όνομα
+	Named Viewports...	Αποθηκευμένα παράθυρα προβολής...
 	Named Views...	Αποθηκευμένες όψεις...
 	Nearest	Πλησιέστερο (Nearest)
 	New	Νέο
@@ -700,6 +745,7 @@
 	One of the Crafting Apps by the ArtCraft team and community.	Μία από τις εφαρμογές Crafting Apps της ομάδας και της κοινότητας ArtCraft.
 	Only in this drawing: {n}	Μόνο σε αυτό το σχέδιο: {n}
 	Only in {name}: {n}	Μόνο στο {name}: {n}
+	Oops	Επαναφορά διαγραμμένων αντικειμένων
 	Open	Άνοιγμα
 	Open (⌘O)	Άνοιγμα (⌘O)
 	Open a drawing first.	Ανοίξτε πρώτα ένα σχέδιο.
@@ -916,8 +962,8 @@
 	Select an arc or circle	Επιλέξτε τόξο ή κύκλο
 	Select an arc.	Επιλέξτε τόξο.
 	Select an object	Επιλέξτε αντικείμενο
-	Select an object to change or	Επιλέξτε αντικείμενο για αλλαγή ή
-	Select an object to measure or	Επιλέξτε αντικείμενο για μέτρηση ή
+	Select an object to change	Επιλέξτε αντικείμενο για αλλαγή
+	Select an object to measure	Επιλέξτε αντικείμενο για μέτρηση
 	Select an object.	Επιλέξτε αντικείμενο.
 	Select an open curve.	Επιλέξτε ανοικτή καμπύλη.
 	Select an open line, arc, polyline, ellipse arc or spline.	Επιλέξτε ανοικτή γραμμή, τόξο, πολυγραμμή, ελλειπτικό τόξο ή καμπύλη spline.
@@ -931,9 +977,8 @@
 	Select first line	Επιλέξτε πρώτη γραμμή
 	Select first line or arc	Επιλέξτε πρώτη γραμμή ή τόξο
 	Select first object	Επιλέξτε πρώτο αντικείμενο
-	Select first object or	Επιλέξτε πρώτο αντικείμενο ή
 	Select first point	Επιλέξτε πρώτο σημείο
-	Select nested objects to copy or	Επιλέξτε ένθετα αντικείμενα για αντιγραφή ή
+	Select nested objects to copy	Επιλέξτε ένθετα αντικείμενα για αντιγραφή
 	Select object	Επιλέξτε αντικείμενο
 	Select object to dimension	Επιλέξτε αντικείμενο για διαστασιολόγηση
 	Select object to divide	Επιλέξτε αντικείμενο για διαίρεση
@@ -951,7 +996,7 @@
 	Select one polyline (Multiple is available through the JSON form).	Επιλέξτε μία πολυγραμμή (η επιλογή Multiple διατίθεται μέσω JSON).
 	Select path curve	Επιλέξτε καμπύλη διαδρομής
 	Select point or object	Επιλέξτε σημείο ή αντικείμενο
-	Select polyline or	Επιλέξτε πολυγραμμή ή
+	Select polyline	Επιλέξτε πολυγραμμή
 	Select second line	Επιλέξτε δεύτερη γραμμή
 	Select second line or shift-select to apply corner	Επιλέξτε δεύτερη γραμμή ή κρατήστε Shift για εφαρμογή γωνίας
 	Select second object	Επιλέξτε δεύτερο αντικείμενο
@@ -1033,9 +1078,8 @@
 	Specify axis endpoint of ellipse	Καθορίστε τελικό σημείο άξονα έλλειψης
 	Specify base diameter	Καθορίστε διάμετρο βάσης
 	Specify base point	Καθορίστε σημείο βάσης
-	Specify base point or	Καθορίστε σημείο βάσης ή
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Καθορίστε σημείο βάσης ή μετατόπιση (σύρετε με το μεσαίο πλήκτρο του ποντικιού για μετατόπιση όψης σε πραγματικό χρόνο)
-	Specify base radius or	Καθορίστε ακτίνα βάσης ή
+	Specify base radius	Καθορίστε ακτίνα βάσης
 	Specify center of donut	Καθορίστε κέντρο δακτυλίου
 	Specify center of ellipse	Καθορίστε κέντρο έλλειψης
 	Specify center of polygon	Καθορίστε κέντρο πολυγώνου
@@ -1077,7 +1121,7 @@
 	Specify first point on circle: _tan to	Καθορίστε πρώτο σημείο επάνω στον κύκλο: _tan προς
 	Specify first source point	Καθορίστε πρώτο σημείο προέλευσης
 	Specify height	Καθορίστε ύψος
-	Specify helix height or	Καθορίστε ύψος έλικας ή
+	Specify helix height	Καθορίστε ύψος έλικας
 	Specify included angle	Καθορίστε περιεχόμενη γωνία
 	Specify insertion base point	Καθορίστε σημείο βάσης εισαγωγής
 	Specify insertion point	Καθορίστε σημείο εισαγωγής
@@ -1096,7 +1140,6 @@
 	Specify new width for all segments	Καθορίστε νέο πλάτος για όλα τα τμήματα
 	Specify next point	Καθορίστε επόμενο σημείο
 	Specify offset distance	Καθορίστε απόσταση παράλληλης μετατόπισης (Offset)
-	Specify offset distance or	Καθορίστε απόσταση παράλληλης μετατόπισης ή
 	Specify opposite corner	Καθορίστε απέναντι γωνία
 	Specify other corner point	Καθορίστε το άλλο γωνιακό σημείο
 	Specify other endpoint of axis	Καθορίστε το άλλο τελικό σημείο άξονα
@@ -1109,7 +1152,6 @@
 	Specify radius of circle	Καθορίστε ακτίνα κύκλου
 	Specify rotation angle	Καθορίστε γωνία περιστροφής
 	Specify rotation angle of text	Καθορίστε γωνία περιστροφής κειμένου
-	Specify rotation angle or	Καθορίστε γωνία περιστροφής ή
 	Specify scale factor	Καθορίστε συντελεστή κλίμακας
 	Specify second angle endpoint	Καθορίστε δεύτερο τελικό σημείο γωνίας
 	Specify second break point	Καθορίστε δεύτερο σημείο διακοπής
@@ -1142,9 +1184,9 @@
 	Specify third source point or <continue>	Καθορίστε τρίτο σημείο προέλευσης ή <συνέχεια>
 	Specify through point	Καθορίστε σημείο διέλευσης
 	Specify top diameter	Καθορίστε άνω διάμετρο
-	Specify top radius or	Καθορίστε άνω ακτίνα ή
+	Specify top radius	Καθορίστε άνω ακτίνα
 	Specify total angle	Καθορίστε συνολική γωνία
-	Specify total length or	Καθορίστε συνολικό μήκος ή
+	Specify total length	Καθορίστε συνολικό μήκος
 	Specify width for rectangles	Καθορίστε πλάτος ορθογωνίων
 	Sphere	Σφαίρα
 	Spherical	Σφαιρικό
@@ -1318,6 +1360,9 @@
 	Zoom Realtime	Μεγέθυνση σε πραγματικό χρόνο
 	Zoom sensitivity	Ευαισθησία μεγέθυνσης
 	Zoom Window	Μεγέθυνση περιοχής παραθύρου
+	overrides built-in	υπερισχύει του ενσωματωμένου
+	{alias} is already defined; select it and use Edit.	Το {alias} είναι ήδη ορισμένο· επιλέξτε το και χρησιμοποιήστε την Επεξεργασία.
+	{command} is an unknown command.	Το {command} δεν είναι γνωστή εντολή.
 	{contributors} · {commits}	{contributors} · {commits}
 	{kind} (constraint {id})	{kind} (περιορισμός {id})
 	{kind} constraint {name} = {expression}  (double-click to edit)	{kind} περιορισμός {name} = {expression}  (διπλό κλικ για επεξεργασία)
@@ -1336,3 +1381,48 @@ menu	View	Προβολή
 	Check for Updates…	Έλεγχος για ενημερώσεις…
 	CADCraft is up to date.	Το CADCraft είναι ενημερωμένο.
 	Could not check for updates.	Δεν ήταν δυνατός ο έλεγχος για ενημερώσεις.
+	Add a drawing file as a block library	Προσθήκη αρχείου σχεδίου ως βιβλιοθήκης μπλοκ
+	Add a folder of drawings or a drawing file to use its blocks.	Προσθέστε έναν φάκελο με σχέδια ή ένα αρχείο σχεδίου για να χρησιμοποιήσετε τα μπλοκ του.
+	Block Libraries	Βιβλιοθήκες μπλοκ
+	Block Library	Βιβλιοθήκη μπλοκ
+	Blocks Palette	Παλέτα μπλοκ
+	Click a block, then pick its insertion point.	Κάντε κλικ σε ένα μπλοκ και μετά ορίστε το σημείο εισαγωγής του.
+	Current Drawing	Τρέχον σχέδιο
+	Details	Λεπτομέρειες
+	Extra Large Icons	Πολύ μεγάλα εικονίδια
+	Folder or file	Φάκελος ή αρχείο
+	Import Library Block	Εισαγωγή μπλοκ βιβλιοθήκης
+	Insert and Explode	Εισαγωγή και διάσπαση
+	Large Icons	Μεγάλα εικονίδια
+	Libraries	Βιβλιοθήκες
+	Medium Icons	Μεσαία εικονίδια
+	No block matches the filter.	Κανένα μπλοκ δεν ταιριάζει με το φίλτρο.
+	This block is already in the drawing, so its definition is used.	Αυτό το μπλοκ υπάρχει ήδη στο σχέδιο, οπότε χρησιμοποιείται ο ορισμός του.
+	Open Library...	Άνοιγμα βιβλιοθήκης...
+	Read the library again	Επανάγνωση της βιβλιοθήκης
+	Reading the library...	Ανάγνωση της βιβλιοθήκης...
+	Refresh	Ανανέωση
+	Remove from the list	Αφαίρεση από τη λίστα
+	Repeat Placement	Επανάληψη τοποθέτησης
+	Small Icons	Μικρά εικονίδια
+	This drawing has no blocks.	Αυτό το σχέδιο δεν έχει μπλοκ.
+	This library has no drawings or blocks.	Αυτή η βιβλιοθήκη δεν έχει σχέδια ή μπλοκ.
+	Only the first {n} are shown.	Εμφανίζονται μόνο τα πρώτα {n}.
+	Find All	Find All
+	Find what:	Find what:
+	Match case	Match case
+	Replace	Replace
+	Replace All	Replace All
+	Replace with:	Replace with:
+	Replacement text	Replacement text
+	Results	Results
+	Searches the current space.	Searches the current space.
+	Text to find	Text to find
+	Whole words	Whole words
+	Nothing found	Nothing found
+	Ctrl+Enter to apply	Ctrl+Enter to apply
+	Edit Text	Edit Text
+	The drawing changed. Close the window and open it again.	Το σχέδιο άλλαξε. Κλείστε το παράθυρο και ανοίξτε το ξανά.
+
+# ArtCraft feature naming
+	Additional Tools	Πρόσθετα εργαλεία

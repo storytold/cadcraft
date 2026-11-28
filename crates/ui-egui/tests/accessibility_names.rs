@@ -13,7 +13,7 @@ use serde_json::json;
 
 /// A 1400×900 kittest harness whose frame runs `logic` and then `ui` on the supplied app.
 fn harness(app: CadApp) -> Harness<'static, CadApp> {
-    Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+    Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(ui.ctx());
             app.ui(ui);

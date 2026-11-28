@@ -1,7 +1,9 @@
 //! Polygon filling: even-odd regions to triangles (slab decomposition), wide polylines.
 
 use cadcraft_doc::LwPolyline;
-use cadcraft_geom::{Polyline, Vec2};
+use cadcraft_geom::{MAX_TESSELLATED_POINTS, Polyline, Segment, Vec2};
+
+use crate::pen::MITER_LIMIT;
 
 /// Triangulate an even-odd region bounded by closed loops (holes allowed) by cutting it into
 /// horizontal slabs at every vertex y and emitting trapezoids. Two edges that cross inside a slab
@@ -116,21 +118,43 @@ fn crossing_y(l: &(f64, f64, f64), r: &(f64, f64, f64), ya: f64, yb: f64) -> Opt
     (y > ya && y < yb && y - ya > 1e-12 && yb - y > 1e-12).then_some(y)
 }
 
-/// Triangles for a polyline with widths (constant or tapered per segment).
+/// The points of `seg` (both ends included) into `pts`, spending `budget` as
+/// [`Polyline::tessellate_within`] does: once it is spent the segment is its chord. Every arc of a
+/// wide polyline samples up to thousands of points and makes six triangle corners from each, so a
+/// polyline of many tiny-tolerance arcs would otherwise build gigabytes (#1922).
+pub(crate) fn sample_within(seg: &Segment, tol: f64, budget: &mut usize, pts: &mut Vec<Vec2>) {
+    if *budget > 0 {
+        let from = pts.len();
+        seg.tessellate(tol, pts);
+        *budget = budget.saturating_sub(pts.len().saturating_sub(from));
+    } else {
+        pts.extend([seg.start(), seg.end()]);
+    }
+}
+
+/// Triangles for a polyline with widths (constant or tapered per segment), sampling at most
+/// about [`MAX_TESSELLATED_POINTS`] points as the centre line does.
 pub fn wide_polyline(p: &LwPolyline, tol: f64) -> Vec<Vec2> {
+    let mut budget = MAX_TESSELLATED_POINTS;
+    wide_polyline_within(p, tol, &mut budget)
+}
+
+/// [`wide_polyline`] spending `budget` sampled points.
+fn wide_polyline_within(p: &LwPolyline, tol: f64, budget: &mut usize) -> Vec<Vec2> {
     let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
     let mut out = Vec::new();
+    let mut ends: Vec<(BandEnd, BandEnd)> = Vec::new();
     let n = p.vertices.len();
     for (i, seg) in pl.segments().iter().enumerate() {
         let v = p.vertices.get(i % n.max(1)).copied().unwrap_or_default();
         let (w0, w1) = if p.const_width > 0.0 { (p.const_width, p.const_width) } else { (v.start_width, v.end_width) };
         let mut pts = Vec::new();
-        seg.tessellate(tol, &mut pts);
+        sample_within(seg, tol, budget, &mut pts);
         let m = pts.len();
         if m < 2 {
             continue;
         }
-        let mut prev: Option<(Vec2, Vec2)> = None;
+        let mut edges = Vec::with_capacity(m);
         for (k, q) in pts.iter().enumerate() {
             let t = k as f64 / (m - 1) as f64;
             let w = (w0 + (w1 - w0) * t) / 2.0;
@@ -139,17 +163,72 @@ pub fn wide_polyline(p: &LwPolyline, tol: f64) -> Vec<Vec2> {
                 .normalized();
             let nrm = dir.perp() * w;
             let cur = (*q + nrm, *q - nrm);
-            if let Some((a, b)) = prev {
+            if let Some(&(a, b)) = edges.last() {
                 out.extend_from_slice(&[a, b, cur.1, a, cur.1, cur.0]);
             }
-            prev = Some(cur);
+            edges.push(cur);
         }
+        // A segment of no length (a repeated vertex) has no direction to join along: the
+        // segments on either side of it meet at the same point and join each other.
+        let end = |c: usize, inner: usize, w: f64| {
+            let (centre, toward) = (*pts.get(c)?, *pts.get(inner)?);
+            (centre.dist(toward) > cadcraft_geom::EPS).then_some(())?;
+            Some(BandEnd { centre, toward, edge: *edges.get(c)?, inner_edge: *edges.get(inner)?, hw: w / 2.0 })
+        };
+        if let (Some(start), Some(finish)) = (end(0, 1, w0), end(m - 1, m - 2, w1)) {
+            ends.push((start, finish));
+        }
+    }
+    // The corner at each vertex where one segment's band ends and the next one's starts.
+    for pair in ends.windows(2) {
+        if let [(_, arriving), (leaving, _)] = pair {
+            corner(&mut out, arriving, leaving);
+        }
+    }
+    if p.closed
+        && ends.len() > 1
+        && let (Some(last), Some(first)) = (ends.last(), ends.first())
+    {
+        corner(&mut out, &last.1, &first.0);
     }
     out
 }
 
+/// One end of a segment's band: its centre point and the sample next to it inside the segment,
+/// with the band's edge points (left, right of the centre line) at both.
+struct BandEnd {
+    centre: Vec2,
+    toward: Vec2,
+    edge: (Vec2, Vec2),
+    inner_edge: (Vec2, Vec2),
+    hw: f64,
+}
+
+/// Fill the corner between the band arriving at `a` and the one leaving from `b`: their outer
+/// edges are extended until they meet (a miter), or joined straight across (a bevel) when they
+/// would meet further out than [`MITER_LIMIT`] half widths. Each edge keeps its own direction,
+/// so tapered segments meet where their edges do.
+fn corner(out: &mut Vec<Vec2>, a: &BandEnd, b: &BandEnd) {
+    let c = a.centre;
+    let (d0, d1) = ((a.centre - a.toward).normalized(), (b.toward - b.centre).normalized());
+    let scale = a.hw.max(b.hw);
+    let turn = d0.cross(d1);
+    if scale <= 0.0 || turn.abs() <= 1e-12 {
+        return; // no width, or straight on (or straight back)
+    }
+    // The outer side of the turn: right of a left turn, left of a right turn.
+    let pick = |e: (Vec2, Vec2)| if turn > 0.0 { e.1 } else { e.0 };
+    let (a0, a1, b0, b1) = (pick(a.inner_edge), pick(a.edge), pick(b.edge), pick(b.inner_edge));
+    let miter = cadcraft_geom::line_line_infinite(a0, a1, b1, b0)
+        .filter(|&(tip, t, u)| t >= 1.0 - 1e-9 && u >= 1.0 - 1e-9 && tip.dist(c) <= MITER_LIMIT * scale);
+    match miter {
+        Some((tip, ..)) => out.extend_from_slice(&[c, a1, tip, c, tip, b0]),
+        None => out.extend_from_slice(&[c, a1, b0]),
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn area(tris: &[Vec2]) -> f64 {
@@ -269,6 +348,75 @@ mod tests {
         assert_matches_oracle(&[reversed, hole], -1.0, 11.0);
         let tri = vec![Vec2::new(0.0, 0.0), Vec2::new(4.0, 0.0), Vec2::new(0.0, 3.0)];
         assert_matches_oracle(&[tri], -1.0, 5.0);
+    }
+
+    /// A wide polyline of 100 half circles at a tiny tolerance: each could sample 4,096 points.
+    pub(crate) fn arcs() -> LwPolyline {
+        let vertices = (0..100)
+            .map(|i| cadcraft_geom::PolyVertex { bulge: 1.0, ..cadcraft_geom::PolyVertex::new(Vec2::new(f64::from(i) * 100.0, 0.0)) })
+            .collect();
+        LwPolyline { vertices, closed: false, const_width: 1.0, elevation: 0.0, plinegen: false }
+    }
+
+    /// Sampling stops at the budget, past which each arc is a chord (#1922). The budget is checked
+    /// before each segment, so the last one sampled may pass it by up to 4,096 points; each point
+    /// makes six triangle corners.
+    #[test]
+    fn wide_arcs_stop_sampling_at_the_budget() {
+        let mut budget = 1000;
+        let tris = wide_polyline_within(&arcs(), 1e-9, &mut budget);
+        assert!(!tris.is_empty() && tris.len() <= 6 * (1000 + 4096 + 2 * 100), "{}", tris.len());
+    }
+
+    fn wide(points: &[(f64, f64)], closed: bool, width: f64) -> LwPolyline {
+        let vertices = points.iter().map(|&(x, y)| cadcraft_geom::PolyVertex::new(Vec2::new(x, y))).collect();
+        LwPolyline { vertices, closed, const_width: width, elevation: 0.0, plinegen: false }
+    }
+
+    /// Two segments of a wide polyline meet in a mitred corner: the outer corner of the bend is
+    /// filled, not left as a notch between the two segments (#3443).
+    #[test]
+    fn wide_polyline_corners_are_mitred() {
+        let tris = wide_polyline(&wide(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)], false, 2.0), 0.01);
+        assert!(cover(&tris, Vec2::new(10.9, -0.9)) > 0);
+        // A closed polyline's corner at its first vertex is mitred too.
+        let tris = wide_polyline(&wide(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)], true, 2.0), 0.01);
+        assert!(cover(&tris, Vec2::new(-0.9, -0.9)) > 0);
+        // A repeated vertex (common in imported drawings) doesn't stop the corner.
+        let tris = wide_polyline(&wide(&[(0.0, 0.0), (10.0, 0.0), (10.0, 0.0), (10.0, 10.0)], false, 2.0), 0.01);
+        assert!(cover(&tris, Vec2::new(10.9, -0.9)) > 0);
+    }
+
+    /// A tapered segment meets the next one along its own edges, not along an offset of its
+    /// centre line: a segment widening from 2 to 4 meets one 2 wide where their edges meet.
+    #[test]
+    fn tapered_corners_follow_the_segment_edges() {
+        let mut p = wide(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)], false, 0.0);
+        for (v, (w0, w1)) in p.vertices.iter_mut().zip([(2.0, 4.0), (2.0, 2.0)]) {
+            (v.start_width, v.end_width) = (w0, w1);
+        }
+        let tris = wide_polyline(&p, 0.01);
+        // The first segment's outer edge runs from (0, -1) to (10, -2), so it meets the second's
+        // (x = 11) at (11, -2.1); an offset of the centre line would stop at (11, -2).
+        assert!(cover(&tris, Vec2::new(10.95, -2.05)) > 0);
+        assert!(cover(&tris, Vec2::new(11.05, -2.05)) == 0);
+    }
+
+    /// A corner sharper than the miter limit is bevelled instead of growing a long spike out past
+    /// the vertex.
+    #[test]
+    fn sharp_corners_are_bevelled() {
+        let tris = wide_polyline(&wide(&[(0.0, 0.0), (10.0, 0.0), (0.0, 0.5)], false, 2.0), 0.01);
+        let reach = tris.iter().map(|p| p.x).fold(f64::MIN, f64::max);
+        assert!(reach < 10.0 + MITER_LIMIT, "{reach}");
+    }
+
+    /// Straight on, no corner is added: the band covers each point once, so a translucent
+    /// polyline doesn't darken where its segments meet.
+    #[test]
+    fn straight_runs_add_no_corner() {
+        let tris = wide_polyline(&wide(&[(0.0, 0.0), (5.0, 0.0), (10.0, 0.0)], false, 2.0), 0.01);
+        assert!((area(&tris) - 20.0).abs() < 1e-9, "{}", area(&tris));
     }
 
     #[test]

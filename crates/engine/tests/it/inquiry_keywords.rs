@@ -35,6 +35,45 @@ fn area_object_add_and_subtract_keep_a_running_total() {
 }
 
 #[test]
+fn area_too_large_to_hold_is_refused() {
+    // A 2e154 square has an area of 4e308, past f64's range; its perimeter fits.
+    let big = json!([[0, 0], [2e154, 0], [2e154, 2e154], [0, 2e154]]);
+    let mut s = Session::new();
+    let err = s.execute("area", &json!({ "points": big })).unwrap_err();
+    assert!(err.to_string().contains("the area is too large"), "{err}");
+    // Two sides of 1e308: the area fits, the perimeter does not.
+    let long = json!([[0, 0], [1e308, 0], [1e308, 1e-300]]);
+    let err = s.execute("area", &json!({ "points": long })).unwrap_err();
+    assert!(err.to_string().contains("the perimeter is too large"), "{err}");
+
+    // Typed, nothing is reported.
+    let (_, log) = run(&["area", "0,0", "2e154,0", "2e154,2e154", "0,2e154", ""]);
+    assert!(has(&log, "The area is too large."), "{log:?}");
+    assert!(!has(&log, "Area = "), "{log:?}");
+
+    // Areas of 8.1e307 that each fit overflow the running total at the third; the total keeps two.
+    let sq = ["0,0", "9e153,0", "9e153,9e153", "0,9e153", ""];
+    for mode in ["a", "s"] {
+        let mut lines = vec!["area", mode];
+        for _ in 0..3 {
+            lines.extend(sq);
+        }
+        let (s, log) = run(&lines);
+        assert!(has(&log, "The total area is too large."), "{mode}: {log:?}");
+        assert_eq!(log.iter().filter(|l| l.contains("Total area = ")).count(), 2, "{mode}: {log:?}");
+        assert!(s.running.is_some(), "{mode}: the command goes on");
+    }
+
+    // MEASUREGEOM's Volume option does not keep such an area waiting for a height: the next area is measured.
+    let mut lines = vec!["measuregeom", "v", "a", "0,0", "2e154,0", "2e154,2e154", "0,2e154", ""];
+    lines.extend(["0,0", "1,0", "1,1", "0,1", "", "2"]);
+    let (s, log) = run(&lines);
+    assert!(has(&log, "The area is too large."), "{log:?}");
+    assert!(has(&log, "Total volume = 2"), "{log:?}");
+    assert!(s.running.is_some(), "the command goes on");
+}
+
+#[test]
 fn area_object_on_an_open_polyline_closes_the_area_but_not_the_perimeter() {
     // Open, 160 long; the closing side back to 0,0 would add 116.619.
     let (_, log) = run(&["pline", "0,0", "100,0", "100,60", "", "area", "o", "50,0"]);
@@ -42,10 +81,7 @@ fn area_object_on_an_open_polyline_closes_the_area_but_not_the_perimeter() {
 }
 
 #[test]
-fn area_unsupported_keywords_say_so_and_length_extends_the_last_segment() {
-    let (s, log) = run(&["area", "0,0", "a"]);
-    assert!(has(&log, "not available yet"), "{log:?}");
-    assert!(s.running.is_some());
+fn area_length_extends_the_last_segment() {
     // Length continues along the previous segment: 0,0 -> 4,0 -> +6 -> 10,0, then 10,10.
     let (_, log) = run(&["area", "0,0", "4,0", "l", "6", "10,10", ""]);
     assert!(has(&log, "Area = 50.0000"), "{log:?}");
@@ -56,6 +92,91 @@ fn dist_multiple_points_sums_the_segments() {
     let (s, log) = run(&["dist", "0,0", "m", "3,4", "3,10", ""]);
     assert!(has(&log, "Distance = 11.0000"), "{log:?}");
     assert!(s.running.is_none(), "{}", s.prompt_text());
+}
+
+#[test]
+fn area_arc_option_measures_arc_segments() {
+    // A 10 x 10 square whose right side is a half circle of radius 5 bulging out:
+    // area 100 + 12.5 pi, perimeter 30 + 5 pi.
+    let expected = "Area = 139.2699, Perimeter = 45.7080";
+
+    // Arc mode: a point ends an arc that continues the last segment; Line goes back to lines.
+    let (s, _) = run(&["area", "0,0", "10,0", "a"]);
+    assert!(s.prompt_text().contains("Specify endpoint of arc"), "{}", s.prompt_text());
+    assert!(s.prompt_text().contains("CEnter"), "{}", s.prompt_text());
+    let (s, log) = run(&["area", "0,0", "10,0", "a", "10,10", "l", "0,10", ""]);
+    assert!(has(&log, expected), "{log:?}");
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+
+    // The same half circle by its center, by its included angle and by a second point.
+    for arc in [&["ce", "10,5", "10,10"][..], &["a", "180", "10,10"], &["s", "15,5", "10,10"]] {
+        let mut lines = vec!["area", "0,0", "10,0", "a"];
+        lines.extend_from_slice(arc);
+        lines.extend(["l", "0,10", ""]);
+        let (_, log) = run(&lines);
+        assert!(has(&log, expected), "{arc:?}: {log:?}");
+    }
+
+    // After the arc, Length continues along its end tangent (-X): 10 to 0,10.
+    let (_, log) = run(&["area", "0,0", "10,0", "a", "10,10", "l", "l", "10", ""]);
+    assert!(has(&log, expected), "{log:?}");
+
+    // Undo removes the arc segment; arc mode stays on.
+    let (s, _) = run(&["area", "0,0", "10,0", "a", "10,10", "u"]);
+    assert!(s.prompt_text().contains("Specify endpoint of arc"), "{}", s.prompt_text());
+
+    // CLose ends with an arc back to the first point: center 0,10, radius 10, 270 degrees.
+    let (s, log) = run(&["area", "0,0", "10,0", "10,10", "a", "cl"]);
+    assert!(has(&log, "Area = 335.6194, Perimeter = 67.1239"), "{log:?}");
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    // No arc continues the last segment back to the first point when it lies straight behind.
+    let (s, log) = run(&["area", "0,0", "10,0", "a", "cl"]);
+    assert!(has(&log, "Invalid arc endpoint."), "{log:?}");
+    assert!(s.prompt_text().contains("Specify endpoint of arc"), "{}", s.prompt_text());
+
+    // Add mode keeps its prefix in arc mode and adds the curved area to the total.
+    let (s, _) = run(&["area", "a", "0,0", "10,0", "a"]);
+    assert!(s.prompt_text().contains("(ADD mode) Specify endpoint of arc"), "{}", s.prompt_text());
+    let (_, log) = run(&["area", "a", "0,0", "10,0", "a", "10,10", "l", "0,10", ""]);
+    assert!(has(&log, "Total area = 139.2699"), "{log:?}");
+
+    // MEASUREGEOM's Volume option measures the same area times the height.
+    let (_, log) = run(&["measuregeom", "v", "0,0", "10,0", "a", "10,10", "l", "0,10", "", "2"]);
+    assert!(has(&log, "Volume = 278.5398"), "{log:?}");
+}
+
+#[test]
+fn dist_multiple_points_arc_option_adds_arc_lengths() {
+    // 10 along X, then a half circle of radius 5 up to 10,10: 10 + 5 pi.
+    let (s, log) = run(&["dist", "0,0", "m", "10,0", "a", "10,10"]);
+    assert!(has(&log, "Distance = 25.7080"), "{log:?}");
+    assert!(s.prompt_text().contains("Specify endpoint of arc"), "{}", s.prompt_text());
+
+    // Line, then Length continues along the tangent at the arc's end (-X): 5 more.
+    let (s, log) = run(&["dist", "0,0", "m", "10,0", "a", "10,10", "l", "l", "5", ""]);
+    assert!(has(&log, "Distance = 30.7080"), "{log:?}");
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+
+    // Undo removes the arc segment.
+    let (_, log) = run(&["dist", "0,0", "m", "10,0", "a", "10,10", "u", ""]);
+    assert_eq!(log.iter().filter(|l| l.contains("Distance = 10.0000")).count(), 2, "{log:?}");
+
+    // CLose adds an arc back to the first point and ends: 20 + 15 pi.
+    let (s, log) = run(&["dist", "0,0", "m", "10,0", "10,10", "a", "cl"]);
+    assert!(has(&log, "Distance = 67.1239"), "{log:?}");
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+
+    // CLose needs a second point.
+    let (s, log) = run(&["dist", "0,0", "m", "a", "cl"]);
+    assert!(has(&log, "CLose needs at least two points."), "{log:?}");
+    assert!(s.running.is_some());
+
+    // No arc continues the last segment to a point straight behind it.
+    for end in ["5,0", "cl"] {
+        let (s, log) = run(&["dist", "0,0", "m", "10,0", "a", end]);
+        assert!(has(&log, "Invalid arc endpoint."), "{end}: {log:?}");
+        assert!(s.prompt_text().contains("Specify endpoint of arc"), "{end}: {}", s.prompt_text());
+    }
 }
 
 #[test]

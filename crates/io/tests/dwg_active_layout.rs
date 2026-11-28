@@ -2,15 +2,19 @@
 //! the one written as `*Paper_Space` (the DWG header's paper space block), the others
 //! `*Paper_SpaceN`. Saving used to make the first tab the active one again.
 
+// The DWG bridge is unavailable on wasm and FreeBSD ARM64 (#2526); DXF still works.
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 use std::io::Cursor;
 
 use cadcraft_doc::{Common, Drawing, EntityKind, Layout, Line, Space};
 use cadcraft_geom::Vec3;
-use cadcraft_io::{SaveOptions, Version, read, write_with};
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+use cadcraft_io::Version;
+use cadcraft_io::{SaveOptions, read, write_with};
 
 fn three_sheets() -> Drawing {
     let mut d = Drawing::new_metric();
-    d.layouts = vec![Layout::new("S1", 1), Layout::new("S2", 2), Layout::new("S3", 3)];
+    d.layouts = vec![Layout::new("S1", 1), Layout::new("S2", 2), Layout::new("S3", 3)].into();
     let line = |a: f64| EntityKind::Line(Line { a: Vec3::new(a, 0.0, 0.0), b: Vec3::new(a + 10.0, 10.0, 0.0) });
     d.add(&Space::Paper("S1".into()), Common::default(), line(0.0)).unwrap();
     d.add(&Space::Paper("S2".into()), Common::default(), line(20.0)).unwrap();
@@ -19,6 +23,7 @@ fn three_sheets() -> Drawing {
 }
 
 /// The layout the DWG marks active: the one whose block the header names as paper space.
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 fn dwg_active_layout(dwg: &[u8]) -> String {
     let doc = acadrust::DwgReader::from_stream(Cursor::new(dwg.to_vec())).read().unwrap();
     let ps = doc.header.paper_space_block_handle;
@@ -31,11 +36,14 @@ fn dwg_active_layout(dwg: &[u8]) -> String {
         .unwrap()
 }
 
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 fn dwg(d: &Drawing) -> Vec<u8> {
+    cadcraft_io::dwg_worker::allow_in_process();
     write_with(d, "case.dwg", &SaveOptions { version: Some(Version::R2018), binary: false }).unwrap()
 }
 
 #[test]
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 fn the_active_layout_stays_active_through_dwg_saves() {
     let mut d = three_sheets();
     d.active_layout = Some("S2".into());
@@ -68,6 +76,7 @@ fn the_active_layout_survives_dxf_too() {
 }
 
 #[test]
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 fn without_an_active_layout_the_first_tab_is_active() {
     let mut d = three_sheets();
     d.active_layout = Some("gone".into());
@@ -75,6 +84,7 @@ fn without_an_active_layout_the_first_tab_is_active() {
 }
 
 #[test]
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 fn the_active_layout_name_is_matched_ignoring_case() {
     let mut d = three_sheets();
     d.active_layout = Some("s2".into());
