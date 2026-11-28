@@ -258,7 +258,7 @@ fn run_cellstyle_use(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => v.as_str().map(|x| x.trim().to_string()).ok_or_else(|| bad(id, "`style` must be a cell style name"))?,
         None => return Err(bad(id, "`style` (cell style name) is required")),
     };
-    let styles: Vec<TableStyle> = s.doc()?.table_styles.clone();
+    let styles: Vec<TableStyle> = s.doc()?.table_styles.to_vec();
     edit(s, p, id, |t| {
         let st = styles.iter().find(|x| x.name.eq_ignore_ascii_case(&t.style)).cloned().unwrap_or_default();
         if !name.is_empty() && !st.has_cell_style(&name) {
@@ -514,6 +514,7 @@ pub(crate) fn table_csv(t: &Table, sep: char) -> String {
 fn write_text(path: &str, text: &str) -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        crate::file_access::check_write(path).map_err(|e| bad("tableexport", e))?;
         std::fs::write(path, text).map_err(|e| bad("tableexport", format!("{path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]

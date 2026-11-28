@@ -10,6 +10,7 @@
 //! loaded further up (a circular reference) is not loaded again. Every failure leaves the xref's
 //! block empty with a status saying why; nothing here stops the host drawing from opening.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -144,9 +145,12 @@ pub(crate) enum Missing {
     NotFound,
     /// The saved path isn't followed, and there is no file of its name beside the host.
     Refused(Refused),
+    /// The automation roots don't reach the file ([`crate::file_access`]).
+    OutsideRoots,
 }
 
 impl Missing {
+    /// The status and message a reference gets when its file can't be loaded.
     fn outcome(self, path: &str) -> (XrefStatus, String) {
         match self {
             Self::NotFound => {
@@ -154,6 +158,9 @@ impl Missing {
                 (XrefStatus::NotFound, format!("{path}: {why}"))
             }
             Self::Refused(r) => (XrefStatus::Unresolved, format!("{path}: not opened, {r}")),
+            Self::OutsideRoots => {
+                (XrefStatus::Unresolved, format!("{path}: not opened, automation path rejected: outside the read root (or the write root)"))
+            }
         }
     }
 }
@@ -207,14 +214,83 @@ pub(crate) fn find(path: &str, host: Option<&Path>, chosen: bool) -> Result<Path
         return Err(Missing::NotFound);
     }
     let (files, refused) = candidates(path, host, chosen);
+    // Outside the automation roots a place isn't even looked at, so the answer can't tell whether a
+    // file is there. A match found by ignoring case is checked again: it can be a link leading out.
+    let allowed = |p: &PathBuf| crate::file_access::check_read(p).is_ok();
+    let looked_for = files.len();
+    let files: Vec<PathBuf> = files.into_iter().filter(allowed).collect();
+    let outside = files.len() < looked_for;
+    // A match found by ignoring case that the roots refuse counts as outside them too.
     #[cfg(not(target_arch = "wasm32"))]
-    let found = files.into_iter().find(|p| p.is_file());
+    let mut refused_match = false;
+    #[cfg(not(target_arch = "wasm32"))]
+    let found = files.iter().find(|p| p.is_file()).cloned().or_else(|| {
+        files.iter().find_map(|p| {
+            let c = match case_insensitive(p) {
+                Ok(Some(c)) => c,
+                Ok(None) => return None,
+                Err(()) => {
+                    refused_match = true;
+                    return None;
+                }
+            };
+            let ok = allowed(&c);
+            refused_match |= !ok;
+            ok.then_some(c)
+        })
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    let outside = outside || refused_match;
     #[cfg(target_arch = "wasm32")]
-    let found: Option<PathBuf> = {
-        let _ = files;
-        None
-    };
-    found.ok_or(refused.map_or(Missing::NotFound, Missing::Refused))
+    let found: Option<PathBuf> = None;
+    found.ok_or(if outside { Missing::OutsideRoots } else { refused.map_or(Missing::NotFound, Missing::Refused) })
+}
+
+/// Upper bound on directory entries scanned per path component by [`case_insensitive`].
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_CASE_SCAN: usize = 10_000;
+
+/// The existing file `p` names when its letters' case is ignored, on file systems that don't
+/// ignore it themselves. Drawings made on Windows often store a reference as `PLAN.DWG` for
+/// `Plan.dwg`; Windows finds it, and so should Linux. Each missing component is matched against
+/// its folder's entries; an exact match always wins, and an ambiguous one finds nothing. `Err` when
+/// the automation roots refuse a place it would have to look in.
+#[cfg(not(target_arch = "wasm32"))]
+fn case_insensitive(p: &Path) -> Result<Option<PathBuf>, ()> {
+    use std::path::Component;
+    // Under the automation roots a place is probed only when the roots allow it, or when it lies on
+    // the way to `p` as it was spelled (which was checked): a name corrected to another case could be
+    // a link leading out, and looking inside it would look outside the roots.
+    let mut corrected = false;
+    let probe = |q: &Path, corrected: bool| (!corrected && p.starts_with(q)) || crate::file_access::check_read(q).is_ok();
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        let Component::Normal(name) = c else {
+            out.push(c.as_os_str());
+            continue;
+        };
+        let exact = out.join(name);
+        if !probe(&exact, corrected) {
+            return Err(());
+        }
+        if exact.exists() {
+            out = exact;
+            continue;
+        }
+        let Some(want) = name.to_str().map(str::to_lowercase) else { return Ok(None) };
+        let Ok(entries) = std::fs::read_dir(if out.as_os_str().is_empty() { Path::new(".") } else { &out }) else { return Ok(None) };
+        let mut hits = entries.take(MAX_CASE_SCAN).flatten().filter(|e| e.file_name().to_str().is_some_and(|n| n.to_lowercase() == want));
+        let Some(hit) = hits.next() else { return Ok(None) };
+        if hits.next().is_some() {
+            return Ok(None);
+        }
+        out.push(hit.file_name());
+        corrected = true;
+        if !probe(&out, corrected) {
+            return Err(());
+        }
+    }
+    Ok(out.is_file().then_some(out))
 }
 
 /// Read a drawing file through the host's io hooks, counting its bytes against the load's total.
@@ -223,6 +299,7 @@ fn read(file: &Path, cx: &mut Ctx) -> Result<Drawing, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         use std::io::Read;
+        crate::file_access::check_read(file)?;
         let left = MAX_XREF_TOTAL_BYTES.saturating_sub(cx.bytes);
         let limit = MAX_XREF_BYTES.min(left);
         let mut f = std::fs::File::open(file).map_err(|e| e.to_string())?;
@@ -275,7 +352,23 @@ pub(crate) fn load(d: &mut Drawing, name: &str, host: Option<&str>, chosen: bool
 /// [`load`] the xrefs `names` within one set of limits.
 pub(crate) fn load_each(d: &mut Drawing, names: &[String], host: Option<&str>, chosen: bool) -> Vec<Outcome> {
     let mut cx = Ctx::new(host);
-    names.iter().flat_map(|n| load_with(d, n, host, chosen, &mut cx)).collect()
+    // Names are case-insensitive, so a name that differs only by case from an earlier one is the same xref.
+    let mut seen = std::collections::HashMap::new();
+    names
+        .iter()
+        .flat_map(|n| match seen.entry(n.to_ascii_lowercase()) {
+            std::collections::hash_map::Entry::Vacant(v) => {
+                v.insert(n.as_str());
+                load_with(d, n, host, chosen, &mut cx)
+            }
+            // Reported, not silent: the skipped xref keeps its status and is not loaded here.
+            std::collections::hash_map::Entry::Occupied(o) => vec![Outcome {
+                name: String::new(),
+                status: XrefStatus::Unresolved,
+                detail: format!("xref \"{n}\" not loaded: it differs only by case from \"{}\"", o.get()),
+            }],
+        })
+        .collect()
 }
 
 impl Ctx {
@@ -302,14 +395,15 @@ fn load_in(d: &mut Drawing, name: &str, host: Option<&Path>, chosen: bool, cx: &
     let (status, detail) = match fetch(&path, host, chosen, cx, depth) {
         Ok((x, file)) => match import(d, &key, &x, cx) {
             Ok(()) => (XrefStatus::Loaded, file.to_string_lossy().into_owned()),
-            Err(e) => (XrefStatus::Unresolved, e),
+            Err(e) => {
+                // Whatever made it in before the failure goes again. A fetch that failed imported
+                // nothing, so it doesn't pay for a second scan of the block table.
+                clear(d, &key);
+                (XrefStatus::Unresolved, e)
+            }
         },
         Err(e) => e,
     };
-    if status != XrefStatus::Loaded {
-        // Whatever made it in before the failure goes again.
-        clear(d, &key);
-    }
     set_status(d, &key, status);
     (status, detail)
 }
@@ -353,9 +447,15 @@ fn import(d: &mut Drawing, key: &str, x: &Drawing, cx: &mut Ctx) -> Result<(), S
         return Err(format!("more than {MAX_XREF_OBJECTS} objects"));
     }
     let dep = |sym: Sym, n: &str| (!shared(sym, n)).then(|| format!("{key}|{n}"));
+    // The host's names per table, looked up in a set built once: both drawings are hostile input,
+    // so a scan per imported record would be quadratic.
+    fn names<T>(all: &[T], name: fn(&T) -> &str) -> HashSet<String> {
+        all.iter().map(|t| name(t).to_ascii_uppercase()).collect()
+    }
+    let mut have = names(&d.layers, |l| &l.name);
     for l in &x.layers {
         if let Some(n) = dep(Sym::Layer, &l.name)
-            && d.layer(&n).is_none()
+            && have.insert(n.to_ascii_uppercase())
         {
             let mut l = l.clone();
             l.name = n;
@@ -363,39 +463,44 @@ fn import(d: &mut Drawing, key: &str, x: &Drawing, cx: &mut Ctx) -> Result<(), S
             d.layers.push(l);
         }
     }
+    let mut have = names(&d.linetypes, |t| &t.name);
     for t in &x.linetypes {
         if let Some(n) = dep(Sym::Linetype, &t.name)
-            && d.linetype(&n).is_none()
+            && have.insert(n.to_ascii_uppercase())
         {
             d.linetypes.push(cadcraft_doc::Linetype { name: n, ..t.clone() });
         }
     }
+    let mut have = names(&d.text_styles, |t| &t.name);
     for t in &x.text_styles {
         if let Some(n) = dep(Sym::Style, &t.name)
-            && d.text_style(&n).is_none()
+            && have.insert(n.to_ascii_uppercase())
         {
             d.text_styles.push(cadcraft_doc::TextStyle { name: n, ..t.clone() });
         }
     }
+    let mut have = names(&d.dim_styles, |t| &t.name);
     for t in &x.dim_styles {
         if let Some(n) = dep(Sym::DimStyle, &t.name)
-            && d.dim_style(&n).is_none()
+            && have.insert(n.to_ascii_uppercase())
         {
             let text_style = dep(Sym::Style, &t.text_style).unwrap_or_else(|| t.text_style.clone());
             d.dim_styles.push(cadcraft_doc::DimStyle { name: n, text_style, ..t.clone() });
         }
     }
+    let mut have = names(&d.mleader_styles, |t| &t.name);
     for t in &x.mleader_styles {
         if let Some(n) = dep(Sym::MLeaderStyle, &t.name)
-            && !d.mleader_styles.iter().any(|o| o.name.eq_ignore_ascii_case(&n))
+            && have.insert(n.to_ascii_uppercase())
         {
             let text_style = dep(Sym::Style, &t.text_style).unwrap_or_else(|| t.text_style.clone());
             d.mleader_styles.push(cadcraft_doc::MLeaderStyle { name: n, text_style, ..t.clone() });
         }
     }
+    let mut have = names(&d.table_styles, |t| &t.name);
     for t in &x.table_styles {
         if let Some(n) = dep(Sym::TableStyle, &t.name)
-            && !d.table_styles.iter().any(|o| o.name.eq_ignore_ascii_case(&n))
+            && have.insert(n.to_ascii_uppercase())
         {
             d.table_styles.push(cadcraft_doc::TableStyle { name: n, ..t.clone() });
         }
@@ -535,6 +640,48 @@ mod tests {
         assert_eq!(candidates("a.dxf", None, false), (vec![], None));
         assert_eq!(candidates("a.dxf", None, true), (vec![PathBuf::from("a.dxf")], None));
         assert_eq!(find("", Some(&host), false), Err(Missing::NotFound));
+    }
+
+    /// A name corrected to another case is checked against the roots before it is looked inside, and a
+    /// match they refuse leaves the other candidates to be tried.
+    #[cfg(unix)]
+    #[test]
+    fn a_name_corrected_to_a_link_out_of_the_roots_is_not_looked_inside() {
+        use crate::file_access::{AutomationRoots, confine};
+        let base = std::env::temp_dir().join(format!("cc-xref-case-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        for d in ["in/sub", "outside"] {
+            std::fs::create_dir_all(base.join(d)).unwrap();
+        }
+        std::fs::write(base.join("outside/target.dxf"), "x").unwrap();
+        std::fs::write(base.join("in/Mixed.dxf"), "x").unwrap();
+        std::os::unix::fs::symlink(base.join("outside"), base.join("in/Alias")).unwrap();
+        std::os::unix::fs::symlink(base.join("outside/target.dxf"), base.join("in/sub/Mixed.dxf")).unwrap();
+        if base.join("in/alias").exists() {
+            // A case-insensitive file system never needs a name corrected: nothing to test.
+            eprintln!("skipped: this file system ignores case");
+            std::fs::remove_dir_all(&base).unwrap();
+            return;
+        }
+        let roots = AutomationRoots::new(Some(&base.join("in")), None).unwrap().unwrap();
+        confine(Some(&roots), || {
+            // `alias` isn't there but `Alias` is, a link out: the probe stops before looking in it.
+            assert_eq!(case_insensitive(&base.join("in/alias/target.dxf")), Err(()));
+            // A match that leaves the roots doesn't end the search: the next candidate is tried.
+            let host = base.join("in/host.dxf");
+            let found = find("sub/mixed.dxf", Some(&host), true).unwrap();
+            assert_eq!(found, base.join("in/Mixed.dxf"));
+            // With no other candidate it is still a refusal by the roots, not a missing file.
+            std::fs::create_dir_all(base.join("in/lone")).unwrap();
+            std::os::unix::fs::symlink(base.join("outside/target.dxf"), base.join("in/lone/Only.dxf")).unwrap();
+            assert_eq!(find("lone/only.dxf", Some(&host), true), Err(Missing::OutsideRoots));
+        });
+        assert_eq!(
+            case_insensitive(&base.join("in/alias/target.dxf")),
+            Ok(Some(base.join("in/Alias/target.dxf"))),
+            "without roots the link is followed"
+        );
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
