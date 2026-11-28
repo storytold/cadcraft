@@ -259,12 +259,14 @@ impl TrackConfig {
     /// direction (radians) of the last segment when the base point ends it.
     pub fn relative_to(s: &crate::Settings, angbase: f64, last: Option<f64>) -> Self {
         let additional: &[f64] = if s.polar_flags & polarmode::ADDITIONAL != 0 { &s.polaraddang } else { &[] };
-        let absolute = polar_angles(s.polarang, additional, angbase);
+        // Measured in the current UCS: from ANGBASE off its X axis.
+        let ucs = if s.ucs_angle.is_finite() { s.ucs_angle } else { 0.0 };
+        let absolute = polar_angles(s.polarang, additional, angbase + ucs);
         let polar = match last.filter(|a| a.is_finite() && s.polar_flags & polarmode::RELATIVE != 0) {
             Some(a) => polar_angles(s.polarang, additional, a),
             None => absolute.clone(),
         };
-        let track_angles = if s.polar_flags & polarmode::TRACK_POLAR != 0 { absolute } else { orthogonal() };
+        let track_angles = if s.polar_flags & polarmode::TRACK_POLAR != 0 { absolute } else { orthogonal(ucs) };
         TrackConfig {
             otrack: s.otrack,
             osmode: s.osmode,
@@ -279,9 +281,9 @@ impl TrackConfig {
     }
 }
 
-/// Horizontal and vertical, both ways.
-fn orthogonal() -> Vec<f64> {
-    vec![0.0, PI / 2.0, PI, 1.5 * PI]
+/// Along the UCS axes (turned `ucs` radians from the world's), both ways.
+fn orthogonal(ucs: f64) -> Vec<f64> {
+    [0.0, PI / 2.0, PI, 1.5 * PI].iter().map(|a| norm_angle(a + ucs)).collect()
 }
 
 /// Every multiple of the increment `inc` (POLARANG) around the circle, plus the `additional`
@@ -807,10 +809,11 @@ impl crate::Session {
             return CursorSnap { point: h.point, snap: Some(h), track: None, wait };
         }
         // Isometric snap (SNAPSTYL 1): its lattice in place of the rectangular grid.
-        let (raw, s) = super::iso::grid_snap(&doc, s, raw);
+        let snapmode = s.snapmode;
+        let (raw, mut s) = super::iso::grid_snap(&doc, &space, s, raw);
         let mut p = raw;
         if s.snapmode && !s.polarsnap {
-            let (origin, angle) = super::grid_frame(&doc);
+            let (origin, angle) = super::grid_frame_in(&doc, &space);
             p = super::grid_snap(p, doc.header.snap_unit(), origin, angle);
         }
         if let Some(mut t) = self.tracking.track(&doc, &space, p, q.aperture, q.tol, &cfg, q.base) {
@@ -829,7 +832,10 @@ impl crate::Session {
             && s.orthomode
             && !q.corner
         {
-            p = super::iso::ortho(&self.settings, b, p);
+            // Grid snap as it was before the isometric lattice took it (`grid_snap` turns it off),
+            // so ortho keeps whole snap steps along the isometric axes.
+            s.snapmode = snapmode;
+            p = super::iso::ortho(&s, b, p);
         }
         CursorSnap { point: p, snap: None, track: None, wait }
     }

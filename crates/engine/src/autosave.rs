@@ -4,15 +4,18 @@
 //! autosave is written as DXF to `<SAVEFILEPATH>/<drawing>_<instance>_<uid>.sv$`. The file goes
 //! away when the drawing is saved or closed and when the app exits normally, so a file left behind
 //! means the app (or the machine) went down; the next start offers it for recovery. A running app
-//! keeps a lock file (`<instance>.lock`) fresh, so another copy running at the same time doesn't
-//! offer its files. SAVEFILEPATH may be a folder other programs use too, so only names built from
-//! an instance id ([`is_instance_id`]) are ever read as ours or deleted.
+//! holds an operating-system lock on its lock file (`<instance>.lock`) and keeps the file fresh, so
+//! another copy running at the same time doesn't offer its files. The system drops the lock the
+//! moment a process ends, however it ended, so a relaunch after a crash can offer recovery at once.
+//! Where locks aren't available, and for lock files of older versions, a file not refreshed for
+//! [`STALE_LOCK_SECS`] counts as stopped. SAVEFILEPATH may be a folder other programs use too, so
+//! only names built from an instance id ([`is_instance_id`]) are ever read as ours or deleted.
 //!
 //! [`Autosaver::plan`] decides what to write and delete (no I/O, so it is testable); on the desktop
 //! [`Autosaver::tick`] carries it out, writing on a background thread. SAVETIME and SAVEFILEPATH
 //! are profile settings: process-wide, not saved in the drawing.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -29,6 +32,10 @@ pub const DEFAULT_SAVETIME: u32 = 10;
 pub const MAX_SAVETIME: u32 = 600;
 /// A lock file not refreshed for this long belongs to an app that is no longer running.
 pub const STALE_LOCK_SECS: u64 = 5 * 60;
+/// How a lock file ends when its app holds the system lock on it, so a free lock proves the app
+/// stopped. Older versions write only the process id and never hold one.
+#[cfg(not(target_arch = "wasm32"))]
+const LOCK_HELD: &str = " held";
 /// How often a running app refreshes its lock file.
 #[cfg(not(target_arch = "wasm32"))]
 const HEARTBEAT_SECS: f64 = 60.0;
@@ -149,13 +156,21 @@ pub struct Autosaver {
     docs: HashMap<u64, Tracked>,
     /// Drawings whose autosave is being written right now.
     busy: HashSet<u64>,
-    /// Writes in progress; each tells whether its file was written.
+    /// Why the last autosave of each drawing failed, until one succeeds or the drawing no longer
+    /// needs it. Ordered, so [`Autosaver::failure`] doesn't change between frames.
+    failed: BTreeMap<u64, String>,
+    /// Writes in progress; each ends with why its file wasn't written, if it wasn't.
     #[cfg(not(target_arch = "wasm32"))]
-    running: Vec<(u64, std::thread::JoinHandle<bool>)>,
+    running: Vec<(u64, std::thread::JoinHandle<std::result::Result<(), String>>)>,
     #[cfg(not(target_arch = "wasm32"))]
     start: std::time::Instant,
     #[cfg(not(target_arch = "wasm32"))]
     last_beat: Option<f64>,
+    /// This app's lock files: one per folder, because SAVEFILEPATH can change while files remain
+    /// in the old folder. Each with the file it holds open for the system lock, or `None` where
+    /// locks don't work and only the file's age counts.
+    #[cfg(not(target_arch = "wasm32"))]
+    locks: Vec<(std::path::PathBuf, Option<std::fs::File>)>,
 }
 
 impl Autosaver {
@@ -164,12 +179,15 @@ impl Autosaver {
             instance: instance.into(),
             docs: HashMap::new(),
             busy: HashSet::new(),
+            failed: BTreeMap::new(),
             #[cfg(not(target_arch = "wasm32"))]
             running: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             start: std::time::Instant::now(),
             #[cfg(not(target_arch = "wasm32"))]
             last_beat: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            locks: Vec::new(),
         }
     }
 
@@ -185,6 +203,11 @@ impl Autosaver {
     /// The autosave files this app has written or adopted.
     pub fn files(&self) -> Vec<String> {
         self.docs.values().filter_map(|t| t.file.clone()).collect()
+    }
+
+    /// The drawings with no up-to-date recovery copy and why, for the host to show the user.
+    pub fn failures(&self) -> impl Iterator<Item = (u64, &str)> {
+        self.failed.iter().map(|(uid, why)| (*uid, why.as_str()))
     }
 
     /// What to do at `now` (seconds, any fixed origin) with SAVETIME `minutes` and autosave folder
@@ -220,6 +243,7 @@ impl Autosaver {
                     jobs.push(Job::Delete { path });
                 }
                 *t = Tracked::default();
+                self.failed.remove(&st.uid);
                 continue;
             }
             let same = |w: &Option<Weak<Drawing>>, d: &Arc<Drawing>| w.as_ref().is_some_and(|w| std::ptr::eq(w.as_ptr(), Arc::as_ptr(d)));
@@ -248,6 +272,8 @@ impl Autosaver {
             t.since = None;
             jobs.push(Job::Write { uid: st.uid, path, doc });
         }
+        let docs = &self.docs;
+        self.failed.retain(|uid, _| docs.contains_key(uid));
         jobs
     }
 
@@ -277,12 +303,14 @@ pub use native::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
+    use std::fs::{File, OpenOptions, TryLockError};
+    use std::io::{Read, Write};
     use std::path::Path;
     use std::time::{Duration, SystemTime};
 
     use super::{
-        Autosaver, Drawing, HEARTBEAT_SECS, HashMap, Job, Recoverable, STALE_LOCK_SECS, Session, is_instance_id, parse_file_name, parse_lock_name,
-        savefilepath, savetime,
+        Autosaver, Drawing, HEARTBEAT_SECS, HashMap, Job, LOCK_HELD, Recoverable, STALE_LOCK_SECS, Session, is_instance_id, parse_file_name,
+        parse_lock_name, savefilepath, savetime,
     };
 
     /// A new instance id: the process id and the start time.
@@ -307,6 +335,28 @@ mod native {
         Some(SystemTime::now().duration_since(m).unwrap_or_default())
     }
 
+    /// Whether the app instance named by a lock file in `dir` may still be running: its system
+    /// lock answers at once, and the file's age decides when it can't (no lock support, a lock
+    /// file from an older version).
+    fn owner_alive(dir: &Path, instance: &str) -> bool {
+        let by_age = || instance_alive(lock_age(dir, instance));
+        let path = lock_path(dir, instance);
+        // Only a plain file is opened: opening a FIFO planted in a shared folder would block.
+        if !std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
+            return by_age();
+        }
+        let Ok(file) = File::open(&path) else { return by_age() };
+        match file.try_lock() {
+            Err(TryLockError::WouldBlock) => true,
+            Err(TryLockError::Error(_)) => by_age(),
+            Ok(()) => {
+                let mut text = String::new();
+                let held = file.take(64).read_to_string(&mut text).is_ok() && text.ends_with(LOCK_HELD);
+                !held && by_age()
+            }
+        }
+    }
+
     /// The autosave files in `dir` left behind by apps that are no longer running (never those of
     /// `own`, this app's instance), oldest first.
     pub fn recoverable(dir: &Path, own: &str) -> Vec<Recoverable> {
@@ -316,7 +366,7 @@ mod native {
         for e in entries.flatten().take(10_000) {
             let name = e.file_name().to_string_lossy().to_string();
             let Some((title, instance, _)) = parse_file_name(&name) else { continue };
-            if instance == own || *alive.entry(instance.to_string()).or_insert_with(|| instance_alive(lock_age(dir, instance))) {
+            if instance == own || *alive.entry(instance.to_string()).or_insert_with(|| owner_alive(dir, instance)) {
                 continue;
             }
             let Ok(meta) = e.metadata() else { continue };
@@ -355,10 +405,11 @@ mod native {
     pub fn prune_locks(dir: &Path) {
         let Ok(entries) = std::fs::read_dir(dir) else { return };
         let names: Vec<String> = entries.flatten().take(10_000).map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        // The instances that own autosave files, parsed once rather than once per lock file.
+        let with_files: std::collections::HashSet<&str> = names.iter().filter_map(|f| parse_file_name(f)).map(|(_, i, _)| i).collect();
         for n in &names {
             let Some(instance) = parse_lock_name(n) else { continue };
-            let has_files = names.iter().any(|f| parse_file_name(f).is_some_and(|(_, i, _)| i == instance));
-            if !has_files && !instance_alive(lock_age(dir, instance)) {
+            if !with_files.contains(instance) && !owner_alive(dir, instance) {
                 let _ = std::fs::remove_file(dir.join(n));
             }
         }
@@ -385,7 +436,22 @@ mod native {
         }
         // Create a fresh temporary file exclusively and rename it into place, so a planted
         // `<path>.tmp` symlink in a shared autosave directory cannot redirect the write (CWE-59).
-        crate::atomic_write::write_atomic(Path::new(path), &bytes).map_err(|e| e.to_string())
+        // The file holds unsaved work: owner-only from its creation, whatever the umask.
+        crate::atomic_write::write_atomic_with(Path::new(path), private_mode(), |f| f.write_all(&bytes)).map_err(|e| e.to_string())
+    }
+
+    /// Owner read/write only (`None` where file modes don't exist).
+    fn private_mode() -> Option<std::fs::Permissions> {
+        #[cfg(unix)]
+        return Some(std::os::unix::fs::PermissionsExt::from_mode(0o600));
+        #[cfg(not(unix))]
+        None
+    }
+
+    /// Write this app's lock file at `path` without following a link planted there: the file is
+    /// replaced (exclusive temporary file, then rename), never written through (CWE-59).
+    fn write_lock(path: &Path, id: u32) -> std::io::Result<()> {
+        crate::atomic_write::write_atomic_with(path, private_mode(), |f| f.write_all(id.to_string().as_bytes()))
     }
 
     impl Autosaver {
@@ -423,24 +489,60 @@ mod native {
             self.running.iter().any(|(_, h)| !h.is_finished())
         }
 
+        /// Whether a write's result hasn't been taken in yet, finished or not: the host needs
+        /// another [`Autosaver::tick`] to learn whether it failed.
+        pub fn results_pending(&self) -> bool {
+            !self.running.is_empty()
+        }
+
         /// Take in the writes that have finished ([`Autosaver::tick`] does this first). A drawing
         /// whose write failed is no longer counted as autosaved: the next plan restarts its clock,
-        /// so it is tried again SAVETIME later even if it doesn't change.
+        /// so it is tried again SAVETIME later even if it doesn't change, and [`Autosaver::failure`]
+        /// says why until a write succeeds.
         pub fn reap(&mut self) {
             let (done, running) = std::mem::take(&mut self.running).into_iter().partition::<Vec<_>, _>(|(_, h)| h.is_finished());
             self.running = running;
             for (uid, h) in done {
-                self.busy.remove(&uid);
-                if !h.join().unwrap_or(false) {
-                    self.unwritten(uid);
-                }
+                self.settle(uid, h);
             }
         }
 
-        fn unwritten(&mut self, uid: u64) {
+        fn settle(&mut self, uid: u64, h: std::thread::JoinHandle<std::result::Result<(), String>>) {
+            self.busy.remove(&uid);
+            match h.join().unwrap_or_else(|_| Err("the autosave writer stopped unexpectedly".to_string())) {
+                Ok(()) => {
+                    self.failed.remove(&uid);
+                }
+                Err(e) => self.unwritten(uid, e),
+            }
+        }
+
+        /// Write every drawing with changes not yet autosaved and wait until it is done, because
+        /// the app has gone wrong and may not get another frame. Unlike [`Autosaver::save_now`]
+        /// this also runs when SAVETIME is 0: unsaved work comes before that preference. Returns
+        /// how many drawings were written.
+        pub fn emergency_save(&mut self, s: &Session) -> usize {
+            for (uid, h) in std::mem::take(&mut self.running) {
+                self.settle(uid, h);
+            }
+            let now = self.start.elapsed().as_secs_f64();
+            let dir = savefilepath();
+            let jobs = self.plan_with(s, now, savetime().max(1), &dir, true);
+            let uids: Vec<u64> = jobs.iter().filter_map(|j| if let Job::Write { uid, .. } = j { Some(*uid) } else { None }).collect();
+            self.perform(jobs);
+            self.last_beat = None;
+            self.heartbeat(&dir, now);
+            for (uid, h) in std::mem::take(&mut self.running) {
+                self.settle(uid, h);
+            }
+            uids.iter().filter(|uid| !self.failed.contains_key(uid)).count()
+        }
+
+        fn unwritten(&mut self, uid: u64, why: String) {
             if let Some(t) = self.docs.get_mut(&uid) {
                 t.written = None;
             }
+            self.failed.insert(uid, why);
         }
 
         /// Carry out jobs from [`Autosaver::plan`]: writes on a background thread, deletes now.
@@ -451,16 +553,17 @@ mod native {
                     Job::Write { uid, path, doc } => {
                         let Some(write) = crate::cmd::file::io().map(|h| h.write) else {
                             log::warn!("autosave: file formats are not available in this build");
+                            self.unwritten(uid, "file formats are not available in this build".to_string());
                             continue;
                         };
                         let spawned = std::thread::Builder::new().name("autosave".into()).spawn(move || match write_file(write, &doc, &path) {
                             Ok(()) => {
                                 log::info!("autosaved {path}");
-                                true
+                                Ok(())
                             }
                             Err(e) => {
                                 log::warn!("autosave {path}: {e}");
-                                false
+                                Err(format!("{path}: {e}"))
                             }
                         });
                         match spawned {
@@ -470,7 +573,7 @@ mod native {
                             }
                             Err(e) => {
                                 log::warn!("autosave: {e}");
-                                self.unwritten(uid);
+                                self.unwritten(uid, e.to_string());
                             }
                         }
                     }
@@ -485,10 +588,50 @@ mod native {
             }
             self.last_beat = Some(now);
             let dir = Path::new(dir);
-            let r = create_folder(dir).and_then(|()| std::fs::write(lock_path(dir, &self.instance), std::process::id().to_string()));
-            if let Err(e) = r {
+            if let Err(e) = create_folder(dir).and_then(|()| self.refresh_lock(&lock_path(dir, &self.instance))) {
                 log::warn!("autosave: lock file in {}: {e}", dir.display());
             }
+        }
+
+        /// Refresh this app's lock files, and start one at `path` if there isn't one yet, taking
+        /// the system lock on it if it can. Without that lock the file still works by its age.
+        /// Only trouble at `path` is an error: an older folder may be gone by now.
+        fn refresh_lock(&mut self, path: &Path) -> std::io::Result<()> {
+            let id = std::process::id();
+            let mut current = None;
+            for (held, file) in &self.locks {
+                let refreshed = match file {
+                    Some(file) => file.set_modified(SystemTime::now()),
+                    None => write_lock(held, id),
+                };
+                if held == path {
+                    current = Some(refreshed);
+                }
+            }
+            if let Some(refreshed) = current {
+                return refreshed;
+            }
+            let mut options = OpenOptions::new();
+            options.write(true).create(true).truncate(false);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                // A symlink planted at the lock path must not be opened (and truncated) through,
+                // nor a FIFO wait for a reader.
+                options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).mode(0o600);
+            }
+            let mut file = options.open(path)?;
+            if !file.metadata()?.is_file() {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "the lock file is not a plain file"));
+            }
+            if file.try_lock().is_err() {
+                self.locks.push((path.to_path_buf(), None));
+                return write_lock(path, id);
+            }
+            file.set_len(0)?;
+            file.write_all(format!("{id}{LOCK_HELD}").as_bytes())?;
+            self.locks.push((path.to_path_buf(), Some(file)));
+            Ok(())
         }
 
         /// The app is closing normally: finish writes in progress, then delete this app's autosave
@@ -502,10 +645,38 @@ mod native {
                 discard(&path);
             }
             self.docs.clear();
+            for (path, file) in self.locks.drain(..) {
+                drop(file);
+                let _ = std::fs::remove_file(path);
+            }
             let dir = savefilepath();
             if !dir.is_empty() && is_instance_id(&self.instance) {
                 let _ = std::fs::remove_file(lock_path(Path::new(&dir), &self.instance));
             }
+        }
+    }
+
+    #[cfg(all(test, unix))]
+    mod tests {
+        use super::*;
+
+        /// A symlink planted at the lock path is neither opened through nor written through.
+        #[test]
+        fn lock_writes_do_not_follow_a_planted_link() {
+            let dir = std::env::temp_dir().join(format!("cadcraft-lock-link-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let victim = dir.join("victim.txt");
+            std::fs::write(&victim, b"precious").unwrap();
+            let link = dir.join("1-a.lock");
+            std::os::unix::fs::symlink(&victim, &link).unwrap();
+            let mut a = Autosaver::new("1-a");
+            assert!(a.refresh_lock(&link).is_err());
+            assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+            write_lock(&link, 42).unwrap();
+            assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+            assert!(!std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+            assert_eq!(std::fs::read(&link).unwrap(), b"42");
+            std::fs::remove_dir_all(dir).unwrap();
         }
     }
 }

@@ -170,13 +170,16 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
             if index == 0 {
                 return Some(translated(kind, delta));
             }
-            let a = i.attribs.get_mut(index - 1)?;
+            let k = i.grip_attribs().nth(index - 1).map(|(k, _)| k)?;
+            let a = i.attribs.get_mut(k)?;
             let ip = a.text.insert.xy() + delta;
             set_xy(&mut a.text.insert, ip);
             if let Some(al) = &mut a.text.align_pt {
                 let q = al.xy() + delta;
                 set_xy(al, q);
             }
+            // A multiline attribute is drawn from its multiline text: it moves too.
+            a.transform_multiline(&Mat3::translate(delta));
         }
         EntityKind::Dimension(d) => {
             match index {
@@ -226,6 +229,7 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
         }
         EntityKind::Solid(s) | EntityKind::Trace(s) => set_xy(s.corners.get_mut(index)?, to),
         EntityKind::Face3d(f) => set_xy(f.corners.get_mut(index)?, to),
+        EntityKind::PolyfaceMesh(m) => set_xy(m.vertices.get_mut(index)?, to),
         EntityKind::Region(_) => return Some(translated(kind, delta)),
         EntityKind::Viewport(v) => {
             let opposite = *grips.get((index + 2) % 4)?;

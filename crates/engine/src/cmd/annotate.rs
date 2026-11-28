@@ -1,5 +1,5 @@
 //! Dimensions and leaders: DIMLINEAR, DIMALIGNED, DIMRADIUS, DIMDIAMETER, DIMANGULAR, DIMARC,
-//! DIMORDINATE, DIMCONTINUE, DIMBASELINE, QDIM, DIM (smart), MLEADER, LEADER, DIMOVERRIDE,
+//! DIMORDINATE, DIMCONTINUE, DIMBASELINE, QDIM, DIM (smart), MLEADER, LEADER, QLEADER, DIMOVERRIDE,
 //! DIMREASSOCIATE / DIMDISASSOCIATE, DIMTEDIT, DIMSPACE; DIMEDIT, DIMJOGGED, DIMJOGLINE,
 //! DIMBREAK and DIMINSPECT in `annotate_dimedit.rs`.
 
@@ -16,8 +16,10 @@ use crate::{Accept, EngineError, Input, Interactive, LeaderOrder, MLeaderOptions
 mod angular;
 mod common;
 mod edit;
+mod leader;
 mod linear;
 mod mleader;
+mod qleader;
 mod radial;
 
 use angular::{AngularM, ArcLenM, run_angular, run_arclen};
@@ -26,6 +28,7 @@ use common::{DimText, add_dim, assoc_enabled, circle_of, dim, pick_at};
 use edit::{DimSpaceM, OverrideM, dims_of, run_dimspace, run_dimtedit, run_disassociate, run_override, run_reassociate, run_tedit, run_update};
 use linear::{ChainM, LinearM, MAX_CHAIN, OrdinateM, run_aligned, run_baseline, run_continue, run_linear, run_ordinate};
 use mleader::{MLeaderM, run_leader, run_mleader};
+use qleader::{QLeaderM, run_qleader};
 use radial::{RadialM, run_diameter, run_radius};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -88,7 +91,14 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["mld"])
             .params("{points: [[arrow], ..., [landing]] ([location] with leaderType none), text?, leaderType?: straight|spline|none, block?: name, blockAttach?: center|insertion}")
             .interactive(|s| Ok(Box::new(MLeaderM::new(s)))),
-        CommandSpec::new("leader", "Leader", run_leader).alias(&["lead"]).params("{points: [[x,y]...], text?}"),
+        CommandSpec::new("leader", "Leader", run_leader)
+            .alias(&["lead"])
+            .params("{points: [[x,y]...], text?}")
+            .interactive(|_| Ok(Box::new(leader::LeaderM::default()))),
+        CommandSpec::new("qleader", "Quick Leader", run_qleader)
+            .alias(&["le"])
+            .params("{points: [[x,y], [x,y], [x,y]?] (2 or 3), width?: text width (default 0), text?: lines split at \\n}")
+            .interactive(|_| Ok(Box::new(QLeaderM::default()))),
         CommandSpec::new("dimstyle.update", "Update", run_update)
             .menu(&["Dimension", "Update"])
             .params("{handles?}")

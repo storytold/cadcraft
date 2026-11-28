@@ -36,13 +36,16 @@ fn baseline_spacing_follows_overrides_and_dimscale() {
     assert!(near(dli, 1.0), "SETVAR DIMDLI sets the spacing: {dli}");
     let zero = baseline_spacing(&[("dimstyle", json!({"name": "Standard", "DIMSCALE": 0}))]);
     assert!(near(zero, 0.38), "DIMSCALE 0 in model space is scale 1, not a collapsed spacing: {zero}");
+}
 
-    // DIMSPACE's default spacing (twice DIMDLI) uses the same scale.
+#[test]
+fn dimspace_auto_uses_unit_scale_for_zero_dimscale_in_model_space() {
     let mut s = Session::new();
-    s.execute("dimstyle", &json!({"name": "Standard", "DIMSCALE": 0})).unwrap();
+    let text_height = 0.25;
+    s.execute("dimstyle", &json!({"name": "Standard", "DIMTXT": text_height, "DIMSCALE": 0})).unwrap();
     let a = s.execute("dimlinear", &json!({"p1": [0, 0], "p2": [30, 0], "at": [15, 5]})).unwrap();
     let b = s.execute("dimlinear", &json!({"p1": [0, 0], "p2": [50, 0], "at": [25, 6]})).unwrap();
     s.execute("dimspace", &json!({"base": a["handle"], "handles": [b["handle"]]})).unwrap();
     let gap = dim_line_y(&s, &b["handle"]) - dim_line_y(&s, &a["handle"]);
-    assert!(near(gap, 0.76), "{gap}");
+    assert!((gap - 2.0 * text_height).abs() < 1e-9, "{gap}");
 }

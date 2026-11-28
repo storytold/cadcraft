@@ -1,22 +1,76 @@
+use cadcraft_doc::EntityKind;
 use cadcraft_geom::Vec3;
 
-use super::{Entity, Handle, Mat3, Result, Session, Value, Vec2, bad, bool_or, f64_req, json, point_param, point_req, targets};
+use super::{Entity, Handle, Mat3, Result, Session, Value, Vec2, bad, bool_or, erase_kept, f64_req, json, point_param, point_req, targets};
 
 // ---------------- core operations ----------------
 
 pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy: bool) -> Result<Vec<Handle>> {
+    refuse_ole_frames(s, hs, m, copy)?;
     edit_entities(s, hs, copy, |e| e.kind.transform(m))
+}
+
+/// MIRROR's default hatch policy retains the fill direction while reflecting its boundary.
+/// Keep this in the command layer: a reflection of an entire inserted block still transforms
+/// all of its contents, rather than applying the policy for individually selected hatches.
+pub(super) fn mirror_kind(k: &mut EntityKind, m: &Mat3) {
+    let angles = match k {
+        EntityKind::Hatch(h) => Some((h.angle, h.gradient.as_ref().map(|g| g.angle))),
+        _ => None,
+    };
+    k.transform(m);
+    if let (EntityKind::Hatch(h), Some((angle, gradient_angle))) = (k, angles) {
+        h.angle = angle;
+        if let (Some(g), Some(angle)) = (&mut h.gradient, gradient_angle) {
+            g.angle = angle;
+        }
+    }
+}
+
+/// Reflect selected entities with the command policy that retains individual hatch fill directions.
+pub(super) fn mirror_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy: bool) -> Result<Vec<Handle>> {
+    refuse_ole_frames(s, hs, m, copy)?;
+    edit_entities(s, hs, copy, |e| mirror_kind(&mut e.kind, m))
 }
 
 /// Scale `hs` by `f` about `base` in 3D, as AutoCAD 2024's SCALE does: about the base point's XY,
 /// and every height of the objects about its Z, their thickness too.
 pub(crate) fn scale_entities(s: &mut Session, hs: &[Handle], base: Vec3, f: f64, copy: bool) -> Result<Vec<Handle>> {
     let m = Mat3::scale_about(base.xy(), f);
+    refuse_ole_frames(s, hs, &m, copy)?;
     edit_entities(s, hs, copy, |e| {
         e.kind.transform(&m);
         e.kind.scale_heights(base.z, f);
         e.common.thickness *= f;
     })
+}
+
+/// An OLE2FRAME only translates or scales uniformly (its corners stay axis aligned): refuse any other `m` before anything
+/// changes, instead of reporting success and leaving the frame where it was.
+pub(crate) fn refuse_ole_frames(s: &Session, hs: &[Handle], m: &Mat3, copy: bool) -> Result<()> {
+    if cadcraft_doc::ole_frame_accepts(m) || !holds_ole_frame(s, hs, copy)? {
+        return Ok(());
+    }
+    Err(ole_refusal())
+}
+
+/// The refusal for a transform an OLE2FRAME cannot take.
+pub(crate) fn ole_refusal() -> crate::EngineError {
+    crate::EngineError::Other(
+        "An OLE object can only be moved, copied or scaled uniformly; other transforms (rotation, mirroring, non-uniform scale, alignment) are not supported.".into(),
+    )
+}
+
+/// Whether `hs` holds an OLE2FRAME a transform would touch. An in-place edit (`copy` false) skips
+/// an object on a locked layer (see edit_entities), so such a frame cannot be refused.
+pub(crate) fn holds_ole_frame(s: &Session, hs: &[Handle], copy: bool) -> Result<bool> {
+    let d = s.doc()?;
+    Ok(hs.iter().any(|h| {
+        d.entity(*h).is_some_and(|e| {
+            let locked = !copy && d.layer(&e.common.layer).is_some_and(|l| l.locked);
+            !locked && matches!(&e.kind, cadcraft_doc::EntityKind::Unknown(u) if u.is_ole_frame())
+        })
+    }))
 }
 
 /// `p` at the current elevation (ELEVATION), the Z AutoCAD gives a point entered without one.
@@ -54,14 +108,9 @@ fn edit_entities(s: &mut Session, hs: &[Handle], copy: bool, edit: impl Fn(&mut 
 }
 
 pub(super) fn erase(s: &mut Session, hs: &[Handle]) -> Result<usize> {
-    let d = s.doc_mut()?;
-    let mut n = 0;
-    for h in hs {
-        let locked = d.entity(*h).and_then(|e| d.layer(&e.common.layer)).is_some_and(|l| l.locked);
-        if !locked && d.remove_entity(*h).is_some() {
-            n += 1;
-        }
-    }
+    let d = s.doc()?;
+    let free: Vec<Handle> = hs.iter().copied().filter(|h| !d.entity(*h).and_then(|e| d.layer(&e.common.layer)).is_some_and(|l| l.locked)).collect();
+    let n = erase_kept(s, &free)?;
     s.set_selection(Vec::new());
     Ok(n)
 }
@@ -126,6 +175,7 @@ pub(super) fn run_scale(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "handles": r.iter().map(|h| h.hex()).collect::<Vec<_>>() }))
 }
 
+/// Validate MIRROR parameters and apply the reflection, optionally replacing the source entities.
 pub(super) fn run_mirror(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     let a = point_req("mirror", p, "p1")?;
@@ -134,6 +184,6 @@ pub(super) fn run_mirror(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("mirror", "mirror line points coincide"));
     }
     let erase_src = bool_or(p, "erase", false);
-    let r = transform_entities(s, &hs, &Mat3::mirror(a, b), !erase_src)?;
+    let r = mirror_entities(s, &hs, &Mat3::mirror(a, b), !erase_src)?;
     Ok(json!({ "handles": r.iter().map(|h| h.hex()).collect::<Vec<_>>() }))
 }

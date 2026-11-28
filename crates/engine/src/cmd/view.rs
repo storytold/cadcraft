@@ -1,5 +1,5 @@
-//! View menu: ZOOM (with Realtime and Dynamic), PAN, REGEN, REDRAW, named views (VIEW), layout
-//! switching.
+//! View menu: ZOOM (with Realtime and Dynamic), PAN, REGEN, REDRAW, named views (VIEW), the view
+//! twist (DVIEW TWist), layout switching.
 
 use cadcraft_doc::{Space, entity_bounds};
 use cadcraft_geom::{Bounds2, Vec2};
@@ -10,6 +10,7 @@ use super::{CommandSpec, bad, bool_or, f64_or, f64_req, ok, point_param, point_r
 
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step, View};
 
+mod dview;
 mod named_views;
 mod vports;
 
@@ -66,7 +67,12 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{delta: [dx,dy]} | {from, to} | {center}")
             .noundo()
             .transparent()
-            .interactive(|_| Ok(Box::new(PanM::default()))),
+            .interactive(|_| Ok(Box::new(PanM))),
+        CommandSpec::new("-pan", "Pan", run_pan)
+            .params("{delta: [dx,dy]} | {from, to} | {center}")
+            .noundo()
+            .transparent()
+            .interactive(|_| Ok(Box::new(PanPointsM::default()))),
         CommandSpec::new("pan.left", "Pan Left", |s, _| pan_frac(s, Vec2::new(-0.25, 0.0))).menu(&["View", "Pan", "Left"]).noundo().transparent(),
         CommandSpec::new("pan.right", "Pan Right", |s, _| pan_frac(s, Vec2::new(0.25, 0.0))).menu(&["View", "Pan", "Right"]).noundo().transparent(),
         CommandSpec::new("pan.up", "Pan Up", |s, _| pan_frac(s, Vec2::new(0.0, 0.25))).menu(&["View", "Pan", "Up"]).noundo().transparent(),
@@ -95,10 +101,13 @@ pub fn specs() -> Vec<CommandSpec> {
         .alias(&["r"])
         .noundo()
         .transparent(),
-        CommandSpec::new("view.set", "Set View", run_view_set).params("{center: [x,y], height}").noundo(),
+        dview::spec(),
+        CommandSpec::new("view.set", "Set View", run_view_set)
+            .params("{center: [x,y], height, twist?: degrees (default: keep the current twist; in a layout viewport it is the viewport's twist, an undoable edit; not in Paper space)}")
+            .noundo(),
         CommandSpec::new("view.get", "Get View", |s, _| {
             let v = s.state()?.view();
-            Ok(json!({"center": [v.center.x, v.center.y], "height": v.height, "viewportPx": [s.viewport_px.0, s.viewport_px.1]}))
+            Ok(json!({"center": [v.center.x, v.center.y], "height": v.height, "twist": v.twist.to_degrees(), "viewportPx": [s.viewport_px.0, s.viewport_px.1]}))
         })
         .noundo(),
         CommandSpec::new("layout.set", "Switch Layout", run_layout_set).params("{name: \"Model\" | layout name}").noundo(),
@@ -120,8 +129,11 @@ fn fit(s: &mut Session, b: Bounds2) -> Result<()> {
     let (w, h) = s.viewport_px;
     let st = s.state_mut()?;
     let aspect = st.zoom_aspect(w / h.max(1.0));
-    let height = b.height().max(b.width() / aspect.max(1e-6)).max(1e-9);
-    st.set_zoom_frame(View { center: b.center(), height });
+    // A twisted view fits the box the bounds make on screen.
+    let twist = st.zoom_frame().twist;
+    let (center, bw, bh) = View::twisted_box(b, twist);
+    let height = bh.max(bw / aspect.max(1e-6)).max(1e-9);
+    st.set_zoom_frame(View { center, height, twist });
     Ok(())
 }
 
@@ -150,18 +162,18 @@ pub(crate) fn zoom(s: &mut Session, p: &Value) -> Result<Value> {
             let f = if mode == "in" { 2.0 } else { 0.5 };
             let st = s.state_mut()?;
             let v = st.zoom_frame();
-            st.set_zoom_frame(View { center: v.center, height: v.height / f });
+            st.set_zoom_frame(View { height: v.height / f, ..v });
         }
         "center" | "c" | "dynamic" | "d" => {
             let c = point_req("zoom", p, "center")?;
-            let cur = s.state()?.zoom_frame().height;
-            let h = if p.get("factor").is_some() { factor_height(s, p, cur)? } else { f64_or(p, "height", cur) };
-            s.state_mut()?.set_zoom_frame(View { center: c, height: h.max(1e-9) });
+            let cur = s.state()?.zoom_frame();
+            let h = if p.get("factor").is_some() { factor_height(s, p, cur.height)? } else { f64_or(p, "height", cur.height) };
+            s.state_mut()?.set_zoom_frame(View { center: c, height: h.max(1e-9), ..cur });
         }
         "scale" | "s" => {
             let v = s.state()?.zoom_frame();
             let height = factor_height(s, p, v.height)?;
-            s.state_mut()?.set_zoom_frame(View { center: v.center, height });
+            s.state_mut()?.set_zoom_frame(View { height, ..v });
         }
         "realtime" => {
             let v = s.state()?.zoom_frame();
@@ -169,7 +181,7 @@ pub(crate) fn zoom(s: &mut Session, p: &Value) -> Result<Value> {
             if f <= 0.0 {
                 return Err(bad("zoom", "factor must be positive"));
             }
-            s.state_mut()?.set_zoom_frame(View { center: v.center, height: (v.height / f).clamp(1e-9, 1e12) });
+            s.state_mut()?.set_zoom_frame(View { height: (v.height / f).clamp(1e-9, 1e12), ..v });
         }
         "object" | "o" => {
             let hs = targets(s, p)?;
@@ -242,7 +254,8 @@ fn pan_frac(s: &mut Session, f: Vec2) -> Result<Value> {
     let st = s.state_mut()?;
     let v = st.view();
     let ww = v.height * w / h.max(1.0);
-    st.set_view(View { center: v.center + Vec2::new(f.x * ww, f.y * v.height), height: v.height });
+    // Screen directions: in a twisted view the drawing is turned by the twist.
+    st.set_view(View { center: v.center + Vec2::new(f.x * ww, f.y * v.height).rotate(-v.twist), ..v });
     ok()
 }
 
@@ -258,7 +271,7 @@ fn run_pan(s: &mut Session, p: &Value) -> Result<Value> {
         let b = point_req("pan", p, "to")?;
         v.center - (b - a)
     };
-    st.set_view(View { center: c, height: v.height });
+    st.set_view(View { center: c, ..v });
     ok()
 }
 
@@ -268,8 +281,32 @@ fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
     if h <= 0.0 {
         return Err(bad("view.set", "height must be positive"));
     }
-    if !s.state_mut()?.set_view(View { center: c, height: h }) {
+    let twist = match p.get("twist") {
+        Some(t) => t.as_f64().filter(|t| t.is_finite()).ok_or_else(|| bad("view.set", "twist must be a number of degrees"))?.to_radians(),
+        None => s.state()?.view().twist,
+    };
+    // As DVIEW TWist: the Model tab's view or the active layout viewport turns; a layout sheet
+    // (paper space) is never twisted.
+    let target = match dview::target(s) {
+        Ok(t) => Some(t),
+        Err(_) if twist == 0.0 => None,
+        Err(e) => return Err(e),
+    };
+    let before = (s.state()?.doc.clone(), s.state()?.selection.clone());
+    let twist = match target {
+        Some(t @ dview::Target::Viewport(_)) => {
+            dview::set_twist(s, t, twist)?;
+            s.state()?.view().twist
+        }
+        Some(dview::Target::Model) => cadcraft_geom::norm_angle(twist),
+        None => 0.0,
+    };
+    if !s.state_mut()?.set_view(View { center: c, height: h, twist }) {
+        s.state_mut()?.doc = before.0;
         return Err(bad("view.set", "the view is too large to show. Nothing was changed"));
+    }
+    if let Some(dview::Target::Viewport(h)) = target {
+        dview::record_viewport_edit(s, before, h)?;
     }
     ok()
 }
@@ -294,7 +331,7 @@ fn run_layout_set(s: &mut Session, p: &Value) -> Result<Value> {
         let page = st.doc.layout(n).map(|l| l.page.clone()).unwrap_or_default();
         let (w, h) = if page.landscape { (page.height_mm, page.width_mm) } else { (page.width_mm, page.height_mm) };
         let unit = if st.doc.header.i64("MEASUREMENT", 0) == 1 { 1.0 } else { 1.0 / 25.4 };
-        st.set_view_quiet(View { center: Vec2::new(w * unit / 2.0, h * unit / 2.0), height: h * unit * 1.15 });
+        st.set_view_quiet(View { center: Vec2::new(w * unit / 2.0, h * unit / 2.0), height: h * unit * 1.15, twist: 0.0 });
     }
     s.touch();
     ok()
@@ -441,7 +478,7 @@ impl Interactive for ZoomM {
                 if st.view_history.last() == Some(&b.screen) {
                     st.view_history.pop();
                 }
-                st.set_zoom_frame(View { center: b.center, height: b.height });
+                st.set_zoom_frame(View { center: b.center, height: b.height, twist: b.frame.twist });
                 return Ok(Step::Done);
             }
             (ZoomStage::Dynamic(mut b), Input::Point(p)) => {
@@ -565,8 +602,28 @@ impl Session {
         let f = 2f64.powf((-dy / half).clamp(-16.0, 16.0));
         let st = self.state_mut()?;
         let v = st.view();
-        st.set_view_quiet(View { center: v.center, height: (v.height / f).clamp(1e-9, 1e12) });
+        st.set_view_quiet(View { height: (v.height / f).clamp(1e-9, 1e12), ..v });
         self.touch();
+        Ok(())
+    }
+    /// PAN is in its realtime mode: the UI turns left-button drags into [`Session::realtime_pan`].
+    pub fn realtime_pan_active(&self) -> bool {
+        self.running.as_ref().is_some_and(|r| r.id == "pan") && self.current_prompt().is_some_and(|p| p.message == REALTIME_PAN_PROMPT)
+    }
+    /// One step of a realtime pan drag of `dx`, `dy` screen pixels (y down): the drawing follows
+    /// the cursor. Does nothing outside realtime PAN.
+    pub fn realtime_pan(&mut self, dx: f64, dy: f64) -> Result<()> {
+        if !self.realtime_pan_active() || !dx.is_finite() || !dy.is_finite() {
+            return Ok(());
+        }
+        let px = self.viewport_px.1.max(1.0);
+        let st = self.state_mut()?;
+        let v = st.view();
+        let scale = px / v.height;
+        // A twisted view (DVIEW TWist) turns the screen drag into the drawing's axes.
+        // Only the view moves, as with a middle-button drag: no new revision, so the canvas keeps
+        // its display list and does not rebuild the drawing's geometry on every frame.
+        st.set_view_quiet(View { center: v.center - Vec2::new(dx / scale, -dy / scale).rotate(-v.twist), ..v });
         Ok(())
     }
     /// The zoom of a mouse wheel scroll by `delta` points (up zooms in): ZOOMFACTOR scales it
@@ -580,14 +637,46 @@ impl Session {
     }
 }
 
-#[derive(Default)]
-struct PanM {
-    first: Option<Vec2>,
-}
+/// The prompt of realtime PAN; [`Session::realtime_pan_active`] recognises the mode by it.
+const REALTIME_PAN_PROMPT: &str = "Drag to pan; press Esc or Enter to exit";
+
+/// PAN: realtime. Dragging with the left button moves the drawing with the cursor until Esc or
+/// Enter; the whole session is one Zoom Previous entry.
+struct PanM;
 
 impl Interactive for PanM {
     fn name(&self) -> &'static str {
         "PAN"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        let st = s.state_mut()?;
+        let v = st.view();
+        st.view_history.push(v);
+        if st.view_history.len() > 50 {
+            st.view_history.remove(0);
+        }
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        Prompt::new(REALTIME_PAN_PROMPT, Accept { enter: true, ..Accept::default() })
+    }
+    fn input(&mut self, _s: &mut Session, i: Input) -> Result<Step> {
+        match i {
+            Input::Enter => Ok(Step::Done),
+            _ => Ok(Step::Continue),
+        }
+    }
+}
+
+/// -PAN: a base point and a second point, or a displacement (a point, then Enter).
+#[derive(Default)]
+struct PanPointsM {
+    first: Option<Vec2>,
+}
+
+impl Interactive for PanPointsM {
+    fn name(&self) -> &'static str {
+        "-PAN"
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.first {
@@ -605,7 +694,15 @@ impl Interactive for PanM {
                 run_pan(s, &json!({ "from": [a.x, a.y], "to": [b.x, b.y] }))?;
                 Ok(Step::Done)
             }
-            (_, Input::Enter) => Ok(Step::Done),
+            // Enter at the second point: the first point is the displacement, as typed in the
+            // current UCS. The point arrives in world coordinates, so take the UCS origin off
+            // (0,0 in a moved UCS does not pan).
+            (Some(p), Input::Enter) => {
+                let d = p - s.input_ucs().origin.xy();
+                run_pan(s, &json!({ "delta": [d.x, d.y] }))?;
+                Ok(Step::Done)
+            }
+            (None, Input::Enter) => Ok(Step::Done),
             _ => Ok(Step::Continue),
         }
     }

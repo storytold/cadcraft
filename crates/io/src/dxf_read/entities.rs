@@ -1,15 +1,17 @@
-use super::common::{T, common, ocs};
-use super::hatch::hatch;
-use super::text::{attdef, attrib_modes, attrib_props, mtext_from, multiline_attrib, split_embedded, text_from};
+use super::common::{T, common, ocs, plan_of_tilted, run_points, tilted};
+use super::hatch::{CurvePoints, hatch};
+use super::mtext_dxf;
+use super::text::{attdef, attrib_modes, attrib_props, flatten_tilted, mtext_from, multiline_attrib, split_embedded, text_from};
 use super::{
     Arc, Attrib, Circle, Common, DimKind, Dimension, Ellipse, EntityKind, Face3d, Handle, HashMap, Helix, HelixConstrain, Insert, Leader, Line,
     LwPolyline, MAX_FRAME_CHARS, Point, PolyVertex, Polyline3d, RawTag, RayLine, Rx, Solid, Spline, Table, TableCell, Tag, Tolerance, Unknown, Vec2,
-    Vec3, Viewport, Wipeout, records,
+    Vec3, Viewport, Wipeout, record_slices,
 };
+use cadcraft_doc::PolyfaceMesh;
 
 /// Parse one entity record. POLYLINE/INSERT followers are handled by the caller.
 pub(super) fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
-    entity_with_table_budget(kind, tags, &mut 4_000_000)
+    entity_with_table_budget(kind, tags, &mut 4_000_000, &mut CurvePoints::default())
 }
 
 /// Parse one entity while charging materialized table cells to the caller's shared import budget.
@@ -45,7 +47,7 @@ fn ellipse(c: &Common, t: &T) -> Ellipse {
 }
 
 /// A LWPOLYLINE, or the region CADCraft wrote as one.
-fn lwpolyline(tags: &[Tag], c: &Common, t: &T) -> Option<EntityKind> {
+fn lwpolyline(tags: &[Tag], c: &mut Common, t: &T) -> Option<EntityKind> {
     let mut verts = Vec::new();
     let mut cur: Option<PolyVertex> = None;
     for tg in tags {
@@ -81,13 +83,20 @@ fn lwpolyline(tags: &[Tag], c: &Common, t: &T) -> Option<EntityKind> {
     }
     verts.extend(cur);
     let flags = t.i(70).unwrap_or(0);
-    if c.extrusion.z < 0.0 {
+    let mut elevation = t.fd(38, 0.0);
+    if tilted(c.extrusion, || run_points(&verts, elevation, flags & 1 != 0)) {
+        // In a tilted plane: drawn as seen from above, at the vertices' mean height, its
+        // vertices now plan coordinates.
+        (verts, elevation) = plan_of_tilted(c.extrusion, elevation, &verts, flags & 1 != 0);
+        thickness_along_z(c);
+        c.extrusion = Vec3::Z;
+    } else if c.extrusion.z < 0.0 {
         for v in &mut verts {
             v.p.x = -v.p.x;
             v.bulge = -v.bulge;
         }
     }
-    let pl = LwPolyline { vertices: verts, closed: flags & 1 != 0, const_width: t.fd(43, 0.0), elevation: t.fd(38, 0.0), plinegen: flags & 128 != 0 };
+    let pl = LwPolyline { vertices: verts, closed: flags & 1 != 0, const_width: t.fd(43, 0.0), elevation, plinegen: flags & 128 != 0 };
     // A region CADCraft wrote as polylines (`dxf_region`).
     crate::dxf_region::from_polyline(tags, pl)
 }
@@ -97,54 +106,83 @@ fn spline(t: &T) -> Spline {
     let knots = t.all_f(40);
     let control = t.pts(10);
     let weights = t.all_f(41);
-    let fit = t.pts(11);
-    let tangent = |c: i32| t.f(c).map(|_| t.p(c).xy());
-    let fit_opts =
-        cadcraft_geom::FitOptions { knots: Default::default(), start_tangent: tangent(12), end_tangent: tangent(13), tolerance: t.fd(44, 0.0) }
-            .sanitized();
+    let mut fit = t.pts(11);
     let closed = t.i(70).unwrap_or(0) & 1 != 0;
+    // AutoCAD ends a closed spline's fit points with the first again; here it is implied.
+    if closed && fit.len() > 3 && fit.first().zip(fit.last()).is_some_and(|(a, b)| a.near(*b, 1e-12)) {
+        fit.pop();
+    }
+    let tangent = |c: i32| t.f(c).map(|_| t.p(c).xy());
+    // AutoCAD writes no fit tolerance as 1e-10; read as a tolerance, an approximation could meet it.
+    let tolerance = t.fd(44, 0.0);
+    let tolerance = if tolerance <= 1e-10 { 0.0 } else { tolerance };
+    // AutoCAD takes a 12/13 tangent with its length (for a closed spline, its tangent where it
+    // closes), keeps it through fit-point edits and writes it back as it read it.
+    let fit_opts = cadcraft_geom::FitOptions { knots: Default::default(), start_tangent: tangent(12), end_tangent: tangent(13), tolerance }
+        .sanitized_keeping_length();
     let mut sp = Spline { degree, knots, control, weights, fit: fit.clone(), closed, fit_opts };
     if !sp.is_valid() && fit.len() >= 2 {
-        sp = Spline::fit_with(&fit, sp.closed, fit_opts);
+        sp = Spline::fit_with_end_derivatives(&fit, sp.closed, fit_opts);
     } else if !sp.is_valid() && sp.control.len() >= 2 {
         sp = Spline::from_control(sp.control.clone(), degree);
     } else if fit.len() >= 3 {
         // DXF keeps the knots, not how they were spaced: recover it for later refits.
         sp.fit_opts.knots = sp.infer_knot_param();
     }
+    // The writer gives every closed spline its curve's tangents where it closes, but only one
+    // built as AutoCAD's closed fit spline keeps them (as `Spline::fit_with` stores them); for the
+    // others a refit takes none, before a save or after it.
+    if sp.closed && !keeps_closing_tangent(&sp) {
+        sp.fit_opts.start_tangent = None;
+        sp.fit_opts.end_tangent = None;
+    }
     sp
 }
 
-pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_left: &mut usize) -> Option<(Common, EntityKind)> {
+/// A closed spline that keeps a tangent where it closes: AutoCAD's closed fit spline, with three
+/// fit points or more, no kink (a fit point twice in a row) and clamped knots (periodic knots,
+/// square-root, uniform or within a fit tolerance, wrap round).
+fn keeps_closing_tangent(sp: &Spline) -> bool {
+    let kinked = sp.fit.windows(2).any(|w| w.first().zip(w.get(1)).is_some_and(|(a, b)| a.near(*b, 1e-12)));
+    sp.fit.len() >= 3 && !kinked && !sp.wraps()
+}
+
+pub(super) fn entity_with_table_budget(
+    kind: &str,
+    tags: &[Tag],
+    table_cells_left: &mut usize,
+    curves: &mut CurvePoints,
+) -> Option<(Common, EntityKind)> {
     // The paper-space viewport our writer adds (dxf_write::paper_view) stays implicit.
     if kind == "VIEWPORT" && crate::dxf_ext::is_paper_view(tags) {
         return None;
     }
     let t = T(tags);
-    let c = common(&t);
+    let mut c = common(&t);
     let k = match kind {
         "LINE" => EntityKind::Line(Line { a: t.p(10), b: t.p(11) }),
         "POINT" => EntityKind::Point(Point { p: t.p(10), angle: t.fd(50, 0.0).to_radians() }),
         "CIRCLE" => EntityKind::Circle(Circle { center: ocs(&c, t.p(10)), radius: t.fd(40, 1.0).abs() }),
         "ARC" => EntityKind::Arc(arc(&c, &t)),
         "ELLIPSE" => EntityKind::Ellipse(ellipse(&c, &t)),
-        "LWPOLYLINE" => lwpolyline(tags, &c, &t)?,
+        "LWPOLYLINE" => lwpolyline(tags, &mut c, &t)?,
         "SPLINE" => EntityKind::Spline(spline(&t)),
         "HELIX" => EntityKind::Helix(helix(tags)),
         "RAY" => EntityKind::Ray(RayLine { base: t.p(10), dir: t.p(11) }),
         "XLINE" => EntityKind::XLine(RayLine { base: t.p(10), dir: t.p(11) }),
         "TEXT" => EntityKind::Text(text_from(&t)),
         "MTEXT" => EntityKind::MText(mtext_from(tags, &c)),
-        "ATTDEF" => EntityKind::AttDef(attdef(tags, &c)),
+        "ATTDEF" => EntityKind::AttDef(attdef(tags, &mut c)),
         "INSERT" => {
             // A mirrored block reference comes with extrusion (0,0,-1): its insertion point, scale,
             // rotation and column spacing are in that OCS, where x runs the other way. In the WCS that
             // is the mirrored point, a negative x scale, the opposite rotation and a negative column
             // spacing. Noise of up to 1e-3 in the extrusion's x/y moves the projection by ~1e-7 of the
             // size, so it still counts as mirrored. A truly tilted extrusion (block plane not parallel
-            // to XY) needs the full 3D block transform, which Insert cannot hold; it is left as read.
+            // to XY) needs the full 3D block transform, which Insert cannot hold; it is left as read,
+            // and so are its ATTRIBs facing up (`reference_left_tilted`).
             let n = c.extrusion;
-            let mirrored = n.z < 0.0 && n.x.hypot(n.y) <= 1e-3 * n.z.abs();
+            let mirrored = mirrored_reference(n);
             let mut p = t.p(10);
             let mut scale = Vec3::new(t.fd(41, 1.0), t.fd(42, 1.0), t.fd(43, 1.0));
             let mut rotation = t.fd(50, 0.0).to_radians();
@@ -165,6 +203,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 rows: t.i(71).unwrap_or(1).clamp(1, 10_000) as u32,
                 col_spacing,
                 row_spacing: t.fd(45, 0.0),
+                clip: None,
             })
         }
         "DIMENSION" => {
@@ -189,12 +228,13 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 p14: t.p(14),
                 p15: t.p(15),
                 p16: t.p(16),
-                text: t.s(1).unwrap_or_default(),
+                text: mtext_dxf::decode_line(&t.s(1).unwrap_or_default()),
                 style: t.s(3).unwrap_or_else(|| "Standard".into()),
                 measurement: t.fd(42, 0.0),
                 text_rotation: t.fd(53, 0.0).to_radians(),
                 user_text_pos: t.i(70).unwrap_or(0) & 128 != 0,
                 block: t.s(2).filter(|s| !s.is_empty()),
+                insertion_point: t.p(12),
                 overrides: Default::default(),
                 assoc: Vec::new(),
                 marks: Default::default(),
@@ -226,8 +266,36 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         "MLINE" => EntityKind::MLine(crate::dxf_mline::read_entity(tags)),
         "3DFACE" => EntityKind::Face3d(Face3d { corners: [t.p(10), t.p(11), t.p(12), t.p(13)], hidden_edges: t.i(70).unwrap_or(0) as u8 }),
         "HATCH" => {
-            let mut k = hatch(tags, &t)?;
-            if c.extrusion.z < 0.0
+            let mut k = hatch(tags, &t, curves)?;
+            if let EntityKind::Hatch(h) = &mut k
+                && tilted(c.extrusion, || h.loops.iter().flat_map(|l| run_points(&l.vertices, h.elevation, true)))
+            {
+                // In a tilted plane (a terrain face, a slope): the boundary as seen from above,
+                // at its mean height, and the pattern direction and origin projected the same way.
+                let n = c.extrusion;
+                let m = cadcraft_geom::Mat4::ocs(n);
+                let (mut sum, mut count) = (0.0, 0usize);
+                for l in &mut h.loops {
+                    let (v, z) = plan_of_tilted(n, h.elevation, &l.vertices, true);
+                    sum += z * v.len() as f64;
+                    count += v.len();
+                    l.vertices = v;
+                }
+                // The pattern keeps the spacing and dashes of its plane: only its direction turns.
+                let plan_angle = |a: f64| {
+                    let dir = m.apply(Vec3::new(a.cos(), a.sin(), 0.0)).xy();
+                    if dir.len() > 1e-9 { cadcraft_geom::norm_angle(dir.y.atan2(dir.x)) } else { a }
+                };
+                h.angle = plan_angle(h.angle);
+                if let Some(g) = h.gradient.as_mut() {
+                    g.angle = plan_angle(g.angle);
+                }
+                h.origin = m.apply(Vec3::new(h.origin.x, h.origin.y, h.elevation)).xy();
+                if count > 0 {
+                    h.elevation = sum / count as f64;
+                }
+                c.extrusion = Vec3::Z;
+            } else if c.extrusion.z < 0.0
                 && let EntityKind::Hatch(h) = &mut k
             {
                 // Boundary in the mirrored OCS, like LWPOLYLINE; the pattern direction mirrors too.
@@ -240,19 +308,27 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
             k
         }
         "ACAD_TABLE" => EntityKind::Table(acad_table(tags, table_cells_left)),
-        "VIEWPORT" => EntityKind::Viewport(Viewport {
-            center: t.p(10),
-            width: t.fd(40, 1.0),
-            height: t.fd(41, 1.0),
-            view_center: Vec2::new(t.fd(12, 0.0), t.fd(22, 0.0)),
-            view_height: t.fd(45, 1.0),
-            id: t.i(69).unwrap_or(0) as u32,
-            locked: t.i(90).unwrap_or(0) & 16384 != 0,
-            frozen_layers: crate::dxf_ext::read_frozen(tags),
-            layer_colors: crate::dxf_ext::read_layer_colors(tags),
-            // Status flags: 65536 = non-rectangular clipping (by the 340 entity), 131072 = off.
-            clip: t.s(340).and_then(|h| Handle::parse_hex(&h)).filter(|h| h.0 != 0 && t.i(90).unwrap_or(0) & 65536 != 0),
-            on: t.i(90).unwrap_or(0) & 131072 == 0,
+        "VIEWPORT" => EntityKind::Viewport({
+            // View twist (group 51, degrees).
+            let twist = t.f(51).map_or(0.0, |a| cadcraft_geom::norm_angle(a.to_radians()));
+            Viewport {
+                center: t.p(10),
+                width: t.fd(40, 1.0),
+                height: t.fd(41, 1.0),
+                // 12/22 is in display coordinates, whose origin is the view target 17/27/37.
+                view_center: t.view_center(12, 17, twist),
+                view_height: t.fd(45, 1.0),
+                // ZWCAD writes -1 (unknown): 0 here, numbered in order by the reader (#1463).
+                // Group 69 is 16-bit: other out-of-range values are unknown too, never truncated.
+                id: t.i(69).filter(|i| (1..=32767).contains(i)).unwrap_or(0) as u32,
+                locked: t.i(90).unwrap_or(0) & 16384 != 0,
+                frozen_layers: crate::dxf_ext::read_frozen(tags),
+                layer_colors: crate::dxf_ext::read_layer_colors(tags),
+                // Status flags: 65536 = non-rectangular clipping (by the 340 entity), 131072 = off.
+                clip: t.s(340).and_then(|h| Handle::parse_hex(&h)).filter(|h| h.0 != 0 && t.i(90).unwrap_or(0) & 65536 != 0),
+                on: t.i(90).unwrap_or(0) & 131072 == 0,
+                twist,
+            }
         }),
         "WIPEOUT" => {
             let o = t.p(10);
@@ -277,6 +353,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         other => EntityKind::Unknown(Unknown {
             dxf_type: other.to_string(),
             tags: tags.iter().map(|tg| RawTag { code: tg.code, value: tg.str() }).collect(),
+            graphics: Vec::new(),
         }),
     };
     Some((c, k))
@@ -295,7 +372,9 @@ pub(super) fn acad_table(tags: &[Tag], table_cells_left: &mut usize) -> Table {
     // Large declared sizes must be backed by cell records (no allocation from a bare count).
     let n_cells = tail.iter().filter(|x| x.code == 171).count();
     let declared = rows.saturating_mul(cols);
-    if declared > MAX_CELLS || (declared > 10_000 && n_cells < declared) {
+    // A table with no rows or no columns has no cells: keep neither dimension, so its row heights
+    // and column widths (allocated per dimension, outside the cell budget) are not allocated.
+    if declared == 0 || declared > MAX_CELLS || (declared > 10_000 && n_cells < declared) {
         rows = 0;
         cols = 0;
     }
@@ -327,8 +406,13 @@ pub(super) fn acad_table(tags: &[Tag], table_cells_left: &mut usize) -> Table {
         let cell = body.get(i..end).unwrap_or(&[]);
         i = end;
         let c = T(cell);
-        let mut text: String = cell.iter().filter(|x| x.code == 2 || x.code == 3).map(Tag::str).collect();
-        text.push_str(&c.s(1).unwrap_or_default());
+        let text: String = if cell.iter().any(|x| x.code == 1) {
+            let mut text: String = cell.iter().filter(|x| x.code == 2 || x.code == 3).map(Tag::str).collect();
+            text.push_str(&c.s(1).unwrap_or_default());
+            text
+        } else {
+            cell.iter().filter(|x| x.code == 302 || x.code == 303).map(Tag::str).collect()
+        };
         let span = |code: i32| c.i(code).and_then(|v| u32::try_from(v).ok());
         // A merge starts at the cell whose span (rows 176, columns 175) is more than one cell.
         // Its own merged flag (173) varies by writer: CADCraft sets it, while AutoCAD-style
@@ -372,10 +456,10 @@ pub(super) fn acad_table(tags: &[Tag], table_cells_left: &mut usize) -> Table {
 
 /// The plot style names of a file: the entries of the `ACAD_PLOTSTYLENAME` dictionary of the
 /// named object dictionary (the first object), by placeholder handle.
-pub(super) fn plot_style_names(secs: &[cadcraft_dxf::Section]) -> HashMap<String, String> {
+pub(super) fn plot_style_names(secs: &[craft_dxf::SectionRef<'_>]) -> HashMap<String, String> {
     let mut out = HashMap::new();
     let Some(objects) = secs.iter().find(|s| s.name == "OBJECTS") else { return out };
-    let recs = records(&objects.tags);
+    let recs = record_slices(objects.tags);
     let entries = |tags: &[Tag]| {
         let mut v: Vec<(String, String)> = Vec::new();
         let mut name: Option<String> = None;
@@ -408,26 +492,37 @@ pub(super) fn plot_style_names(secs: &[cadcraft_dxf::Section]) -> HashMap<String
     out
 }
 
-/// The named plot style an entity record points at (group 390 among its AcDbEntity groups).
+/// The plot style an entity record names among its AcDbEntity groups: a named style (group 390,
+/// its placeholder's handle) or ByBlock (group 380 = 1, AcDb::PlotStyleNameType).
 pub(super) fn entity_plot_style(tags: &[Tag], rx: &Rx) -> Option<String> {
     let mut in_entity = false;
+    let mut by_block = false;
     for t in tags {
         if t.code == 100 {
             if in_entity {
-                return None;
+                break;
             }
             in_entity = t.str() == "AcDbEntity";
-        } else if t.code == 390 && in_entity {
-            return rx.pstyles.get(&t.str().trim().to_ascii_uppercase()).cloned();
+        } else if in_entity {
+            match t.code {
+                390 => return rx.pstyles.get(&t.str().trim().to_ascii_uppercase()).cloned(),
+                380 => by_block = t.i64() == 1,
+                _ => {}
+            }
         }
     }
-    None
+    by_block.then(|| "ByBlock".to_string())
 }
 
 /// Dimension overrides and associativity, table references: data of an entity record that
 /// needs the file's handle maps.
 pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityKind, rx: &mut Rx) {
     match (kind, k) {
+        // Its proxy graphics (a proxy's, or the picture another kept entity was saved with), with
+        // the table indices resolved while the file's order is known.
+        (_, EntityKind::Unknown(u)) => {
+            u.graphics = cadcraft_doc::proxy_entities(&u.proxy_graphics_bytes(), &rx.proxy_tables, h);
+        }
         ("DIMENSION", EntityKind::Dimension(dm)) => {
             dm.overrides = crate::dxf_ext::read_dstyle(tags, &rx.styles, &rx.brs, &rx.ltypes);
             dm.assoc = crate::dxf_ext::read_assoc(tags);
@@ -456,6 +551,13 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
                 rx.table_style_fix.push((h, t.s(342).map(|sh| sh.trim().to_ascii_uppercase()).unwrap_or_default()));
             }
         }
+        // Keyed by the handle the entity was given, so an IMAGE whose repeated handle was
+        // reassigned still finds its own IMAGEDEF.
+        ("IMAGE", EntityKind::Image(_)) => {
+            if let Some(def) = tags.iter().find(|t| t.code == 340) {
+                rx.image_defs.insert(h, def.str().trim().to_ascii_uppercase());
+            }
+        }
         ("INSERT", EntityKind::Insert(ins)) => {
             rx.inserted.insert(ins.block.to_ascii_uppercase());
         }
@@ -466,14 +568,20 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
             }
             rx.mleader_fix.push((h, pending));
         }
-        // CADCraft's VPFROZEN xdata wins; otherwise AutoCAD's group 341 layer handles.
-        ("VIEWPORT", EntityKind::Viewport(v)) if v.frozen_layers.is_empty() => {
-            v.frozen_layers = tags
-                .iter()
-                .take_while(|t| t.code < 1000)
-                .filter(|t| t.code == 341)
-                .filter_map(|t| rx.layers.get(&t.str().trim().to_ascii_uppercase()).cloned())
-                .collect();
+        // The frozen layers: the LAYER handles of group 331 (341 in DXF 2000), outside `102 {…}`
+        // application groups, then the names in CADCraft's VPFROZEN xdata, which holds those
+        // without one; each layer once.
+        ("VIEWPORT", EntityKind::Viewport(v)) => {
+            let mut app_group = false;
+            let handles = tags.iter().take_while(|t| t.code < 1000).filter(|t| {
+                if t.code == 102 {
+                    app_group = t.str().starts_with('{');
+                }
+                !app_group && (t.code == 331 || t.code == 341)
+            });
+            let named = handles.filter_map(|t| rx.layers.get(&t.str().trim().to_ascii_uppercase()));
+            let mut seen = std::collections::HashSet::new();
+            v.frozen_layers = named.chain(&v.frozen_layers).filter(|n| seen.insert(n.to_ascii_uppercase())).cloned().collect();
         }
         _ => {}
     }
@@ -483,7 +591,7 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
 /// can't be placed are counted in `skipped`.
 /// The entity of a POLYLINE, with its mesh faces (advancing `i` past its VERTEX records). `None`
 /// for a mesh without faces.
-pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T) -> Option<(Common, EntityKind, Vec<EntityKind>)> {
+pub(super) fn polyline_entity(recs: &[(String, &[Tag])], i: &mut usize, t: &T) -> Option<(Common, EntityKind, Vec<EntityKind>)> {
     let flags = t.i(70).unwrap_or(0);
     let mut pts: Vec<(Vec3, f64, f64, f64)> = Vec::new();
     // Polyface face records (VERTEX 70 bit 128 without 64): vertex indices 71–74.
@@ -505,34 +613,74 @@ pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T)
             break;
         }
     }
-    let c = common(t);
+    let mut c = common(t);
     let mut extra: Vec<EntityKind> = Vec::new();
-    let k = if flags & (16 | 64) != 0 {
-        // Polyface (64) and polygon (16) meshes become 3D faces; the first takes the
-        // polyline's place.
+    let k = if flags & 64 != 0 {
+        // Face records that name a missing vertex (or fewer than three) are dropped: they draw
+        // nothing and would be written back broken. A mesh left with no face is skipped.
+        let mut mesh = PolyfaceMesh { vertices: pts.iter().map(|p| p.0).collect(), faces: Vec::new() };
+        let kept = faces.iter().map(|f| f.map(|ix| i32::try_from(ix).unwrap_or(i32::MAX))).filter(|f| mesh.face3d(f).is_some()).collect();
+        mesh.faces = kept;
+        if mesh.faces.is_empty() {
+            return None;
+        }
+        EntityKind::PolyfaceMesh(mesh)
+    } else if flags & 16 != 0 {
+        // Polygon meshes become 3D faces; the first takes the polyline's place.
         let verts: Vec<Vec3> = pts.iter().map(|p| p.0).collect();
-        let mut fs = if flags & 64 != 0 { polyface_faces(&verts, &faces) } else { mesh_faces(&verts, t, flags) }.into_iter().map(EntityKind::Face3d);
+        let mut fs = mesh_faces(&verts, t, flags).into_iter().map(EntityKind::Face3d);
         let first = fs.next()?;
         extra.extend(fs);
         first
     } else if flags & 8 != 0 {
         EntityKind::Polyline3d(Polyline3d { points: pts.iter().map(|p| p.0).collect(), closed: flags & 1 != 0 })
     } else {
-        // A 2D polyline's vertices are in its OCS: mirrored like LWPOLYLINE.
-        let m = if c.extrusion.z < 0.0 { -1.0 } else { 1.0 };
+        // A 2D polyline's vertices are in its OCS, at the elevation of the POLYLINE's own point:
+        // in a tilted plane drawn as seen from above like LWPOLYLINE, else mirrored like it.
+        let closed = flags & 1 != 0;
+        let mut vertices: Vec<PolyVertex> = pts.iter().map(|p| PolyVertex { p: p.0.xy(), bulge: p.1, start_width: p.2, end_width: p.3 }).collect();
+        let mut elevation = t.p(10).z;
+        if tilted(c.extrusion, || run_points(&vertices, elevation, closed)) {
+            (vertices, elevation) = plan_of_tilted(c.extrusion, elevation, &vertices, closed);
+            thickness_along_z(&mut c);
+            c.extrusion = Vec3::Z;
+        } else if c.extrusion.z < 0.0 {
+            for v in &mut vertices {
+                v.p.x = -v.p.x;
+                v.bulge = -v.bulge;
+            }
+        }
         EntityKind::LwPolyline(LwPolyline {
-            vertices: pts.iter().map(|p| PolyVertex { p: Vec2::new(m * p.0.x, p.0.y), bulge: m * p.1, start_width: p.2, end_width: p.3 }).collect(),
-            closed: flags & 1 != 0,
+            vertices,
+            closed,
             const_width: t.fd(40, 0.0).min(t.fd(41, 0.0)).max(0.0),
-            elevation: t.p(10).z,
+            elevation,
             plinegen: flags & 128 != 0,
         })
     };
     Some((c, k, extra))
 }
 
-/// The ATTRIB records after an INSERT, advancing `i` past them and their SEQEND.
-pub(super) fn insert_attribs(recs: &[(String, Vec<Tag>)], i: &mut usize, ins_layer: &str) -> Vec<Attrib> {
+/// Whether a block reference with extrusion `n` is mirrored: (0,0,-1), up to noise of 1e-3 in x and
+/// y. The INSERT arm maps such a reference's point, scale, rotation and column spacing.
+fn mirrored_reference(n: Vec3) -> bool {
+    n.z < 0.0 && n.x.hypot(n.y) <= 1e-3 * n.z.abs()
+}
+
+/// Whether a block reference with extrusion `n` is read as is although its plane is tilted: the
+/// INSERT arm maps only a mirrored one, since `Insert` cannot hold the 3D transform, so its block is
+/// drawn at the OCS point read. Its ATTRIBs facing up are then left as read too: mapped on their
+/// own they would leave the block they belong to. (One facing down is mirrored by `text_from`, as
+/// before.)
+pub(super) fn reference_left_tilted(n: Vec3) -> bool {
+    let unit = n.normalized();
+    !mirrored_reference(n) && (unit.x.abs() >= 1e-12 || unit.y.abs() >= 1e-12)
+}
+
+/// The ATTRIB records after an INSERT, advancing `i` past them and their SEQEND. Those of a
+/// reference read as is in its tilted plane (`left_tilted`, [`reference_left_tilted`]) stay as
+/// read with it.
+pub(super) fn insert_attribs(recs: &[(String, &[Tag])], i: &mut usize, ins_layer: &str, left_tilted: bool) -> Vec<Attrib> {
     let mut attribs = Vec::new();
     while let Some((k2, t2)) = recs.get(*i) {
         if k2 == "ATTRIB" {
@@ -542,6 +690,11 @@ pub(super) fn insert_attribs(recs: &[(String, Vec<Tag>)], i: &mut usize, ins_lay
             let multiline = multiline_attrib(embedded, &common(&tt));
             let own = T(own);
             let mut text = text_from(&own);
+            // An ATTRIB keeps no plane of its own: one in a tilted plane is drawn as seen from above,
+            // unless its reference is left in its own tilted plane.
+            if !left_tilted {
+                flatten_tilted(&mut text, &own);
+            }
             if let Some(m) = &multiline {
                 text.value.clone_from(&m.read_as);
             }
@@ -564,36 +717,6 @@ pub(super) fn insert_attribs(recs: &[(String, Vec<Tag>)], i: &mut usize, ins_lay
         }
     }
     attribs
-}
-
-/// Faces of a polyface mesh: each face record names three or four vertices by 1-based index;
-/// a negative index hides the edge that starts at that vertex. Faces with fewer vertices or
-/// an index outside the vertex list are skipped.
-fn polyface_faces(verts: &[Vec3], faces: &[[i64; 4]]) -> Vec<Face3d> {
-    let mut out = Vec::new();
-    for f in faces {
-        let mut corners: Vec<Vec3> = Vec::with_capacity(4);
-        let mut hidden = 0u8;
-        let mut ok = true;
-        for &ix in f.iter().filter(|&&ix| ix != 0) {
-            let at = usize::try_from(ix.unsigned_abs()).ok().and_then(|n| n.checked_sub(1));
-            let Some(p) = at.and_then(|n| verts.get(n)) else {
-                ok = false;
-                break;
-            };
-            if ix < 0 {
-                hidden |= 1 << corners.len();
-            }
-            corners.push(*p);
-        }
-        match (ok, corners.as_slice()) {
-            // A triangle's closing edge is the 3DFACE's fourth (the third is degenerate).
-            (true, [a, b, c]) => out.push(Face3d { corners: [*a, *b, *c, *c], hidden_edges: hidden | if hidden & 4 != 0 { 8 } else { 0 } }),
-            (true, [a, b, c, d]) => out.push(Face3d { corners: [*a, *b, *c, *d], hidden_edges: hidden }),
-            _ => {}
-        }
-    }
-    out
 }
 
 /// Quads of an M×N polygon mesh (71/72, or the smoothed 73/74 when the vertex count matches
@@ -662,4 +785,12 @@ fn helix(tags: &[Tag]) -> Helix {
         constrain: HelixConstrain::from_dxf(t.i(280).unwrap_or(2)),
     }
     .sanitized()
+}
+
+/// A polyline drawn as seen from above gets the normal +Z: its thickness keeps the side of Z it
+/// extruded toward, which the normal it is losing said.
+fn thickness_along_z(c: &mut Common) {
+    if c.extrusion.z < 0.0 {
+        c.thickness = -c.thickness;
+    }
 }

@@ -5,6 +5,12 @@
 //! itself is on, are opened (see `craft_docpath`). A refused path is handled like a missing file,
 //! with the reason in its status. Paths the user gives a command (XATTACH, -XREF Path, DATALINK)
 //! are their own choice and are used as given.
+//!
+//! A data link copies its file's text into the drawing, where the next save keeps it. So a data
+//! link the drawing itself names is read only from the drawing's folder or a folder below it, once
+//! `..` and links are followed ([`drawing_folder`]), unless the user linked that file with
+//! DATALINK since the drawing was opened. Otherwise a drawing could copy any file it names into
+//! itself for whoever made it.
 
 use std::path::{Path, PathBuf};
 
@@ -19,6 +25,15 @@ pub use craft_docpath::Refused;
 pub fn resolve(stored: &str, document: Option<&Path>) -> Result<PathBuf, Refused> {
     let document = document.filter(|d| !d.as_os_str().is_empty()).map(|d| std::path::absolute(d).unwrap_or_else(|_| d.to_path_buf()));
     craft_docpath::resolve_absolute(stored.trim(), document.as_deref())
+}
+
+/// The folder of the drawing saved at `document` as the file system resolves it
+/// ([`std::fs::canonicalize`]: absolute, with `..` and links followed), to compare files resolved
+/// the same way with. `None` for a drawing without a file, and when its folder can't be resolved.
+pub fn drawing_folder(document: Option<&Path>) -> Option<PathBuf> {
+    let document = document.filter(|d| !d.as_os_str().is_empty())?;
+    let folder = std::path::absolute(document).ok()?.parent()?.to_path_buf();
+    std::fs::canonicalize(folder).ok()
 }
 
 #[cfg(test)]

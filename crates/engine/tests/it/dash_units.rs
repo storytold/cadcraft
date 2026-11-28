@@ -39,7 +39,7 @@ fn run(s: &mut Session, answers: &str) {
 
 #[test]
 fn the_measured_scripts_set_the_units() {
-    let cases: [(Units, &str, Units); 21] = [
+    let cases: [(Units, &str, Units); 22] = [
         (DEFAULT, "4 16 1 0 0 \"_N\"", (4, 4, 0, 0, 0.0, 0)),
         (DEFAULT, "3 2 2 4 90 \"_Y\"", (3, 2, 1, 4, FRAC_PI_2, 1)),
         (DEFAULT, "2 3 3 2 100 \"_N\"", (2, 3, 2, 2, FRAC_PI_2, 0)),
@@ -61,6 +61,7 @@ fn the_measured_scripts_set_the_units() {
         (DEFAULT, "\"\" \"\" \"\" \"\" \"\" \"Yes\"", (2, 4, 0, 0, 0.0, 1)),
         ((2, 4, 2, 6, 0.0, 0), "\"\" \"\" \"\" \"\" \"\" \"\"", (2, 4, 2, 6, 0.0, 0)),
         ((2, 4, 4, 2, 0.0, 1), "\"\" \"\" \"\" \"\" \"S45dE\" \"\"", (2, 4, 4, 2, 0.7853981633974482, 1)),
+        (DEFAULT, "\"\" \"\" \"\" \"\" \"N\" \"\"", (2, 4, 0, 0, FRAC_PI_2, 0)),
     ];
     for (from, answers, to) in cases {
         let mut s = session(from);
@@ -112,15 +113,7 @@ fn prompts_and_listings_show_the_drawings_units() {
 
     // Surveyor's units, clockwise: north is listed as S, as AutoCAD lists it.
     let mut s = session((2, 4, 0, 0, 0.0, 1));
-    s.script(
-        "-units
-
-
-5
-
-",
-    )
-    .unwrap();
+    s.script("-units\n\n\n5\n\n").unwrap();
     let directions = [
         "Direction for angle E:",
         "   East    3 o'clock  =  E",
@@ -133,15 +126,7 @@ fn prompts_and_listings_show_the_drawings_units() {
 
     // The listing shows directions to the precision just given.
     let mut s = session(DEFAULT);
-    s.script(
-        "-units
-
-
-2
-2
-",
-    )
-    .unwrap();
+    s.script("-units\n\n\n2\n2\n").unwrap();
     let directions = [
         "Direction for angle 0d0':",
         "   East    3 o'clock  =  0d0'",
@@ -166,27 +151,11 @@ fn a_rejected_answer_is_asked_again() {
     s.cmdline("3").unwrap();
     assert!(ends_with(&s, &["Invalid choice.", "Enter denominator of smallest fraction to display"]), "{:?}", s.log);
     assert_eq!(asks(&s), "(1, 2, 4, 8, 16, 32, 64, 128, or 256) <16>:");
-    s.script(
-        "
-
-9
-",
-    )
-    .unwrap();
+    s.script("\n\n9\n").unwrap();
     assert!(ends_with(&s, &["Requires an integer between 0 and 8."]), "{:?}", s.log);
-    s.script(
-        "
-abc
-",
-    )
-    .unwrap();
+    s.script("\nabc\n").unwrap();
     assert!(ends_with(&s, &["Requires valid numeric angle or two points."]), "{:?}", s.log);
-    s.script(
-        "
-
-",
-    )
-    .unwrap();
+    s.script("\n\n").unwrap();
     assert!(s.running.is_none());
     assert!(same(units(&s), (4, 4, 0, 0, 0.0, 0)), "{:?}", units(&s));
 }
@@ -196,28 +165,12 @@ fn each_answer_is_kept_as_it_is_given() {
     // Esc after the angle format: the answers before it are kept, and the new angle format's
     // precision is reset to 4.
     let mut s = session(DEFAULT);
-    s.script(
-        "-units
-4
-16
-2
-",
-    )
-    .unwrap();
+    s.script("-units\n4\n16\n2\n").unwrap();
     s.cancel();
     assert!(s.running.is_none());
     assert!(same(units(&s), (4, 4, 1, 4, 0.0, 0)), "{:?}", units(&s));
     let mut s = session(DEFAULT);
-    s.script(
-        "-units
-3
-2
-3
-5
-90
-",
-    )
-    .unwrap();
+    s.script("-units\n3\n2\n3\n5\n90\n").unwrap();
     s.cancel();
     assert!(same(units(&s), (3, 2, 2, 5, 1.413716694115407, 0)), "{:?}", units(&s));
 }

@@ -1,6 +1,7 @@
 mod aci7_display;
 mod annotative_orientation;
 mod annotative_viewport;
+mod dash_budget;
 mod dim_angular_centre;
 mod dim_post_tolerance;
 mod dim_text_fill;

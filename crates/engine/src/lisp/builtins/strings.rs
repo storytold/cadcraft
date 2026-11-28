@@ -1,5 +1,5 @@
 use super::args::{R, arity, int, list_arg, string};
-use super::{LispError, OsStr, Value, check_string_len, read, to_text};
+use super::{LispError, OsStr, Value, charge_bytes, check_string_len, read, to_text};
 
 // ---------------- strings ----------------
 
@@ -51,13 +51,20 @@ pub(super) fn itoa(a: &[Value]) -> R {
     Ok(Value::str(&int(&a[0])?.to_string()))
 }
 
-/// C's `atoi`: leading blanks, a sign, digits; 0 when there are none.
+/// C's `atoi`: leading blanks, a sign, digits; 0 when there are none. Digits past the 32-bit
+/// range give a real, the number `atof` reads from them, as the reader gives one for such a
+/// literal: neither wrapped nor clamped to an integer.
 pub(super) fn atoi(a: &[Value]) -> R {
     arity(a, 1, 1)?;
     let s = string(&a[0])?;
     let t = s.trim_start();
     let end = t.char_indices().take_while(|(i, c)| c.is_ascii_digit() || (*i == 0 && (*c == '-' || *c == '+'))).count();
-    Ok(Value::Int(t.get(..end).and_then(|n| n.parse::<i64>().ok()).map(|n| n as i32).unwrap_or(0)))
+    let digits = t.get(..end).unwrap_or_default();
+    match digits.parse::<i32>() {
+        Ok(n) => Ok(Value::Int(n)),
+        Err(_) if digits.bytes().any(|b| b.is_ascii_digit()) => atof(&[Value::str(digits)]),
+        Err(_) => Ok(Value::Int(0)),
+    }
 }
 
 /// C's `atof`: the number token at the start; 0.0 when there is none.
@@ -114,7 +121,13 @@ pub(super) fn read_fn(a: &[Value]) -> R {
     arity(a, 0, 1)?;
     match a.first() {
         None | Some(Value::Nil) => Ok(Value::Nil),
-        Some(v) => read::read_one(&string(v)?),
+        Some(v) => {
+            // The strings in the list it makes are new, each as long as its text at most: the
+            // text is charged, though a list result isn't inspected by `charge_result`.
+            let text = string(v)?;
+            charge_bytes(text.len())?;
+            read::read_one(&text)
+        }
     }
 }
 
