@@ -237,7 +237,7 @@ impl DviewM {
             set_twist(s, t, twist)?;
         }
         if !s.state_mut()?.set_view(View { twist, ..v }) {
-            s.state_mut()?.doc = before;
+            s.state_mut()?.restore_drawing(before);
             return Err(EngineError::Other("The view is too large to show.".into()));
         }
         Ok(())

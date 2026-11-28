@@ -302,7 +302,7 @@ fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
         None => 0.0,
     };
     if !s.state_mut()?.set_view(View { center: c, height: h, twist }) {
-        s.state_mut()?.doc = before.0;
+        s.state_mut()?.restore_drawing(before.0);
         return Err(bad("view.set", "the view is too large to show. Nothing was changed"));
     }
     if let Some(dview::Target::Viewport(h)) = target {

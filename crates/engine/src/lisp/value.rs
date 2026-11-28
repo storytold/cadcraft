@@ -12,7 +12,7 @@
 //! ([`charge_bytes`]).
 
 use std::cell::Cell;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use cadcraft_doc::Handle;
@@ -207,6 +207,26 @@ pub enum BuiltinKind {
     Special(super::eval::Special),
 }
 
+/// The name AutoLISP gives an INSERT's ATTRIB or SEQEND (#1660). Those records have no handle of
+/// their own in the drawing, so their names are not handles: `id` comes from one count for the
+/// whole process and is never given again, so no object of any drawing, and no other record,
+/// ever has it. `owner` is the reference's handle, for printing. What a name stands for is kept
+/// by the session; a name that no longer holds names nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecordName {
+    pub(crate) owner: Handle,
+    pub(crate) id: u64,
+}
+
+impl RecordName {
+    /// A name never given before, for a record of `owner`; `None` once the count runs out.
+    pub(crate) fn fresh(owner: Handle) -> Option<RecordName> {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let id = NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1)).ok()?;
+        Some(RecordName { owner, id })
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub enum Value {
     #[default]
@@ -217,6 +237,8 @@ pub enum Value {
     Sym(Sym),
     Cons(Arc<Cons>),
     Ename(Handle),
+    /// An INSERT's ATTRIB or SEQEND (#1660): an entity name that is no handle.
+    Record(RecordName),
     PickSet(PickSet),
     File(u32),
     Subr(&'static Builtin),
@@ -310,7 +332,7 @@ impl Value {
             Value::Str(_) => "STR",
             Value::Sym(_) => "SYM",
             Value::Cons(_) => "LIST",
-            Value::Ename(_) => "ENAME",
+            Value::Ename(_) | Value::Record(_) => "ENAME",
             Value::PickSet(_) => "PICKSET",
             Value::File(_) => "FILE",
             Value::Subr(_) => "SUBR",
@@ -423,6 +445,7 @@ fn atom_equal(a: &Value, b: &Value, fuzz: f64) -> bool {
         (Value::Str(x), Value::Str(y)) => x == y,
         (Value::Sym(x), Value::Sym(y)) => x == y,
         (Value::Ename(x), Value::Ename(y)) => x == y,
+        (Value::Record(x), Value::Record(y)) => x == y,
         (Value::File(x), Value::File(y)) => x == y,
         (Value::PickSet(x), Value::PickSet(y)) => x.id == y.id,
         (Value::Subr(x), Value::Subr(y)) => std::ptr::eq(*x, *y),
@@ -567,6 +590,8 @@ fn write_value(out: &mut String, v: &Value, escape: bool, depth: usize) {
             out.push(')');
         }
         Value::Ename(h) => out.push_str(&format!("<Entity name: {:x}>", h.0)),
+        // The reference's handle, a dot and the record's number: never a handle's text.
+        Value::Record(r) => out.push_str(&format!("<Entity name: {:x}.{:x}>", r.owner.0, r.id)),
         Value::PickSet(p) => out.push_str(&format!("<Selection set: {:x}>", p.id)),
         Value::File(f) => out.push_str(&format!("#<FILE {f:x}>")),
         Value::Subr(b) => out.push_str(&format!("#<SUBR @{} {}>", "0", b.name)),

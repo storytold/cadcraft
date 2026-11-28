@@ -280,6 +280,9 @@ impl DocState {
         self.view_history.clear();
         self.block_edit = Some(be);
         self.revision += 1;
+        // The editor's drawing is another drawing with the host's handles: a name given in the
+        // host must not resolve in it (BCLOSE ends the editor's names the same way, #1660).
+        self.expire_names();
     }
 
     /// Save the Block Editor's objects into the block (BSAVE), or into a new block `as_name`
@@ -346,6 +349,9 @@ impl DocState {
         self.views = host.views;
         self.view_history = host.view_history;
         self.revision += 1;
+        // The editor's drawing shares the host's handles: a name given in it must never resolve
+        // to a host record (or the other way round) after the drawing comes back.
+        self.expire_names();
         Ok(())
     }
 }

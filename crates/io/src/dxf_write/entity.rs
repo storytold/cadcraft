@@ -3,7 +3,8 @@ use super::common::{attrib_common, common, common_x, dim_xdata, layer_and_props,
 use super::ctx::Ctx;
 use super::layout::paper_view;
 use super::{
-    Bounds2, Color, DimKind, Drawing, Entity, EntityKind, Gradient, Handle, HashMap, Hatch, Leader, MLeader, Point, Vec2, Vec3, Version, W, dxf_ext,
+    Attrib, Bounds2, Color, Common, DimKind, Drawing, Entity, EntityKind, Gradient, Handle, HashMap, Hatch, Leader, MLeader, Point, Vec2, Vec3,
+    Version, W, dxf_ext,
 };
 
 /// The persistent reactors of boundary objects: each source object of an associative hatch in
@@ -389,31 +390,43 @@ fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: b
             // The block's definitions by tag, gathered once for all the attributes (#1923).
             let defs = d.block(&i.block).map(|b| b.attdefs_by_tag()).unwrap_or_default();
             for (index, a) in i.attribs.iter().enumerate() {
-                let ah = w.h();
-                w.s(0, "ATTRIB");
-                w.s(5, ah);
-                w.s(330, e.handle.hex());
-                w.s(100, "AcDbEntity");
-                let (c, base) = attrib_common(e, &defs, a);
-                layer_and_props(w, &c, Some(&base));
-                // Hidden with its definition (a dynamic block's visibility state hides it).
-                if !base.visible {
-                    w.i(60, 1);
-                }
-                w.s(100, "AcDbText");
-                text_tags(w, d, &a.text, Some((a, cx.target)), None, (e.handle, index));
-                if cx.target >= Version::R2007 {
-                    multiline_tags(w, a, false);
-                }
+                let base = defs.get(&cadcraft_doc::TagKey(&a.tag)).map(|de| &de.common);
+                attrib_record(w, d, e, index, a, base, cx);
             }
-            let sh = w.h();
-            w.s(0, "SEQEND");
-            w.s(5, sh);
-            w.s(330, e.handle.hex());
-            w.s(100, "AcDbEntity");
-            w.s(8, &e.common.layer);
+            seqend_record(w, e);
         }
     }
+}
+
+/// One ATTRIB record of the block reference `e`, for its attribute `a` (as written after its
+/// INSERT): its handle is a new one, its owner the reference's.
+pub(super) fn attrib_record(w: &mut W, d: &Drawing, e: &Entity, index: usize, a: &Attrib, base: Option<&Common>, cx: &Ctx) {
+    let ah = w.h();
+    w.s(0, "ATTRIB");
+    w.s(5, ah);
+    w.s(330, e.handle.hex());
+    w.s(100, "AcDbEntity");
+    let (c, base) = attrib_common(e, a, base);
+    layer_and_props(w, &c, Some(&base));
+    // Hidden with its definition (a dynamic block's visibility state hides it).
+    if !base.visible {
+        w.i(60, 1);
+    }
+    w.s(100, "AcDbText");
+    text_tags(w, d, &a.text, Some((a, cx.target)), None, (e.handle, index));
+    if cx.target >= Version::R2007 {
+        multiline_tags(w, a, false);
+    }
+}
+
+/// The SEQEND record that ends a block reference's attributes (written after its last ATTRIB).
+pub(super) fn seqend_record(w: &mut W, e: &Entity) {
+    let sh = w.h();
+    w.s(0, "SEQEND");
+    w.s(5, sh);
+    w.s(330, e.handle.hex());
+    w.s(100, "AcDbEntity");
+    w.s(8, &e.common.layer);
 }
 
 fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {

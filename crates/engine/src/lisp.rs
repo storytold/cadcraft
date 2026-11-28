@@ -121,6 +121,11 @@ impl Env {
 #[derive(Default)]
 pub struct LispState {
     envs: HashMap<u64, Env>,
+    /// The names given to records without a handle of their own (an INSERT's ATTRIBs and SEQEND,
+    /// #1660), by drawing. They are the session's, not a snapshot's, so the drawing's undo states
+    /// and the Block Editor's drawing share them; each use checks what a name stands for against
+    /// the drawing.
+    pub(crate) records: HashMap<u64, drawing::RecordNames>,
     run: Option<Box<Run>>,
     /// A routine runs, from its start to its end (also while its machine is out of `run`).
     active: bool,
@@ -244,6 +249,13 @@ impl Session {
     pub(crate) fn lisp_forget_closed(&mut self) {
         let docs = &self.docs;
         self.lisp.envs.retain(|uid, _| *uid == 0 || docs.iter().any(|d| d.uid == *uid));
+        self.lisp.records.retain(|uid, _| *uid == 0 || docs.iter().any(|d| d.uid == *uid));
+    }
+
+    /// The active drawing's names of an INSERT's records (#1660), made on first use.
+    pub(crate) fn record_names(&mut self) -> Option<&mut drawing::RecordNames> {
+        let uid = self.state().ok()?.uid;
+        Some(self.lisp.records.entry(uid).or_default())
     }
 
     /// A routine is running (possibly waiting for input).
@@ -403,7 +415,7 @@ impl Session {
                     if let Some((doc, sel)) = self.lisp.steps.base.as_ref().or(run.before.as_ref())
                         && let Some(st) = self.docs.iter_mut().find(|d| d.uid == run.uid)
                     {
-                        st.doc = doc.clone();
+                        st.restore_drawing(doc.clone());
                         st.selection = sel.clone();
                     }
                     run.handler = true;

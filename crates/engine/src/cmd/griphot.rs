@@ -253,9 +253,10 @@ impl GripEdit {
                 }
                 "Undo" => match self.undo.pop() {
                     Some(doc) => {
-                        // Settings changed meanwhile stay.
+                        // Settings changed meanwhile stay. The drawing put back is an earlier
+                        // one: names of INSERT records end with it.
                         let header = s.doc()?.header.clone();
-                        s.state_mut()?.doc = doc;
+                        s.state_mut()?.restore_drawing(doc);
                         s.doc_mut()?.header = header;
                         Ok(Step::Continue)
                     }

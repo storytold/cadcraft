@@ -178,9 +178,10 @@ impl MocoroM {
     fn undo(&mut self, s: &mut Session) -> Result<Step> {
         match self.history.pop() {
             Some((doc, base)) => {
-                // Settings changed meanwhile (a transparent command) stay.
+                // Settings changed meanwhile (a transparent command) stay. The drawing put
+                // back is an earlier one: names of INSERT records end with it.
                 let header = s.doc()?.header.clone();
-                s.state_mut()?.doc = doc;
+                s.state_mut()?.restore_drawing(doc);
                 if s.doc()?.header != header {
                     s.doc_mut()?.header = header;
                 }

@@ -6,11 +6,18 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{Entity, Handle};
 
 const CHUNK_MAX: usize = 1024;
 const SHARDS: usize = 64;
+
+/// A content token no store has had: one count for the process (a `u64` does not run out).
+fn next_token() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
 
 #[derive(Clone, Debug, Default)]
 struct Chunk {
@@ -24,11 +31,19 @@ pub struct EntityStore {
     shards: Vec<Arc<HashMap<Handle, u32>>>,
     len: usize,
     next_chunk: u32,
+    /// This state of the entities ([`EntityStore::content_token`]). Not part of [`PartialEq`].
+    token: u64,
 }
 
 impl Default for EntityStore {
     fn default() -> Self {
-        EntityStore { chunks: Vec::new(), shards: (0..SHARDS).map(|_| Arc::new(HashMap::new())).collect(), len: 0, next_chunk: 0 }
+        EntityStore {
+            chunks: Vec::new(),
+            shards: (0..SHARDS).map(|_| Arc::new(HashMap::new())).collect(),
+            len: 0,
+            next_chunk: 0,
+            token: next_token(),
+        }
     }
 }
 
@@ -46,6 +61,17 @@ fn shard_of(h: Handle) -> usize {
 impl EntityStore {
     pub fn new() -> Self {
         Self::default()
+    }
+    /// A number for this state of the entities: a clone has it too, and every edit gives the
+    /// store a number no store has had, so two stores with one token hold the same entities in
+    /// the same order. What is derived from the entities (a block's ATTDEFs by tag) can be kept
+    /// under it. Not part of [`PartialEq`]: equal stores can have different tokens.
+    pub fn content_token(&self) -> u64 {
+        self.token
+    }
+    /// The entities are about to change: a new token.
+    fn edited(&mut self) {
+        self.token = next_token();
     }
     pub fn len(&self) -> usize {
         self.len
@@ -101,6 +127,7 @@ impl EntityStore {
             self.replace(e);
             return;
         }
+        self.edited();
         let needs_new = self.chunks.last().is_none_or(|c| c.items.len() >= CHUNK_MAX);
         if needs_new {
             let c = self.new_chunk();
@@ -120,6 +147,7 @@ impl EntityStore {
             self.replace(e);
             return;
         }
+        self.edited();
         let needs_new = self.chunks.first().is_none_or(|c| c.items.len() >= CHUNK_MAX);
         if needs_new {
             let c = self.new_chunk();
@@ -137,6 +165,7 @@ impl EntityStore {
     pub fn replace(&mut self, e: Entity) -> bool {
         let Some(id) = self.chunk_id(e.handle) else { return false };
         let Some(pos) = self.chunk_pos(id) else { return false };
+        self.edited();
         let Some(c) = self.chunks.get_mut(pos) else { return false };
         let chunk = Arc::make_mut(c);
         if let Some(slot) = chunk.items.iter_mut().find(|x| x.handle == e.handle) {
@@ -149,6 +178,7 @@ impl EntityStore {
     pub fn remove(&mut self, h: Handle) -> Option<Arc<Entity>> {
         let id = self.chunk_id(h)?;
         let pos = self.chunk_pos(id)?;
+        self.edited();
         let c = self.chunks.get_mut(pos)?;
         let chunk = Arc::make_mut(c);
         let i = chunk.items.iter().position(|x| x.handle == h)?;
@@ -165,6 +195,7 @@ impl EntityStore {
     pub fn modify<F: FnOnce(&mut Entity)>(&mut self, h: Handle, f: F) -> bool {
         let Some(id) = self.chunk_id(h) else { return false };
         let Some(pos) = self.chunk_pos(id) else { return false };
+        self.edited();
         let Some(c) = self.chunks.get_mut(pos) else { return false };
         let chunk = Arc::make_mut(c);
         match chunk.items.iter_mut().find(|x| x.handle == h) {
@@ -219,6 +250,7 @@ impl EntityStore {
             self.push(Arc::unwrap_or_clone(e));
             return false;
         };
+        self.edited();
         let Some(c) = self.chunks.get_mut(pos) else {
             // Unreachable in practice too; never lose the object.
             self.push(Arc::unwrap_or_clone(e));
@@ -295,6 +327,47 @@ mod tests {
 
     fn ent(h: u64) -> Entity {
         Entity::new(Handle(h), EntityKind::Point(Point { p: Vec2::new(h as f64, 0.0).to3(0.0), angle: 0.0 }))
+    }
+
+    /// One token per state of the entities: shared by clones, new after every kind of edit, and
+    /// different for copies edited apart (#1660's ATTDEF index is kept by it).
+    #[test]
+    fn a_content_token_names_one_state_of_the_entities() {
+        let mut a = EntityStore::new();
+        for h in 1..=3 {
+            a.push(ent(h));
+        }
+        assert_eq!(a.clone().content_token(), a.content_token(), "a clone holds the same entities");
+        let (mut b, mut c) = (a.clone(), a.clone());
+        assert!(b.modify(Handle(1), |e| e.common.layer = "B".into()));
+        assert!(c.modify(Handle(1), |e| e.common.layer = "C".into()));
+        assert_ne!(b.content_token(), c.content_token(), "copies edited apart");
+        assert_ne!(b.content_token(), a.content_token());
+        let edits: [fn(&mut EntityStore); 8] = [
+            |s| s.push(ent(9)),
+            |s| s.push_front(ent(8)),
+            |s| {
+                s.replace(ent(2));
+            },
+            |s| {
+                s.remove(Handle(3));
+            },
+            |s| {
+                s.bring_to_front(Handle(1));
+            },
+            |s| {
+                s.send_to_back(Handle(2));
+            },
+            |s| {
+                s.move_next_to(Handle(1), Handle(2), true);
+            },
+            |s| s.sort_by_key(|e| std::cmp::Reverse(e.handle.0)),
+        ];
+        for (i, edit) in edits.iter().enumerate() {
+            let mut s = a.clone();
+            edit(&mut s);
+            assert_ne!(s.content_token(), a.content_token(), "edit {i}");
+        }
     }
 
     #[test]

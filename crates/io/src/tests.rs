@@ -5398,3 +5398,320 @@ fn a_layer_state_saved_before_masks_restores_everything() {
     let got: Vec<(&str, u32, &str, &str)> = states.iter().map(|s| (s.name.as_str(), s.mask, s.current.as_str(), s.description.as_str())).collect();
     assert_eq!(got, [("S", LayerState::ALL, "", "")]);
 }
+
+/// The value of group `code` in `tags`.
+fn tag_text(tags: &[craft_dxf::Tag], code: i32) -> Option<String> {
+    tags.iter().find(|t| t.code == code).map(craft_dxf::Tag::str)
+}
+
+/// An INSERT with two attributes, for the records written after it (#1660).
+fn insert_with_attribs() -> (Drawing, Handle) {
+    let text = |value: &str| Text {
+        insert: Vec3::new(1.0, 2.0, 0.0),
+        align_pt: None,
+        height: 2.5,
+        value: value.into(),
+        rotation: 0.0,
+        width_factor: 1.0,
+        oblique: 0.0,
+        style: "Standard".into(),
+        halign: HAlign::Left,
+        valign: VAlign::Baseline,
+    };
+    let attrib = |tag: &str, value: &str| Attrib {
+        tag: tag.into(),
+        text: text(value),
+        invisible: false,
+        constant: false,
+        prompt: String::new(),
+        props: AttribProps::default(),
+        multiline: None,
+        modes: AttribModes::default(),
+    };
+    let mut d = Drawing::new_metric();
+    let insert =
+        Insert { block: "B".into(), insert: Vec3::new(10.0, 10.0, 0.0), attribs: vec![attrib("T1", "A1"), attrib("T2", "A2")], ..Insert::default() };
+    let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).expect("add");
+    (d, h)
+}
+
+#[test]
+fn an_inserts_records_are_read_one_at_a_time() {
+    let (mut d, h) = insert_with_attribs();
+    let e = d.entity(h).expect("the reference");
+    // The reference's own list is its record, with no attribute in it.
+    let (kind, own) = entity_groups(&d, e);
+    assert_eq!(kind, "INSERT");
+    assert_eq!(tag_text(&own, 66).as_deref(), Some("1"));
+    // The records after it: each attribute, then the SEQEND.
+    let first = entity_sub_record(&d, e, 0).expect("the first attribute");
+    assert_eq!(first.0, "ATTRIB");
+    assert_eq!((tag_text(&first.1, 2).as_deref(), tag_text(&first.1, 1).as_deref()), (Some("T1"), Some("A1")));
+    assert_eq!(tag_text(&first.1, 10).as_deref(), Some("1.0"), "its place is written as for the file");
+    let second = entity_sub_record(&d, e, 1).expect("the second attribute");
+    assert_eq!((tag_text(&second.1, 2).as_deref(), tag_text(&second.1, 1).as_deref()), (Some("T2"), Some("A2")));
+    let seqend = entity_sub_record(&d, e, 2).expect("the SEQEND");
+    assert_eq!(seqend.0, "SEQEND");
+    assert!(entity_sub_record(&d, e, 3).is_none(), "past the last record");
+    // They have no handle or owner of their own in the drawing: their names are LISP's.
+    for tags in [&first.1, &second.1, &seqend.1] {
+        assert!(tags.iter().all(|t| t.code != 5 && t.code != 330), "{tags:?}");
+    }
+    // An entity with no records after it has none, at any index.
+    let line = d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) })).expect("line");
+    let e = d.entity(line).expect("the line");
+    assert!(entity_sub_record(&d, e, 0).is_none());
+}
+
+#[test]
+fn an_attributes_value_reads_as_lisp_text() {
+    let (mut d, h) = insert_with_attribs();
+    // A caret is written `^ ` and read back as the caret LISP typed: what `entget` lists is
+    // what `entmod` takes again.
+    d.modify_entity(h, |e| {
+        if let EntityKind::Insert(i) = &mut e.kind
+            && let Some(a) = i.attribs.first_mut()
+        {
+            a.text.value = "10^2".into();
+        }
+    })
+    .expect("modify");
+    let e = d.entity(h).expect("the reference");
+    let (_, tags) = entity_sub_record(&d, e, 0).expect("the first attribute");
+    assert_eq!(tag_text(&tags, 1).as_deref(), Some("10^2"));
+}
+
+/// Reading every attribute of one reference examines the block definition once, and an edit of
+/// the definition once more.
+#[test]
+fn reading_attributes_scans_the_definition_once() {
+    const M: usize = 32;
+    let tags: Vec<String> = (0..M).map(|i| format!("T{i}")).collect();
+    let mut d = Drawing::new_metric();
+    let h = add_attributed(&mut d, "B", 1, &tags, "WALLS");
+    crate::dxf_write::reset_attdef_definition_visits();
+    let e = d.entity(h).expect("the reference").clone();
+    for i in 0..M {
+        let (kind, tags) = entity_sub_record(&d, &e, i).expect("attribute");
+        assert_eq!(kind, "ATTRIB");
+        assert_eq!(tag_text(&tags, 8).as_deref(), Some("WALLS"));
+    }
+    assert_eq!(crate::dxf_write::attdef_definition_visits(), M as u64, "one pass over the definition, not one scan per attribute");
+    // An edit of the definition is read on the next read, with one more pass.
+    set_attdef_layer(&mut d, "B", "DOOR");
+    let before = crate::dxf_write::attdef_definition_visits();
+    assert_eq!(read_attrib_layer(&d, h).as_deref(), Some("DOOR"));
+    assert_eq!(crate::dxf_write::attdef_definition_visits() - before, M as u64, "the edit builds the index once");
+}
+
+/// An attribute with value V and `tag`, for the definition tests below.
+fn plain_attrib(tag: &str) -> Attrib {
+    Attrib {
+        tag: tag.into(),
+        text: Text {
+            insert: Vec3::ZERO,
+            align_pt: None,
+            height: 1.0,
+            value: "V".into(),
+            rotation: 0.0,
+            width_factor: 1.0,
+            oblique: 0.0,
+            style: "Standard".into(),
+            halign: HAlign::Left,
+            valign: VAlign::Baseline,
+        },
+        invisible: false,
+        constant: false,
+        prompt: String::new(),
+        props: AttribProps::default(),
+        multiline: None,
+        modes: AttribModes::default(),
+    }
+}
+
+/// Block `name` with an ATTDEF per tag on `layer`, its handles from `first` up, and a reference
+/// to it with the same attributes. The reference's handle.
+fn add_attributed(d: &mut Drawing, name: &str, first: u64, tags: &[String], layer: &str) -> Handle {
+    let mut block = Block::new(name);
+    for (i, tag) in tags.iter().enumerate() {
+        let mut e = Entity::new(Handle(first + i as u64), EntityKind::AttDef(plain_attrib(tag)));
+        e.common.layer = layer.into();
+        block.entities.push(e);
+    }
+    d.blocks.insert(name.into(), std::sync::Arc::new(block));
+    let insert = Insert { block: name.into(), attribs: tags.iter().map(|t| plain_attrib(t)).collect(), ..Insert::default() };
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).expect("add")
+}
+
+/// Block `name`'s first ATTDEF moved to `layer`: one edit of the definition's store.
+fn set_attdef_layer(d: &mut Drawing, name: &str, layer: &str) {
+    let b = std::sync::Arc::make_mut(d.blocks.get_mut(name).expect("block"));
+    let h = b.entities.iter().find(|e| matches!(e.kind, EntityKind::AttDef(_))).map(|e| e.handle).expect("an ATTDEF");
+    assert!(b.entities.modify(h, |e| e.common.layer = layer.into()));
+}
+
+/// Block B with ATTDEF T on layer BASE and ATTDEF U on layer DOOR, and a reference to it with
+/// both attributes. The reference's handle.
+fn add_on_two_layers(d: &mut Drawing) -> Handle {
+    let h = add_attributed(d, "B", 1, &["T".to_string(), "U".to_string()], "DOOR");
+    set_attdef_layer(d, "B", "BASE");
+    h
+}
+
+/// Block `name`'s ATTDEFs given `tags` in their order, so a tag can pass to another ATTDEF's
+/// handle: one edit of the definition's store for each ATTDEF.
+fn set_attdef_tags(d: &mut Drawing, name: &str, tags: &[&str]) {
+    let b = std::sync::Arc::make_mut(d.blocks.get_mut(name).expect("block"));
+    let handles: Vec<Handle> = b.entities.iter().filter(|e| matches!(e.kind, EntityKind::AttDef(_))).map(|e| e.handle).collect();
+    assert_eq!(handles.len(), tags.len(), "a tag for each ATTDEF");
+    for (h, tag) in handles.into_iter().zip(tags) {
+        assert!(b.entities.modify(h, |e| {
+            if let EntityKind::AttDef(ad) = &mut e.kind {
+                ad.tag = (*tag).into();
+            }
+        }));
+    }
+}
+
+/// The layer reference `h`'s first ATTRIB record is read on.
+fn read_attrib_layer(d: &Drawing, h: Handle) -> Option<String> {
+    let e = d.entity(h)?;
+    let (_, tags) = entity_sub_record(d, e, 0)?;
+    tag_text(&tags, 8)
+}
+
+/// The layer the first ATTRIB of `d`'s DXF is written on.
+fn written_attrib_layer(d: &Drawing) -> Option<String> {
+    let text = write_dxf(d);
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    let at = lines.windows(2).position(|w| w == ["0", "ATTRIB"])?;
+    let pairs = lines.get(at + 2..)?.chunks(2);
+    pairs.take_while(|p| p.first() != Some(&"0")).find(|p| p.first() == Some(&"8")).and_then(|p| p.get(1)).map(|s| s.to_string())
+}
+
+/// Two copies of one drawing, each with its definition edited: each reads and writes its own
+/// definition's properties, whichever was read first. T stays with the first ATTDEF in one copy
+/// and passes to the second in the other, so an index kept from one copy names the wrong ATTDEF
+/// in the other.
+#[test]
+fn copies_edited_apart_read_their_own_definitions() {
+    let mut d = Drawing::new_metric();
+    let h = add_on_two_layers(&mut d);
+    let (mut a, mut b) = (d.clone(), d.clone());
+    set_attdef_layer(&mut a, "B", "WALLS");
+    set_attdef_tags(&mut b, "B", &["U", "T"]);
+    assert_eq!(read_attrib_layer(&a, h).as_deref(), Some("WALLS"));
+    assert_eq!(read_attrib_layer(&b, h).as_deref(), Some("DOOR"), "the other copy's edit is its own");
+    assert_eq!(written_attrib_layer(&b).as_deref(), Some("DOOR"));
+    assert_eq!(written_attrib_layer(&a).as_deref(), Some("WALLS"));
+    assert_eq!(read_attrib_layer(&d, h).as_deref(), Some("BASE"), "the drawing both came from is unchanged");
+}
+
+/// Undo back to a state, then a different edit of the definition: the edit that was undone is
+/// not read or written again. The second edit passes T to the other ATTDEF, so the index of
+/// the undone edit names the wrong one.
+#[test]
+fn an_edit_after_undo_reads_its_own_definition() {
+    let mut d = Drawing::new_metric();
+    let h = add_on_two_layers(&mut d);
+    let mut undone = d.clone();
+    set_attdef_layer(&mut undone, "B", "WALLS");
+    assert_eq!(read_attrib_layer(&undone, h).as_deref(), Some("WALLS"));
+    // Undo: the drawing before the edit, then another edit, read nothing in between.
+    let mut redone = d.clone();
+    set_attdef_tags(&mut redone, "B", &["U", "T"]);
+    assert_eq!(written_attrib_layer(&redone).as_deref(), Some("DOOR"));
+    assert_eq!(read_attrib_layer(&redone, h).as_deref(), Some("DOOR"));
+}
+
+/// Reads that alternate between two references of two blocks examine each definition once.
+#[test]
+fn alternating_definitions_are_each_indexed_once() {
+    const M: usize = 64;
+    let tags: Vec<String> = (0..M).map(|i| format!("T{i}")).collect();
+    let mut d = Drawing::new_metric();
+    let first = add_attributed(&mut d, "B1", 1, &tags, "ONE");
+    let second = add_attributed(&mut d, "B2", 1 + M as u64, &tags, "TWO");
+    let (first, second) = (d.entity(first).expect("first").clone(), d.entity(second).expect("second").clone());
+    crate::dxf_write::reset_attdef_definition_visits();
+    for i in 0..M {
+        for (e, layer) in [(&first, "ONE"), (&second, "TWO")] {
+            let (_, tags) = entity_sub_record(&d, e, i).expect("attribute");
+            assert_eq!(tag_text(&tags, 8).as_deref(), Some(layer));
+        }
+    }
+    assert_eq!(crate::dxf_write::attdef_definition_visits(), 2 * M as u64, "each definition is read once, not once per read");
+}
+
+/// Of two ATTDEFs whose tags differ only in case, the first is the attribute's definition.
+#[test]
+fn the_first_definition_of_a_tag_in_any_case_is_used() {
+    let mut block = Block::new("C");
+    for (i, (tag, layer)) in [("t", "FIRST"), ("T", "SECOND")].into_iter().enumerate() {
+        let mut e = Entity::new(Handle(i as u64 + 1), EntityKind::AttDef(plain_attrib(tag)));
+        e.common.layer = layer.into();
+        block.entities.push(e);
+    }
+    let mut d = Drawing::new_metric();
+    d.blocks.insert("C".into(), std::sync::Arc::new(block));
+    let insert = Insert { block: "C".into(), attribs: vec![plain_attrib("T")], ..Insert::default() };
+    let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).expect("add");
+    assert_eq!(read_attrib_layer(&d, h).as_deref(), Some("FIRST"));
+}
+
+/// A definition with more distinct tags than the index may store (`1 << 18`) is not cached.
+/// The first read builds and drops one bounded index and remembers the state; later reads go
+/// straight to one scan that stops at the first match. The first ATTDEF of the tag still wins,
+/// in any case.
+#[test]
+fn an_oversized_definition_is_not_indexed() {
+    const LIMIT: usize = 1 << 18;
+    // One extra distinct tag past the budget, plus a second ATTDEF of the first tag in
+    // another case, so the first match is not the only entity of that tag.
+    let mut tags = Vec::with_capacity(LIMIT + 2);
+    tags.push("Ab".to_string());
+    tags.push("AB".to_string());
+    for i in 0..LIMIT {
+        tags.push(format!("U{i}"));
+    }
+    let mut block = Block::new("HUGE");
+    for (i, tag) in tags.iter().enumerate() {
+        let layer = if i == 0 { "FIRST" } else { "SECOND" };
+        let mut e = Entity::new(Handle(i as u64 + 1), EntityKind::AttDef(plain_attrib(tag)));
+        e.common.layer = layer.into();
+        block.entities.push(e);
+    }
+    let mut d = Drawing::new_metric();
+    d.blocks.insert("HUGE".into(), std::sync::Arc::new(block));
+    let insert = Insert { block: "HUGE".into(), attribs: vec![plain_attrib("ab")], ..Insert::default() };
+    let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).expect("add");
+    crate::dxf_write::reset_attdef_definition_visits();
+    assert_eq!(read_attrib_layer(&d, h).as_deref(), Some("FIRST"));
+    let first = crate::dxf_write::attdef_definition_visits();
+    assert_eq!(read_attrib_layer(&d, h).as_deref(), Some("FIRST"));
+    let second = crate::dxf_write::attdef_definition_visits() - first;
+    // The failed index walks every entity (the last tag is the one past the budget), then
+    // the scan reads the first entity, where the tag matches.
+    assert_eq!(first, (LIMIT as u64) + 3, "one bounded pass, then the first match");
+    assert_eq!(second, 1, "the state is remembered as too large: the next read scans to the first match only");
+}
+
+/// An attribute whose ATTDEF lies past the index budget, at the end of an oversized definition,
+/// still reads and writes that definition's properties: the scan for a definition past the
+/// budget covers all of it.
+#[test]
+fn a_definition_past_the_index_budget_matches_its_last_tag() {
+    const LIMIT: usize = 1 << 18;
+    let mut block = Block::new("HUGE");
+    for i in 0..=LIMIT {
+        let mut e = Entity::new(Handle(i as u64 + 1), EntityKind::AttDef(plain_attrib(&format!("U{i}"))));
+        e.common.layer = if i == LIMIT { "LAST".into() } else { "OTHER".into() };
+        block.entities.push(e);
+    }
+    let mut d = Drawing::new_metric();
+    d.blocks.insert("HUGE".into(), std::sync::Arc::new(block));
+    let insert = Insert { block: "HUGE".into(), attribs: vec![plain_attrib(&format!("u{LIMIT}"))], ..Insert::default() };
+    let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).expect("add");
+    assert_eq!(read_attrib_layer(&d, h).as_deref(), Some("LAST"), "entget reads the matching definition");
+    assert_eq!(written_attrib_layer(&d).as_deref(), Some("LAST"), "the written ATTRIB keeps the definition's layer");
+}

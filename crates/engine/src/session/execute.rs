@@ -16,7 +16,7 @@ impl Session {
                 if let Some((doc, sel, uid)) = before
                     && let Some(st) = self.docs.iter_mut().find(|d| d.uid == uid)
                 {
-                    st.doc = doc;
+                    st.restore_drawing(doc);
                     st.selection = sel;
                 }
                 Err(EngineError::Internal(id.into(), crate::guard::message(&*p)))
@@ -50,7 +50,7 @@ impl Session {
                 if let Some((doc, sel, uid)) = &before
                     && let Some(st) = self.docs.iter_mut().find(|d| d.uid == *uid)
                 {
-                    st.doc = doc.clone();
+                    st.restore_drawing(doc.clone());
                     st.selection = sel.clone();
                 }
                 return Err(EngineError::Internal(id.into(), msg));

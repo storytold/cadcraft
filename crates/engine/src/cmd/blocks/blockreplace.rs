@@ -81,6 +81,8 @@ fn replace(s: &mut Session, old: &str, new: &str, purge: bool) -> Result<(usize,
     });
     let key = d.blocks.keys().find(|k| k.eq_ignore_ascii_case(&old)).cloned();
     let purged = purge && !referenced(d, &old) && key.is_some_and(|k| d.blocks.remove(&k).is_some());
+    // Replaced references have new ATTRIBs: names given to the old ones hold no longer (#1660).
+    s.state_mut()?.expire_names();
     Ok((n, purged))
 }
 

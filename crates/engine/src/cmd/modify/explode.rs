@@ -264,7 +264,7 @@ pub(crate) fn explode_with(
         // pieces are copies of the block's objects and keep theirs.
         let own_pieces = !matches!(e.kind, EntityKind::Insert(_));
         let d = s.doc_mut()?;
-        d.remove_entity(*h);
+        let Some(removed) = d.remove_entity(*h) else { continue };
         for mut p in parts {
             if own_pieces {
                 p.common.xdata.clear();
@@ -274,6 +274,9 @@ pub(crate) fn explode_with(
             if let Some(st) = d.space_mut(&space) {
                 st.push(p);
             }
+        }
+        if !own_pieces && let Some(names) = s.record_names() {
+            names.erased(&removed);
         }
     }
     s.set_selection(Vec::new());

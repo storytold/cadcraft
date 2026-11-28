@@ -1,3 +1,4 @@
+mod block_resources;
 mod cli;
 mod dash_limit_note;
 mod drafting_spacing;

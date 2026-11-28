@@ -520,8 +520,9 @@ fn run_boundary(s: &mut Session, p: &Value) -> Result<Value> {
     for q in pts {
         out.extend(boundary_at(s, q)?.into_iter().map(|h| h.hex()));
         if out.len() > MAX_BOUNDARY_OUTPUT {
-            // The refused call leaves no partial result behind.
-            s.state_mut()?.doc = before;
+            // The refused call leaves no partial result behind. Handles it gave out can
+            // be given again, so names of INSERT records end.
+            s.state_mut()?.restore_drawing(before);
             return Err(bad("boundary", format!("more than {MAX_BOUNDARY_OUTPUT} boundary polylines in one call; split the work")));
         }
     }

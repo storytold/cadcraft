@@ -26,7 +26,7 @@ impl Session {
         };
         let Some(st) = st.filter(|st| !Arc::ptr_eq(before, &st.doc)) else { return Ok(()) };
         let Some(h) = first_non_finite(before, &st.doc) else { return Ok(()) };
-        st.doc = before.clone();
+        st.restore_drawing(before.clone());
         st.selection = selection.to_vec();
         Err(EngineError::BadParams {
             cmd: cmd.into(),

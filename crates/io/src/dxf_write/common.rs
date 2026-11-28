@@ -1,8 +1,137 @@
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+
 use super::ctx::{AssocObj, Ctx};
 use super::{
-    Attrib, Color, Common, DimKind, DimStyle, Dimension, Drawing, Entity, HAlign, HashMap, Lineweight, Text, Transparency, VAlign, Vec3, Version, W,
-    dxf_ext,
+    Attrib, Block, Color, Common, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, HAlign, Handle, HashMap, Lineweight, Text, Transparency,
+    VAlign, Vec3, Version, W, dxf_ext,
 };
+
+/// The most ATTDEF tags the definition indexes on one thread hold in all (a block with none
+/// counts as one). An index that fits but would pass this total drops the indexes already
+/// stored, then takes their place. A definition with more distinct tags than this is not indexed:
+/// its state is remembered as too large, and each read of it scans the definition for the first
+/// matching ATTDEF and keeps nothing, so one block cannot grow the cache past the budget, and the
+/// written file still takes its properties from the right definition.
+const MAX_INDEXED_TAGS: usize = 1 << 18;
+
+/// The most block states remembered as too large to index; past it the list starts again.
+const MAX_TOO_LARGE: usize = 1 << 10;
+
+/// For each state of a block definition's entities read on this thread, by its content token
+/// ([`cadcraft_doc::EntityStore::content_token`]): the handle of the first ATTDEF of each tag
+/// (upper case). A token names one state of one store, so an index is never used for another
+/// copy or another edit of the block, and blocks read in turn keep their indexes. A definition
+/// past [`MAX_INDEXED_TAGS`] has no entry here.
+#[derive(Default)]
+struct AttdefIndexes {
+    /// Order tags from the drawing so lookup cost does not depend on hash collisions.
+    by_store: HashMap<u64, BTreeMap<String, Handle>>,
+    /// Tags held in all, for [`MAX_INDEXED_TAGS`].
+    tags: usize,
+    /// States of definitions with more distinct tags than [`MAX_INDEXED_TAGS`], so a read of one
+    /// goes straight to [`scan_attdef`] without building and dropping an index again.
+    too_large: std::collections::HashSet<u64>,
+}
+
+thread_local! {
+    static ATTDEF_INDEXES: RefCell<AttdefIndexes> = RefCell::new(AttdefIndexes::default());
+    /// Entities of a block definition examined while matching an attribute to its ATTDEF.
+    #[cfg(test)]
+    static ATTDEF_VISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The first ATTDEF of each tag in `block`, by upper-case tag, when there are at most `budget`
+/// distinct tags. `None` when another distinct tag would pass `budget`: the partial map is
+/// dropped, so a prefix is not stored in place of the definition.
+fn attdef_index_within(block: &Block, budget: usize) -> Option<BTreeMap<String, Handle>> {
+    let mut by_tag = BTreeMap::new();
+    for e in block.entities.iter() {
+        count_attdef_visit();
+        if let EntityKind::AttDef(ad) = &e.kind {
+            let key = ad.tag.to_ascii_uppercase();
+            if by_tag.contains_key(&key) {
+                continue;
+            }
+            if by_tag.len() >= budget {
+                return None;
+            }
+            by_tag.insert(key, e.handle);
+        }
+    }
+    Some(by_tag)
+}
+
+/// The first ATTDEF of `block` whose tag matches `tag`, ignoring ASCII case: one pass over the
+/// definition at most, stopping at the match. Nothing from the scan is stored.
+fn scan_attdef(block: &Block, tag: &str) -> Option<Handle> {
+    for e in block.entities.iter() {
+        count_attdef_visit();
+        if let EntityKind::AttDef(ad) = &e.kind
+            && ad.tag.eq_ignore_ascii_case(tag)
+        {
+            return Some(e.handle);
+        }
+    }
+    None
+}
+
+/// The definition properties of the first ATTDEF in `block` whose tag matches `tag`, ignoring
+/// ASCII case. Each state of a block's entities that fits in [`MAX_INDEXED_TAGS`] is read once
+/// on a thread: later attributes, of this reference or another, find their definition in its
+/// index. A definition with more distinct tags is not stored: the first read of that state builds
+/// at most [`MAX_INDEXED_TAGS`] index entries, then gives up and remembers the state; every read
+/// of it scans the definition once at most, stopping at the first match.
+pub(super) fn attdef_base<'a>(block: &'a Block, tag: &str) -> Option<&'a Common> {
+    let token = block.entities.content_token();
+    let want = tag.to_ascii_uppercase();
+    let found = ATTDEF_INDEXES
+        .try_with(|cell| {
+            let Ok(mut ix) = cell.try_borrow_mut() else { return scan_attdef(block, tag) };
+            if let Some(by_tag) = ix.by_store.get(&token) {
+                return by_tag.get(&want).copied();
+            }
+            if ix.too_large.contains(&token) {
+                return scan_attdef(block, tag);
+            }
+            let Some(by_tag) = attdef_index_within(block, MAX_INDEXED_TAGS) else {
+                if ix.too_large.len() >= MAX_TOO_LARGE {
+                    ix.too_large.clear();
+                }
+                ix.too_large.insert(token);
+                return scan_attdef(block, tag);
+            };
+            let found = by_tag.get(&want).copied();
+            let cost = by_tag.len().max(1);
+            if ix.tags.saturating_add(cost) > MAX_INDEXED_TAGS {
+                ix.by_store.clear();
+                ix.tags = 0;
+            }
+            ix.tags = ix.tags.saturating_add(cost);
+            ix.by_store.insert(token, by_tag);
+            found
+        })
+        .unwrap_or_else(|_| scan_attdef(block, tag));
+    block.entities.get(found?).map(|e| &e.common)
+}
+
+/// One more definition entity examined (counted in tests).
+fn count_attdef_visit() {
+    #[cfg(test)]
+    ATTDEF_VISITS.with(|n| n.set(n.get().saturating_add(1)));
+}
+
+/// How many definition entities attribute reads have examined on this thread.
+#[cfg(test)]
+pub(crate) fn attdef_definition_visits() -> u64 {
+    ATTDEF_VISITS.with(std::cell::Cell::get)
+}
+
+/// Start a definition-visit count from zero.
+#[cfg(test)]
+pub(crate) fn reset_attdef_definition_visits() {
+    ATTDEF_VISITS.with(|n| n.set(0));
+}
 
 /// `AcadAnnotative` xdata marking an annotative style.
 pub(super) fn annotative_xdata(w: &mut W) {
@@ -145,12 +274,10 @@ pub(super) fn layer_and_props(w: &mut W, c: &Common, base: Option<&Common>) {
     }
 }
 
-/// The properties attribute `a` of block reference `e` is drawn with: its own, else its
-/// definition's, from the block's definitions by tag `defs`; an attribute defined on layer 0 is on
-/// the reference's layer. Also the definition's properties.
-pub(super) fn attrib_common(e: &Entity, defs: &std::collections::BTreeMap<cadcraft_doc::TagKey<'_>, &Entity>, a: &Attrib) -> (Common, Common) {
-    let def = defs.get(&cadcraft_doc::TagKey(&a.tag));
-    let base = def.map(|de| de.common.clone()).unwrap_or_default();
+/// Attribute `a` takes its own properties over its definition's. Layer 0 takes the layer of
+/// block reference `e`. Return the effective and definition properties.
+pub(super) fn attrib_common(e: &Entity, a: &Attrib, base: Option<&Common>) -> (Common, Common) {
+    let base = base.cloned().unwrap_or_default();
     let mut c = a.props.over(&base);
     if c.layer == "0" {
         c.layer.clone_from(&e.common.layer);

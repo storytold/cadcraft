@@ -126,7 +126,8 @@ impl PeditM {
                     "reverse" | "r" => self.apply_all(s, "reverse", &json!({}))?,
                     "undo" | "u" => match self.mundo.pop() {
                         Some((d, multi, morig)) => {
-                            *s.doc_mut()? = d;
+                            // The saved drawing includes its handle seed.
+                            s.state_mut()?.restore_drawing(std::sync::Arc::new(d));
                             self.multi = multi;
                             self.morig = morig;
                             s.set_selection(self.multi.clone());
