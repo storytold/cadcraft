@@ -52,7 +52,10 @@ pub fn route(app: &mut CadApp, id: &str) -> Result<Value, String> {
             .pick_then(Pick::Save(format!("{stem}.pdf")), |app, path| app.run("publish", json!({ "path": path })))
             .unwrap_or_else(|| no_picker(app, "PUBLISH", "publish {}")),
         _ => app
-            .pick_then(Pick::Save(format!("{stem}.svg")), |app, path| app.run("export", json!({ "path": path })))
+            .pick_then(Pick::Save(format!("{stem}.svg")), |app, path| {
+                let params = export_params(&app.ui, &path);
+                app.run("export", params)
+            })
             .unwrap_or_else(|| no_picker(app, "EXPORT", r#"export {"format": "svg"}"#)),
     }
 }
@@ -150,6 +153,17 @@ pub fn pdf_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
     if *open {
         PDF_PENDING.with(|pending| *pending.borrow_mut() = Some(state));
+    }
+}
+
+/// EXPORT parameters for a path picked in the Export dialog: a DXF or DWG file is written in the
+/// version chosen under File ▸ Default Save Format (#3213), whatever version the drawing was read
+/// in; other formats have no version.
+fn export_params(ui: &crate::UiState, path: &str) -> Value {
+    let drawing_file = matches!(cadcraft_doc::Format::from_path(path), Some(cadcraft_doc::Format::Dxf | cadcraft_doc::Format::Dwg));
+    match crate::SaveVersion::parse(&ui.save_version) {
+        Some(v) if drawing_file => json!({ "path": path, "version": v.year() }),
+        _ => json!({ "path": path }),
     }
 }
 
@@ -348,6 +362,17 @@ mod tests {
             ..Services::default()
         };
         (CadApp::new(Session::new(), services), asked, answer)
+    }
+
+    #[test]
+    fn export_writes_drawing_files_in_the_default_save_version() {
+        // #3213: File ▸ Default Save Format ▸ 2000 makes Export write an R2000 DXF or DWG.
+        let ui = crate::UiState { save_version: "2000".into(), ..crate::UiState::default() };
+        assert_eq!(super::export_params(&ui, "/tmp/plan.dxf"), json!({ "path": "/tmp/plan.dxf", "version": "2000" }));
+        assert_eq!(super::export_params(&ui, "/tmp/plan.DWG"), json!({ "path": "/tmp/plan.DWG", "version": "2000" }));
+        // Images and PDF have no version.
+        assert_eq!(super::export_params(&ui, "/tmp/plan.svg"), json!({ "path": "/tmp/plan.svg" }));
+        assert_eq!(super::export_params(&ui, "/tmp/plan.pdf"), json!({ "path": "/tmp/plan.pdf" }));
     }
 
     fn status(app: &CadApp) -> &str {

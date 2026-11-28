@@ -138,7 +138,8 @@ pub struct UiState {
     /// The format Save As suggests: "dxf" or "dwg", for new drawings and opened files alike.
     pub save_format: SaveFormat,
     /// The version Save As writes for a drawing that has no file yet ("2000" … "2018"); a
-    /// drawing opened from a file keeps that file's version.
+    /// drawing opened from a file keeps that file's version. Export writes DXF and DWG files in
+    /// this version for every drawing.
     pub save_version: String,
     /// Drawings opened from a path, newest first (File ▸ Open Recent and the Start page).
     pub recent_files: Vec<String>,
