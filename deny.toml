@@ -1,0 +1,89 @@
+# cargo-deny policy for the dependency graph (#1935): licences, sources, bans and RustSec
+# advisories. .github/workflows/dependencies.yml runs it in CI; locally, `cargo deny --locked check`
+# after `cargo install cargo-deny --locked`.
+
+[licenses]
+# standards/licences.md in storytold/craft-contrib: its allowlist, plus MPL-2.0, which it allows for
+# third-party dependencies used unmodified (acadrust and option-ext today). Keep this list in step
+# with that file; an identifier not on it needs an RFC there first (AGENTS.md rule 26).
+allow = [
+    "ISC",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "Unicode-3.0",
+    "Zlib",
+    "BSL-1.0",
+    "0BSD",
+    "Unlicense",
+    "IJG",
+    "NCSA",
+    "CDLA-Permissive-2.0",
+    "CC0-1.0",
+    "CC-BY-4.0",
+    "CC-BY-SA-4.0",
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
+    "Bitstream-Vera",
+    "LicenseRef-Public-Domain",
+    "MPL-2.0",
+]
+# The list mirrors the shared policy, so identifiers no dependency uses today are expected.
+unused-allowed-license = "allow"
+
+[bans]
+# No policy on duplicate versions or wildcards yet; this file only adds licences, sources and
+# advisories.
+multiple-versions = "allow"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# The git sources in Cargo.lock today: Cargo.toml pins craft-libs, egui and winit by `rev`, and
+# vectorcraft comes through craft-libs. A new repository needs a line here.
+allow-git = [
+    "https://github.com/storytold/craft-libs",
+    "https://github.com/storytold/egui",
+    "https://github.com/storytold/vectorcraft",
+    "https://github.com/storytold/winit",
+]
+
+[advisories]
+yanked = "deny"
+# Unsound (not vulnerable) advisories fail only for crates a workspace crate depends on directly,
+# cargo-deny's default. Through rstar 0.13.0 (cadcraft-engine), heapless 0.8.0 has nine
+# (RUSTSEC-2026-0574 to RUSTSEC-2026-0582), fixed in heapless 0.9.4; rstar uses only its
+# BinaryHeap. Set "all" to fail on those too.
+unsound = "workspace"
+# cargo-deny warns about an entry here that no longer matches anything in Cargo.lock; remove it then.
+ignore = [
+    # zvariant, zbus_names and zvariant_derive were merged into zbus 6, so these advisories list no
+    # patched version (https://github.com/z-galaxy/zbus/issues/2043). They are "unmaintained"
+    # notices, not vulnerabilities. zbus 5 is built only on Unix other than macOS: for egui-winit's
+    # AT-SPI accessibility (accesskit_unix), craft-platform, and the desktop theme lookup in
+    # apps/cadcraft, which pins accesskit's zbus version so it is built once. Moving to zbus 6
+    # waits on accesskit first (it ignores the same advisories meanwhile,
+    # https://github.com/AccessKit/accesskit/pull/834), then craft-platform and xcap.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant unmaintained (merged into zbus 6); waits on accesskit moving to zbus 6" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names unmaintained (merged into zbus 6); waits on accesskit moving to zbus 6" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive unmaintained (merged into zbus 6); waits on accesskit moving to zbus 6" },
+    # chrono is unmaintained, every version is affected and no release fixes it
+    # (https://github.com/chronotope/chrono/issues/1768). It is an "unmaintained" notice, not a
+    # vulnerability. The Rust house rules (craft-contrib standards/house-rules-rust.md) route time
+    # through chrono, and craft-libs depends on it, so a successor is chosen there first; pdfcraft
+    # ignores it the same way (storytold/pdfcraft#7647).
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained; required by the Rust house rules and craft-libs" },
+    # Stack overflow in `Url::origin()` on deeply nested `blob:` URLs, fixed in url 2.5.9. Only
+    # webbrowser and xcap depend on url here, and neither calls `Url::origin()` or
+    # `url::quirks::origin()`, the only callers of the recursive code. Remove when Cargo.lock has
+    # url 2.5.9 or later.
+    { id = "RUSTSEC-2026-0592", reason = "Url::origin() is not called in this dependency graph; remove after updating url to 2.5.9" },
+    # Yanked for a use-after-free when a Waker fires during `Executor::drop`, fixed in 1.14.1
+    # (async-executor's changelog, smol-rs/async-executor#164). It comes with zbus 5 (above), so
+    # only on Unix other than macOS. Remove when Cargo.lock has async-executor 1.14.1 or later.
+    { crate = "async-executor@1.14.0", reason = "yanked; remove after updating async-executor to 1.14.1" },
+]
