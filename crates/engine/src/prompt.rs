@@ -83,6 +83,10 @@ pub struct Prompt {
     /// cell, MTEXT): ortho does not bend the opposite corner, so the rectangle keeps its area.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub corner: bool,
+    /// Dynamic Input asks for this point as X and Y, whatever DYNPIFORMAT says: a rectangle's size
+    /// (RECTANG's other corner), as the reference application does.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub xy: bool,
     /// The grip this prompt stretches (one hot grip at the STRETCH prompt), as (object, grip
     /// index): Dynamic Input shows its dimensions ([`crate::grip_dims`]).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -190,6 +194,11 @@ impl Prompt {
     pub fn corner(mut self, p: Vec2) -> Self {
         self.base = Some(p);
         self.corner = true;
+        self
+    }
+    /// Dynamic Input asks for X and Y (the `xy` field).
+    pub fn xy(mut self) -> Self {
+        self.xy = true;
         self
     }
     /// Asks for a distance from the base (the `distance` field).

@@ -61,7 +61,7 @@ pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
     }
     let p = app.session.current_prompt().filter(cadcraft_engine::pointmod::accepts)?;
     let ucs = app.session.input_ucs();
-    Some(crate::dyninput::Frame { base: p.base, cartesian: st.dynpi_cartesian, absolute: st.dynpi_absolute, ucs })
+    Some(crate::dyninput::Frame { base: p.base, cartesian: st.dynpi_cartesian || p.xy, absolute: st.dynpi_absolute, ucs })
 }
 
 /// Whether Tab on the command line has something to act on: a running command or LISP prompt, typed
