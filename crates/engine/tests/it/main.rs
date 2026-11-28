@@ -71,6 +71,7 @@ mod grip_options;
 mod grip_selection;
 mod group_selection;
 mod groups;
+mod hatch_arcs;
 mod hatch_assoc;
 mod hatch_dialog_helpers;
 mod hatch_generate_boundary;
