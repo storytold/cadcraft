@@ -587,7 +587,8 @@ fn render_view(bounds: &cadcraft_geom::Bounds2, center: Vec2, height: f64, fit: 
 }
 
 /// The `ui.render` reply, matching the headless backend (`pngBase64`, `width`, `height`), plus
-/// `bytes`, `path` and `truncated` (the build left block contents out, see #1070).
+/// `bytes`, `path` and `truncated` (the build left contents out, see #1070, or drew dashed runs
+/// continuous past a dash limit, #1069).
 fn render_reply(png: &[u8], w: u32, h: u32, path: Option<&str>, truncated: bool) -> Value {
     let mut v =
         json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(png), "width": w, "height": h, "bytes": png.len(), "truncated": truncated});

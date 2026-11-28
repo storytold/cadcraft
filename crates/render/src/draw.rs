@@ -94,7 +94,9 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     let stroke_as = |b: &mut Builder, pts: &[Vec2], how: Layout| match lt.as_ref().filter(|_| b.opts.linetypes) {
         Some(lt) => {
             let min = b.opts.min_dash / ctx.xf.scale_factor().max(1e-12);
-            for dash in linetype::apply_as(pts, lt, ltscale, min, how) {
+            let dashes = linetype::apply_as(pts, lt, ltscale, min, how, b);
+            let laid = dashes.is_some();
+            for dash in dashes.unwrap_or_else(|| vec![pts.to_vec()]) {
                 if dash.len() == 1 {
                     if let Some(p) = dash.first() {
                         b.point(ctx, rgb, *p);
@@ -103,8 +105,9 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                     b.polyline(ctx, rgb, lw, &dash);
                 }
             }
-            // Text and shapes embedded in the linetype (shapes when their SHX file is found).
-            if b.opts.text {
+            // Text and shapes embedded in the linetype (shapes when their SHX file is found), on
+            // a run whose dashes were laid out.
+            if b.opts.text && laid {
                 for sh in linetype_text::texts(ctx.d, pts, lt, ltscale, min, how) {
                     b.shaped(ctx, rgb, lw, &sh);
                 }
@@ -176,7 +179,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                     // Dashed: each dash a filled piece of the band; dots a line across it.
                     Some(lt) => {
                         let min = b.opts.min_dash / ctx.xf.scale_factor().max(1e-12);
-                        let (tris, ticks, centres) = wide::dashed(p, tol, lt, ltscale, min);
+                        let (tris, ticks, centres) = wide::dashed(p, tol, lt, ltscale, min, b);
                         b.tris(ctx, rgb, &tris);
                         if hairline {
                             for c in &centres {
@@ -366,13 +369,17 @@ fn draw_dimension(
     own: u8,
 ) {
     let (lt, ltscale) = stroke;
+    // A dimension inside a block whose own block leads back to that block (it is the block, or
+    // they lie on a loop of references, dimensions and multileaders) is drawn from its definition
+    // points, as one whose block is missing is (see `loops`, #1923).
     if let Some(blk) = dm.block.as_ref().and_then(|n| ctx.d.block(n))
         && ctx.depth < cadcraft_doc::MAX_BLOCK_DEPTH
+        && !ctx.block.is_some_and(|outer| b.leads_back(ctx.d, outer, blk))
     {
         // DXF group 12: a moved dimension keeps its `*D` block where it was and the offset in
         // the insertion point, so the block draws translated by it (#2634).
         let off = dm.insertion_point.xy();
-        let sub = Ctx { block_pstyle: b.named, block_transparency: own, ..sub_ctx(ctx, e, Mat3::translate(off)) };
+        let sub = Ctx { block: Some(blk), block_pstyle: b.named, block_transparency: own, ..sub_ctx(ctx, e, Mat3::translate(off)) };
         // DIMTFILL: the block's MTEXT carries no background mask here, so a background
         // around each of the block's texts is drawn before the block's first text or first
         // line of the text's marks, except for a text that a SOLID of the block covers.
@@ -421,7 +428,7 @@ pub(crate) fn stroke_with(b: &mut Builder, ctx: &Ctx, rgb: Ink, lw: f32, lt: Opt
     match lt.filter(|_| b.opts.linetypes) {
         Some(lt) => {
             let min = b.opts.min_dash / ctx.xf.scale_factor().max(1e-12);
-            for dash in linetype::apply(pts, lt, ltscale, min) {
+            for dash in linetype::apply(pts, lt, ltscale, min, b) {
                 match dash.as_slice() {
                     [p] => b.point(ctx, rgb, *p),
                     _ => b.polyline(ctx, rgb, lw, &dash),

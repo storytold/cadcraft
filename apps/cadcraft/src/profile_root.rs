@@ -185,8 +185,53 @@ fn entries_stay_inside(root: &Path) -> Result<(), String> {
     };
     for entry in entries {
         let entry = entry.map_err(|e| format!("cannot inspect the nightly profile: {e}"))?;
-        private_subdirectory(root, entry.file_name(), "profile entry")?;
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path).map_err(|e| format!("cannot inspect the nightly profile: {e}"))?;
+        // Settings and session state are ordinary files, not directories. Keep the existing
+        // directory-boundary check for folders (including the known folder-only entries).
+        let folder_only = PROFILE_FOLDERS.iter().any(|name| entry.file_name().eq_ignore_ascii_case(name));
+        if metadata.is_file() && !folder_only {
+            private_regular_file(&path, &metadata)?;
+        } else {
+            private_subdirectory(root, entry.file_name(), "profile entry")?;
+        }
     }
+    Ok(())
+}
+
+/// Persisted files must have their own ordinary file identity, not an alias to other data.
+fn private_regular_file(path: &Path, metadata: &std::fs::Metadata) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        if metadata.nlink() != 1 {
+            return Err("the nightly profile file must not be shared".into());
+        }
+    }
+    #[cfg(windows)]
+    {
+        use winsafe::{HFILE, co};
+        let (file, _) = HFILE::CreateFile(
+            path.to_str().ok_or("the nightly profile file path is not textual")?,
+            co::GENERIC::default(),
+            Some(co::FILE_SHARE::READ | co::FILE_SHARE::WRITE | co::FILE_SHARE::DELETE),
+            None,
+            co::DISPOSITION::OPEN_EXISTING,
+            co::FILE_ATTRIBUTE::NORMAL,
+            Some(co::FILE_FLAG::OPEN_REPARSE_POINT),
+            None,
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+        let info = file.GetFileInformationByHandle().map_err(|e| e.to_string())?;
+        if info.dwFileAttributes.has(co::FILE_ATTRIBUTE::REPARSE_POINT | co::FILE_ATTRIBUTE::DIRECTORY) {
+            return Err("the nightly profile file must not be an alias or directory".into());
+        }
+        if info.nNumberOfLinks != 1 {
+            return Err("the nightly profile file must not be shared".into());
+        }
+    }
+    let _ = (path, metadata);
     Ok(())
 }
 
@@ -289,6 +334,8 @@ const EFRAME_APP_ID: &str = "ai.storyteller.cadcraft";
 
 /// The subfolder autosave and Drawing Recovery write ([`crate::main`], `<settings>/autosave`).
 pub const AUTOSAVE: &str = "autosave";
+
+const PROFILE_FOLDERS: [&str; 6] = [AUTOSAVE, "logs", "support", "single-instance", "plotters", "crash-reports"];
 
 #[cfg(test)]
 mod tests {
@@ -472,6 +519,31 @@ mod tests {
         let nightly = data.join("ArtCraftLauncher/nightly/profiles/cadcraft");
         assert_eq!(fixture.check(Platform::Linux, &nightly).unwrap(), nightly);
         assert_eq!(std::fs::read_dir(nightly).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn nightly_profile_reopens_after_saving_settings_and_session_state() {
+        let fixture = Fixture::new();
+        for platform in [Platform::Mac, Platform::Linux, Platform::Windows] {
+            let private = fixture.root.join(format!("nightly-reopen-{platform:?}"));
+            assert_eq!(fixture.check(platform, &private).unwrap(), private);
+            for name in ["app.ron", "nightly-session.lock", "nightly-session.json"] {
+                std::fs::write(private.join(name), b"saved profile data").unwrap();
+            }
+            for name in PROFILE_FOLDERS {
+                std::fs::create_dir(private.join(name)).unwrap();
+            }
+            assert_eq!(fixture.check(platform, &private).unwrap(), private);
+            assert_eq!(std::fs::read(private.join("app.ron")).unwrap(), b"saved profile data");
+            for name in [AUTOSAVE, "logs", "support", "single-instance", "plotters", "crash-reports"] {
+                let path = private.join(name);
+                std::fs::remove_dir(&path).unwrap();
+                std::fs::write(&path, b"not a directory").unwrap();
+                assert!(fixture.check(platform, &private).is_err(), "{name} must stay a directory");
+                std::fs::remove_file(&path).unwrap();
+                std::fs::create_dir(&path).unwrap();
+            }
+        }
     }
 
     #[test]

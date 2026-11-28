@@ -13,6 +13,7 @@ mod fill;
 mod hatch;
 mod linetype;
 mod linetype_text;
+mod loops;
 mod mline;
 mod outline;
 pub mod paper;
@@ -100,6 +101,9 @@ struct Ctx<'a> {
     block_pstyle: Option<usize>,
     /// Transparency (percent) of the block reference being expanded, for `ByBlock`.
     block_transparency: u8,
+    /// The block whose contents are being drawn (`None` at the top level): a dimension in it whose
+    /// own block leads back to it is drawn from its definition points (see [`loops`]).
+    block: Option<&'a cadcraft_doc::Block>,
 }
 
 impl Ctx<'_> {
@@ -130,6 +134,13 @@ struct Builder<'a> {
     points: &'a std::sync::atomic::AtomicUsize,
     /// The most points the build may hold: [`MAX_DISPLAY_POINTS`] (less in tests).
     max_points: usize,
+    /// Dash pattern elements the whole build has laid out so far, shared like `points`.
+    dashes: &'a std::sync::atomic::AtomicUsize,
+    /// The most dash pattern elements the build may lay out: [`MAX_DASH_ELEMENTS`] (less in tests).
+    max_dashes: usize,
+    /// The loops of the drawing's block graph, worked out once for the whole build when a search
+    /// near a dimension's block does not settle whether it leads back (see [`loops`]).
+    loops: &'a std::sync::OnceLock<loops::BlockLoops>,
 }
 
 /// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy
@@ -147,6 +158,21 @@ pub const MAX_BLOCK_EXPANSION: usize = 2_000_000;
 /// drawing (a million objects with tens of thousands of texts, drawn at screen detail or in full
 /// for a plot) is expected to hold a few tens of millions.
 pub const MAX_DISPLAY_POINTS: usize = 64_000_000;
+
+/// Upper bound on the dash pattern elements one dashed run (a line, an arc, a polyline segment or
+/// a PLINEGEN polyline) is laid out over: a longer pattern repeated more often is drawn
+/// continuous, and [`DisplayList::undashed`] counts it. A plot keeps the dashes of a run of any
+/// number of periods up to this (#1069).
+pub const MAX_RUN_DASH_ELEMENTS: usize = 2_000_000;
+
+/// Upper bound on the dash pattern elements one display list lays out over all its dashed runs.
+/// Each run may visit up to [`MAX_RUN_DASH_ELEMENTS`], and a pattern of mostly gaps visits many
+/// elements for each point it draws, so a small file of many long lines walked millions of
+/// elements per line with nothing to stop it, [`MAX_DISPLAY_POINTS`] included (#1923). The limit is
+/// as many elements as the list may hold points: a dash and its gap make about one point per
+/// element, so a drawing whose dashes fit the point budget keeps them. Past it later dashed runs
+/// are drawn continuous, and [`DisplayList::undashed`] counts them.
+pub const MAX_DASH_ELEMENTS: usize = 64_000_000;
 
 impl<'a> Builder<'a> {
     /// `color` and `lw` as the plot style table prints them.
@@ -380,7 +406,15 @@ impl<'a> Builder<'a> {
             transparency: self.transparency,
             points: self.points,
             max_points: self.max_points,
+            dashes: self.dashes,
+            max_dashes: self.max_dashes,
+            loops: self.loops,
         }
+    }
+    /// Whether block `to` leads back to block `from` in `d`, the drawing being built (see
+    /// [`loops`]).
+    fn leads_back(&self, d: &Drawing, from: &cadcraft_doc::Block, to: &cadcraft_doc::Block) -> bool {
+        loops::leads_back(d, self.loops, from, to)
     }
     /// Take one unit of the block-expansion budget; false once it is spent, or once the build
     /// holds all the points it may ([`MAX_DISPLAY_POINTS`]), so block copies stop being visited.
@@ -411,6 +445,21 @@ impl<'a> Builder<'a> {
             self.list.truncated = true;
         }
         ok
+    }
+}
+
+/// The build's dash budget ([`MAX_DASH_ELEMENTS`]), charged as [`Builder::charge`] charges
+/// points: once a run does not fit, the count is past the limit and every later run is drawn
+/// continuous. The runs laid out never pass the limit; the count itself passes it by at most one
+/// run per thread building in parallel.
+impl linetype::Budget for Builder<'_> {
+    fn take(&mut self, visits: usize) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.dashes.load(Relaxed) < self.max_dashes && self.dashes.fetch_add(visits, Relaxed).saturating_add(visits) <= self.max_dashes
+    }
+    fn refused(&mut self) {
+        self.list.undashed = self.list.undashed.saturating_add(1);
+        self.list.truncated = true;
     }
 }
 

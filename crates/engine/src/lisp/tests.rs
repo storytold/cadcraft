@@ -1602,6 +1602,53 @@ fn a_lisp_value_at_a_prompt_is_not_evaluated_again() {
     assert_eq!(r, Some(4.0));
 }
 
+/// #1926: an expression typed at a command's prompt runs to the end before the prompt takes its
+/// value, so the interface waits for it: it gets a far smaller allowance than a programmatic run,
+/// and the callbacks it runs share that allowance instead of each taking a callback's own.
+#[test]
+fn an_expression_at_a_prompt_has_a_short_allowance() {
+    let mut s = session();
+    let circles = |s: &Session| s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, cadcraft_doc::EntityKind::Circle(_))).count();
+    let last_error = |s: &Session, from: usize| s.log.get(from..).and_then(|l| l.iter().rev().find(|l| l.starts_with("; error:")).cloned());
+    let endless = "(while (< i 2000000000) (setq i (1+ i)))";
+    s.cmdline(&format!("circle 0,0 (progn (setq i 0) {endless} 5)")).unwrap();
+    let typed: i64 = ok(&mut s, "i").parse().unwrap();
+    let stopped = last_error(&s, 0);
+    assert!(typed > 0 && stopped.is_some(), "the loop ran and was stopped");
+    assert_eq!(circles(&s), 0, "the stopped expression gave no radius");
+    assert!(s.running.is_none(), "CIRCLE ends with the failed expression");
+    // The same loop run programmatically goes on to twice as far.
+    let further = format!("(setq i 0) (while (< i {}) (setq i (1+ i))) i", typed * 2);
+    assert_eq!(ok(&mut s, &further), (typed * 2).to_string());
+    // Half the loop, then a comparator's endless loop: the comparator gets what the expression
+    // has left, not a callback's own allowance, and the expression stops as the loop alone did.
+    let half = format!("(while (< i {}) (setq i (1+ i)))", typed / 2);
+    let from = s.log.len();
+    s.cmdline(&format!("circle 0,0 (progn (setq i 0) {half} (vl-sort '(1 2) '(lambda (a b) {endless} (< a b))) 5)")).unwrap();
+    let with_callback: i64 = ok(&mut s, "i").parse().unwrap();
+    assert!(with_callback > typed / 2 && with_callback < typed * 5 / 4, "{with_callback} against {typed}");
+    assert_eq!(last_error(&s, from), stopped);
+    assert_eq!(circles(&s), 0);
+}
+
+/// #1933: a whole number past 32 bits is a real, as the reader and `fix` make one, not a wrapped
+/// or clamped integer: `atoi` gives the number its digits read as, `gcd` the true divisor.
+#[test]
+fn atoi_and_gcd_past_32_bits_give_reals() {
+    let mut s = session();
+    for digits in ["2147483648", "-2147483649", "99999999999", "99999999999999999999"] {
+        assert_eq!(ok(&mut s, &format!("(= (atoi \"{digits}\") (read \"{digits}\"))")), "T", "{digits}");
+    }
+    // Past every real too: the largest, as `atof` reads it.
+    let huge = "9".repeat(400);
+    assert_eq!(ok(&mut s, &format!("(= (atoi \"{huge}\") (atof \"{huge}\"))")), "T");
+    // Within the range, integers as before.
+    assert_eq!(ok(&mut s, "(list (atoi \" -2147483648x\") (atoi \"+2147483647\") (atoi \"-\"))"), "(-2147483648 2147483647 0)");
+    let past = "(abs (float -2147483648))";
+    assert_eq!(ok(&mut s, &format!("(= (gcd -2147483648 0) (gcd 0 -2147483648) (gcd -2147483648 -2147483648) {past})")), "T");
+    assert_eq!(ok(&mut s, "(list (gcd -2147483648 6) (gcd 2147483647 0))"), "(2 2147483647)");
+}
+
 #[test]
 fn atof_out_of_range_exponent_reads_whole_token() {
     let mut s = Session::new();
