@@ -1,0 +1,54 @@
+# cargo-deny against deny.toml (#1935): licences, sources and bans, then RustSec advisories.
+# No Rust build. A separate workflow rather than a `cargo xtask ci` step: the
+# advisory check needs the network (the RustSec database), and a newly published advisory would
+# otherwise turn every open pull request red at once.
+name: Dependencies
+
+# Pull requests and pushes to main that change the dependency graph or this policy, plus a daily
+# run so an advisory published after a dependency landed shows up without a pull request.
+on:
+  push:
+    branches: [main]
+    paths: [Cargo.lock, "**/Cargo.toml", .cargo/config.toml, deny.toml, .github/workflows/dependencies.yml]
+  pull_request:
+    paths: [Cargo.lock, "**/Cargo.toml", .cargo/config.toml, deny.toml, .github/workflows/dependencies.yml]
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# As in ci.yml: a newer push to a PR branch cancels its older run; runs on main always finish.
+concurrency:
+  group: dependencies-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  cargo-deny:
+    name: cargo deny
+    # Forks keep pull request runs; only the upstream repository runs the daily check.
+    if: github.event_name != 'schedule' || github.repository == 'storytold/cadcraft'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The installer and pin craft-common-actions' gate-setup uses for its cargo tools (a prebuilt,
+      # checksum-verified binary), at the cargo-deny version pdfcraft's gate runs.
+      - name: Install cargo-deny
+        id: install
+        uses: step-security/taiki-e-install-action@76747d22a7567cc4438546a84f11bdf18e670ab8 # v2.87.32
+        with:
+          tool: cargo-deny@0.20.2
+      - name: Licences, sources and bans
+        run: cargo deny --locked check licenses sources bans
+      # Runs even when the policy step failed, so both results show in one run.
+      - name: RustSec advisories
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: cargo deny --locked check advisories
