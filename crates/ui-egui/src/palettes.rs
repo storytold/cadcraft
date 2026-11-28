@@ -522,13 +522,19 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
 
 /// Properties row: a right-aligned translated label in a 106-point layout box that exposes a Label node to accessibility and names the control added by `add`.
 fn prop_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    data_row(ui, crate::i18n::t(label), add);
+}
+
+/// A Properties row labelled with the drawing's own text (an attribute tag), shown as it is: a
+/// name that happens to match an interface string must not be translated.
+fn data_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
     let t = Tokens::get();
     ui.horizontal(|ui| {
-        let mut job = egui::text::LayoutJob::simple(crate::i18n::t(label).to_string(), crate::theme::body(), t.text_dim, 106.0);
+        let mut job = egui::text::LayoutJob::simple(label.to_string(), crate::theme::body(), t.text_dim, 106.0);
         job.halign = egui::Align::RIGHT;
         let galley = ui.painter().layout_job(job);
         let (lr, label_response) = ui.allocate_exact_size(vec2(118.0, galley.size().y.max(22.0)), Sense::hover());
-        label_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), crate::i18n::t(label)));
+        label_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), label));
         ui.painter().galley(pos2(lr.right() - 6.0, lr.center().y - galley.size().y / 2.0), galley, t.text_dim);
         ui.label_inputs_by(label_response.id, add);
     });
@@ -575,6 +581,79 @@ fn edit_field(ui: &mut egui::Ui, id: egui::Id, value: String) -> Option<String> 
     out
 }
 
+/// Text waiting in an attribute's Properties field, kept with the attribute it was typed into: a
+/// reorder, an edit from elsewhere, or an undo can put another attribute in that place. The whole
+/// row is kept, which holds the whole stored attribute (`AttributeRow::record`): two attributes can
+/// share a tag, a value and even an insertion point, and still differ in text height, rotation,
+/// justification, style or their own overrides, which a reorder of the block's definitions swaps.
+#[derive(Clone)]
+struct PendingAttr {
+    row: cadcraft_engine::AttributeRow,
+    text: String,
+}
+
+/// [`edit_field`] for the value of attribute `a`, which the drawing has where this row is. The
+/// field is a place in the reference (addressed by index, which keeps attributes sharing a tag
+/// apart), so the pending text stays bound to the attribute it was typed into: when the place
+/// holds another one — any stored property differs, not only the tag, value and insertion point —
+/// the text is dropped (and `stale` set) rather than written to it.
+fn attr_field(ui: &mut egui::Ui, id: egui::Id, a: &cadcraft_engine::AttributeRow, stale: &mut bool) -> Option<String> {
+    if take_stale_pending(ui, id, Some(a), stale) {
+        let te = id.with("te");
+        // The field had another attribute when this frame's input was queued, so take none of it:
+        // neither a commit nor a new pending buffer may reach the one here now. The field shows
+        // the drawing's value, inert for this frame, and editing resumes on the next one.
+        let mut buf = a.value.clone();
+        let w = ui.available_width() - 10.0;
+        ui.add_sized([w, 20.0], egui::TextEdit::singleline(&mut buf).id(te).font(crate::theme::body()).interactive(false));
+        return None;
+    }
+    let pending = ui.data(|d| d.get_temp::<PendingAttr>(id));
+    let mut buf = pending.map_or_else(|| a.value.clone(), |p| p.text);
+    let w = ui.available_width() - 10.0;
+    let te = id.with("te");
+    let resp = ui.add_sized([w, 20.0], egui::TextEdit::singleline(&mut buf).id(te).font(crate::theme::body()));
+    // Keyboard focus from memory, as in `edit_field`.
+    if ui.memory(|m| m.has_focus(te)) {
+        ui.data_mut(|d| d.insert_temp(id, PendingAttr { row: a.clone(), text: buf.clone() }));
+    } else {
+        ui.data_mut(|d| d.remove::<PendingAttr>(id));
+    }
+    (resp.lost_focus() && buf != a.value).then_some(buf)
+}
+
+/// Drop pending text when the row changed or disappeared. Return true if the field must ignore this frame's input.
+fn take_stale_pending(ui: &mut egui::Ui, id: egui::Id, current: Option<&cadcraft_engine::AttributeRow>, stale: &mut bool) -> bool {
+    let pending = ui.data(|d| d.get_temp::<PendingAttr>(id));
+    if let Some(row) = current
+        && pending.as_ref().is_none_or(|p| p.row == *row)
+    {
+        return false;
+    }
+    // Report it only when text the drawing does not have was waiting: merely focusing a field
+    // loses nothing.
+    if let Some(p) = pending {
+        *stale |= p.text != p.row.value;
+        ui.data_mut(|d| d.remove::<PendingAttr>(id));
+    }
+    ui.memory_mut(|m| m.surrender_focus(id.with("te")));
+    true
+}
+
+/// Keep the previous row count for this reference so removed fields can release their pending text.
+fn discard_removed_attr_fields(ui: &mut egui::Ui, count_id: egui::Id, field_id: impl Fn(usize) -> egui::Id, count: usize, stale: &mut bool) {
+    let previous_count = ui.data_mut(|d| {
+        if count == 0 {
+            d.remove_temp::<usize>(count_id).unwrap_or_default()
+        } else {
+            std::mem::replace(d.get_temp_mut_or_default::<usize>(count_id), count)
+        }
+    });
+    for i in count..previous_count {
+        take_stale_pending(ui, field_id(i), None, stale);
+    }
+}
+
 /// A committed numeric field read as the command line reads numbers (`36`, `3'`, `3'-6 1/2"`,
 /// `6 1/2`). Text it can't read goes to `bad`, to be reported rather than dropped.
 fn number(typed: Option<String>, bad: &mut Option<String>) -> Option<f64> {
@@ -584,6 +663,15 @@ fn number(typed: Option<String>, bad: &mut Option<String>) -> Option<f64> {
         *bad = Some(typed);
     }
     v
+}
+
+/// Text typed into an attribute's field and still waiting there when the attributes changed is
+/// dropped, not given to whichever attribute is in that place now; say so, as a rejected value
+/// says so.
+fn report_stale_attribute(app: &mut CadApp, stale: bool) {
+    if stale {
+        app.session.echo(crate::tl!("The attributes changed: the value was not applied."));
+    }
 }
 
 /// Reports a numeric field the user typed that isn't a number; the field shows its value again.
@@ -802,6 +890,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     properties_header(app, ui);
     let sel = app.session.selection();
+    let uid = app.session.state().ok().map(|st| st.uid);
     let Ok(d) = app.session.doc() else { return };
     ui.add_space(4.0);
     let h = &d.header;
@@ -999,6 +1088,9 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let ids = &*memo.ids();
     let mut set: Option<Value> = None;
     let mut custom_set: Option<Value> = None;
+    let mut att_set: Option<Value> = None;
+    // A Properties attribute field whose pending text was discarded after a change or removal.
+    let mut att_stale = false;
     let group = |ui: &mut egui::Ui, title: &str| {
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
         ui.painter().rect_filled(r.shrink2(vec2(6.0, 1.0)), 2.0, t.chrome_dark);
@@ -1229,6 +1321,35 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                         });
                     }
                 }
+                let atts = cadcraft_engine::attributes(d, e.handle);
+                // Handles repeat across drawings. Use the same field IDs for display and cleanup.
+                let scope = ui.scope_id();
+                let field_id = |i| scope.with(("attval", uid, e.handle, i));
+                if !atts.is_empty() {
+                    group(ui, "Attributes");
+                    for (i, a) in atts.iter().enumerate() {
+                        data_row(ui, &a.tag, |ui| {
+                            // A value with line breaks is edited in the Edit Attributes dialog;
+                            // a single-line field would join its lines.
+                            if !a.editable || a.value.contains('\n') {
+                                // The value cannot be edited here now (it became constant, or it
+                                // gained a line break), but text typed while it could still waits
+                                // under this place: drop and report it, as `attr_field` does.
+                                take_stale_pending(ui, field_id(i), Some(a), &mut att_stale);
+                                let r = value_box(ui, &a.value.replace('\n', " "), false, false);
+                                r.on_hover_text(if a.editable {
+                                    crate::tl!("Multiline: edit it with Edit Attributes")
+                                } else {
+                                    crate::tl!("Constant")
+                                });
+                            } else if let Some(v) = attr_field(ui, field_id(i), a, &mut att_stale) {
+                                // By place: another attribute may share the tag.
+                                att_set = Some(json!({ "handle": e.handle.hex(), "at": { i.to_string(): v } }));
+                            }
+                        });
+                    }
+                }
+                discard_removed_attr_fields(ui, scope.with(("attcount", uid, e.handle)), field_id, atts.len(), &mut att_stale);
             }
             _ => {}
         }
@@ -1476,8 +1597,12 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         app.session.echo(crate::tf!("{property}: that value can't be used here.", property = crate::i18n::t(e.label)));
     }
     report_bad(app, bad);
+    report_stale_attribute(app, att_stale);
     if let Some(p) = custom_set {
         let _ = app.run("blocks.reference.set", p);
+    }
+    if let Some(p) = att_set {
+        let _ = app.run("attedit", p);
     }
 }
 
@@ -1558,6 +1683,35 @@ mod tests {
             output.textures_delta.clear();
         }
         texts
+    }
+
+    /// An attribute tag is the drawing's text: in Spanish `To` is still `To`, not `A`, while the
+    /// interface around it is translated.
+    #[test]
+    fn attribute_tags_in_properties_are_not_translated() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        let mut hs = vec![app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap()["handles"][0].clone()];
+        hs.push(app.run("attdef", json!({ "tag": "To", "default": "T-201", "at": [0, 1] })).unwrap()["handle"].clone());
+        app.run("block", json!({ "name": "B", "base": [0, 0], "handles": hs, "keep": "delete" })).unwrap();
+        let r = app.run("insert", json!({ "name": "B", "at": [0, 0] })).unwrap();
+        let h = cadcraft_engine::doc::Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+        // Set here: a file can hold what the commands would not create (a mixed-case tag).
+        app.session
+            .doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                if let EntityKind::Insert(i) = &mut e.kind {
+                    i.attribs[0].tag = "To".into();
+                    i.attribs[0].text.value = "T-201".into();
+                }
+            })
+            .unwrap();
+        app.run("select", json!({ "handles": [r["handle"].clone()] })).unwrap();
+
+        let texts = crate::i18n::with_language("es", || painted_texts(&mut app, properties_section));
+        assert!(texts.iter().any(|t| t == "Rotación"), "the interface is translated; painted: {texts:?}");
+        assert!(texts.iter().any(|t| t == "To"), "the tag is shown as it is; painted: {texts:?}");
+        assert!(!texts.iter().any(|t| t == "A"), "the tag is not translated; painted: {texts:?}");
     }
 
     /// Several dimensions selected: the Properties palette shows all of a dimension's properties,

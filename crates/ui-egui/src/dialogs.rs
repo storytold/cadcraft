@@ -32,6 +32,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "preview" => crate::exchange::dialog(app, ctx, &mut open),
         "pdfimport" => crate::exchange::pdf_dialog(app, ctx, &mut open),
         "commands" => commands(app, ctx, &mut open),
+        "attedit" => crate::attedit::dialog(app, ctx, &mut open),
         "bedit" => crate::bedit::dialog(app, ctx, &mut open),
         "authoring" => crate::bedit::authoring_dialog(app, ctx, &mut open),
         "wblock" => crate::wblock::dialog(app, ctx, &mut open),
