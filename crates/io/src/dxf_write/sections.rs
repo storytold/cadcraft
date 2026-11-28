@@ -1135,9 +1135,11 @@ pub(super) fn tags_kept_for(
     let default_table_style = [TableStyle::default()];
     let table_styles: &[TableStyle] = if d.table_styles.is_empty() { &default_table_style } else { &d.table_styles };
     cx.table_styles = table_styles.iter().map(|s| (s.name.clone(), w.h())).collect();
+    cx.table_style_names = crate::dxf_ext::ByName::new(&cx.table_styles, |(n, _)| n);
     let default_mleader_style = [MLeaderStyle::default()];
     let mleader_styles: &[MLeaderStyle] = if d.mleader_styles.is_empty() { &default_mleader_style } else { &d.mleader_styles };
     cx.mleader_styles = mleader_styles.iter().map(|s| (s.name.clone(), w.h())).collect();
+    cx.mleader_style_names = crate::dxf_ext::ByName::new(&cx.mleader_styles, |(n, _)| n);
     let root_dict = w.h();
     let group_dict = w.h();
     let layout_dict = w.h();

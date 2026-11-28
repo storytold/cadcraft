@@ -4,6 +4,7 @@ use super::{
     Color, DashElement, DimStyle, Drawing, HVal, HashMap, Layer, Linetype, Lineweight, NamedView, Rgb, Rx, Tag, TextStyle, Ucs, Vec2, Vec3,
     VportConfig, VportTile, record_slices,
 };
+use crate::dxf_ext::ByName;
 use cadcraft_fonts::windows::windows_font;
 use craft_dxf::lin_pat::MAX_LINETYPE_ELEMENTS;
 
@@ -114,10 +115,12 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     // The same for linetypes (first definition wins) and text styles (last definition wins).
     let mut linetype_names: std::collections::HashSet<String> = d.linetypes.iter().map(|l| l.name.to_ascii_lowercase()).collect();
     let mut style_index: HashMap<String, usize> = d.text_styles.iter().enumerate().map(|(i, s)| (s.name.to_ascii_lowercase(), i)).collect();
-    // And for dimension styles, views and UCSs (a later record replaces the first of its name).
+    // And for dimension styles, views and UCSs (a later record replaces the first of its name),
+    // and viewport configurations (a record adds a tile to the first of its name).
     let mut dim_style_names = ByName::new(&d.dim_styles, |s| &s.name);
     let mut view_names = ByName::new(&d.views, |v| &v.name);
     let mut ucs_names = ByName::new(&d.ucss, |u| &u.name);
+    let mut vport_names = ByName::new(&d.vports, |c| &c.name);
     for (kind, tg) in recs {
         let t = T(tg);
         match kind.as_str() {
@@ -205,7 +208,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
             // The first *ACTIVE viewport holds the current snap/grid settings.
             "VPORT" if !active_vport && t.s(2).is_some_and(|n| n.trim().eq_ignore_ascii_case("*ACTIVE")) => {
                 active_vport = true;
-                vport_record(d, &t, true);
+                vport_record(d, &mut vport_names, &t, true);
                 for (name, code) in [("SNAPUNIT", 14), ("GRIDUNIT", 15)] {
                     if let (Some(x), Some(y)) = (t.f(code), t.f(code + 10)) {
                         let p = Vec2::new(x, y);
@@ -280,7 +283,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 st.apply_fields(&fields);
                 dim_style_names.put(&mut d.dim_styles, &name, st);
             }
-            "VPORT" => vport_record(d, &t, false),
+            "VPORT" => vport_record(d, &mut vport_names, &t, false),
             _ => {}
         }
     }
@@ -288,32 +291,6 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     // view was kept in the HEADER pair as it was read (see `vport_record`), and the record stays
     // only for its view twist (see `cadcraft_engine::DocState`).
     d.vports.retain(|c| c.tiles.len() > usize::from(c.is_active()) || c.tiles.first().is_some_and(|t| t.twist != 0.0));
-}
-
-/// The records of one table read so far, by name with its ASCII letters lower-cased. A later
-/// record of a name replaces the first, which keeps its place and takes the later record's name.
-/// Each record is then a map lookup, not a scan of the records before it: a file of N records cost
-/// N² name comparisons (#1924). Ordered by name rather than hashed, so its cost does not depend on
-/// hash keys.
-struct ByName(std::collections::BTreeMap<String, usize>);
-
-impl ByName {
-    /// The entries the table starts with; the first of a name is the one kept.
-    fn new<T>(list: &[T], name: impl Fn(&T) -> &str) -> Self {
-        ByName(list.iter().enumerate().rev().map(|(i, t)| (name(t).to_ascii_lowercase(), i)).collect())
-    }
-
-    /// Put `item`, named `name`, in place of the first entry of that name, else at the end.
-    fn put<T>(&mut self, list: &mut Vec<T>, name: &str, item: T) {
-        let key = name.to_ascii_lowercase();
-        match self.0.get(&key).and_then(|&i| list.get_mut(i)) {
-            Some(x) => *x = item,
-            None => {
-                self.0.insert(key, list.len());
-                list.push(item);
-            }
-        }
-    }
 }
 
 fn index_table_handles(recs: &[(String, &[Tag])], rx: &mut Rx) {
@@ -375,8 +352,9 @@ const MAX_VPORT_TILES: usize = 64;
 
 /// A VPORT record: one tile of the configuration it names (`*ACTIVE` the one shown). Corners
 /// are fractions of the drawing area; unusable tiles are skipped. `first_active`: this is the
-/// file's first `*ACTIVE` record, the one whose view is the drawing's saved view.
-fn vport_record(d: &mut Drawing, t: &T, first_active: bool) {
+/// file's first `*ACTIVE` record, the one whose view is the drawing's saved view. `names`: the
+/// configurations read so far by name.
+fn vport_record(d: &mut Drawing, names: &mut ByName, t: &T, first_active: bool) {
     let name = t.s(2).map(|n| n.trim().to_string()).unwrap_or_default();
     // View twist (group 51, degrees).
     let twist = t.f(51).map_or(0.0, |a| cadcraft_geom::norm_angle(a.to_radians()));
@@ -413,10 +391,13 @@ fn vport_record(d: &mut Drawing, t: &T, first_active: bool) {
     let tile = VportTile { min: clamp(min), max: clamp(max), center, height, aspect, twist };
     let name = if name.eq_ignore_ascii_case(VportConfig::ACTIVE) { VportConfig::ACTIVE.to_string() } else { name };
     let room = d.vports.len() < MAX_OBJECTS;
-    match d.vports.iter_mut().find(|c| c.name.eq_ignore_ascii_case(&name)) {
+    match names.position(&name).and_then(|i| d.vports.get_mut(i)) {
         Some(c) if c.tiles.len() < MAX_VPORT_TILES => c.tiles.push(tile),
         Some(_) => {}
-        None if room => d.vports.push(VportConfig { name, tiles: vec![tile] }),
+        None if room => {
+            let config = VportConfig { name: name.clone(), tiles: vec![tile] };
+            names.put(&mut d.vports, &name, config);
+        }
         None => {}
     }
 }

@@ -94,7 +94,7 @@ fn coverage(t: &Table) -> Result<Vec<Vec<bool>>, Vec<Vec<bool>>> {
 
 /// The table style a table uses (Standard defaults when missing).
 pub fn table_style_of(d: &Drawing, t: &Table) -> TableStyle {
-    d.table_styles.iter().find(|s| s.name.eq_ignore_ascii_case(&t.style)).cloned().unwrap_or_default()
+    d.table_styles.by_name(&t.style).cloned().unwrap_or_default()
 }
 
 /// The scale of a table relative to its style: SCALE changes the table's text height, and every

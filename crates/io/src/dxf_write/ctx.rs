@@ -1,4 +1,5 @@
 use super::{DimVal, Handle, HashMap, K, Vec3, Version, dxf_ext};
+use crate::dxf_ext::ByName;
 
 /// The `DIMASSOC` object of an associative dimension (stored in the dimension's extension
 /// dictionary under `ACAD_DIMASSOC`).
@@ -44,8 +45,14 @@ pub(super) struct Ctx {
     pub(super) tables: HashMap<Handle, (String, String)>,
     /// Table style name → TABLESTYLE handle (the first is the fallback).
     pub(super) table_styles: Vec<(String, String)>,
-    /// Multileader style name → MLEADERSTYLE handle (the first is the fallback).
+    /// The positions of [`Ctx::table_styles`] by name.
+    pub(super) table_style_names: ByName,
+    /// Multileader style name → MLEADERSTYLE handle (the first is the fallback): the drawing's
+    /// multileader styles in order, or Standard alone when it has none.
     pub(super) mleader_styles: Vec<(String, String)>,
+    /// The positions of [`Ctx::mleader_styles`] by name: those of the drawing's multileader styles
+    /// too, when it has any.
+    pub(super) mleader_style_names: ByName,
     /// Upper-case block name → BLOCK_RECORD handle (multileader block content).
     pub(super) block_records: HashMap<String, String>,
     /// Raster images' IMAGEDEF, IMAGEDEF_REACTOR and dictionary handles.
@@ -76,14 +83,23 @@ impl Ctx {
         self.arrows.get(&name.trim().to_ascii_uppercase()).cloned()
     }
     pub(super) fn table_style(&self, name: &str) -> String {
-        Self::named(&self.table_styles, name)
+        Self::named(&self.table_styles, &self.table_style_names, name)
     }
     pub(super) fn mleader_style(&self, name: &str) -> String {
-        Self::named(&self.mleader_styles, name)
+        Self::named(&self.mleader_styles, &self.mleader_style_names, name)
     }
-    /// The handle of the style `name` in `styles`, or of the first one.
-    fn named(styles: &[(String, String)], name: &str) -> String {
-        styles.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).or_else(|| styles.first()).map(|(_, h)| h.clone()).unwrap_or_else(|| "0".into())
+    /// The drawing's multileader style named `name` (the first of that name, ignoring case).
+    pub(super) fn mleader_style_def<'d>(&self, d: &'d cadcraft_doc::Drawing, name: &str) -> Option<&'d cadcraft_doc::MLeaderStyle> {
+        if self.mleader_styles.is_empty() {
+            // No styles planned (one entity's groups, for AutoLISP): look in the drawing.
+            return d.mleader_styles.iter().find(|s| s.name.eq_ignore_ascii_case(name));
+        }
+        self.mleader_style_names.position(name).and_then(|i| d.mleader_styles.get(i))
+    }
+    /// The handle of the style `name` in `styles` (the first of that name, ignoring case, found
+    /// through `names`, their positions by name), or of the first one.
+    fn named(styles: &[(String, String)], names: &ByName, name: &str) -> String {
+        names.position(name).and_then(|i| styles.get(i)).or_else(|| styles.first()).map(|(_, h)| h.clone()).unwrap_or_else(|| "0".into())
     }
     /// A dimension variable encoded with this file's handles; integers outside the 16-bit
     /// range of their groups are dropped.

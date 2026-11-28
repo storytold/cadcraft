@@ -1,6 +1,6 @@
-//! The drawing's tables of named entries (layers, blocks, linetypes, text styles, dimension styles
-//! and layouts), whose names are looked up without case through an index instead of a scan once a
-//! table is large and looked up often.
+//! The drawing's tables of named entries (layers, blocks, linetypes, text styles, dimension styles,
+//! table styles and layouts), whose names are looked up without case through an index instead of a
+//! scan once a table is large and looked up often.
 //!
 //! [`Drawing::layer`](crate::Drawing::layer), [`Drawing::block`](crate::Drawing::block) and the
 //! other lookups by name run for every entity while a drawing is read, measured and drawn, and
@@ -117,11 +117,11 @@ macro_rules! named_by_field {
         }
     )*};
 }
-named_by_field!(crate::Layer, crate::Linetype, crate::TextStyle, crate::DimStyle, crate::Layout);
+named_by_field!(crate::Layer, crate::Linetype, crate::TextStyle, crate::DimStyle, crate::TableStyle, crate::Layout);
 
 /// A list of named entries in their own order (the drawing's layers, linetypes, text styles,
-/// dimension styles and layouts). It reads and changes as a `Vec`; [`NamedList::by_name`] finds the
-/// first entry of a name without case.
+/// dimension styles, table styles and layouts). It reads and changes as a `Vec`;
+/// [`NamedList::by_name`] finds the first entry of a name without case.
 pub struct NamedList<T> {
     list: Vec<T>,
     index: Lazy<usize>,

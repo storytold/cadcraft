@@ -7,7 +7,7 @@
 //! that contain themselves lose the reference that closes the loop, and objects sharing a handle
 //! get new ones.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use cadcraft_doc::{Block, DimStyle, Drawing, Entity, EntityKind, EntityStore, Handle, Layer, Linetype, MLeaderStyle, TableStyle, TextStyle};
@@ -425,6 +425,9 @@ fn references(d: &mut Drawing, out: &mut Vec<Issue>) {
     let all = all_handles(d);
     let ok_text = |d: &Drawing, n: &str| d.text_style(n).is_some();
     let ok_dim = |d: &Drawing, n: &str| d.dim_style(n).is_some();
+    // Multileader style names, lower-cased, built once: a scan per multileader made a file of N of
+    // them naming styles among N quadratic to audit (#1924).
+    let mleader_styles: BTreeSet<String> = d.mleader_styles.iter().map(|s| s.name.to_ascii_lowercase()).collect();
     // Missing names, counted: (what, name) → (objects, first location).
     let mut counts: BTreeMap<(&'static str, String), (usize, String)> = BTreeMap::new();
     missing_layers(d, out);
@@ -462,12 +465,12 @@ fn references(d: &mut Drawing, out: &mut Vec<Issue>) {
                     if let Some(t) = &mut m.text {
                         text_style(&mut t.style);
                     }
-                    if !has_name(&d.mleader_styles, &m.style, |s| &s.name) {
+                    if !mleader_styles.contains(&m.style.to_ascii_lowercase()) {
                         note("multileader style", &m.style);
                         m.style = "Standard".into();
                     }
                 }
-                EntityKind::Table(t) if !has_name(&d.table_styles, &t.style, |s| &s.name) => {
+                EntityKind::Table(t) if d.table_styles.by_name(&t.style).is_none() => {
                     note("table style", &t.style);
                     t.style = "Standard".into();
                 }

@@ -270,7 +270,7 @@ fn defs_for(src: &Drawing, ents: &[Entity]) -> Drawing {
     d.text_styles = pick(&src.text_styles, &used.text_styles, |t| &t.name).into();
     d.dim_styles = pick(&src.dim_styles, &used.dim_styles, |t| &t.name).into();
     d.mleader_styles = pick(&src.mleader_styles, &used.mleader_styles, |t| &t.name);
-    d.table_styles = pick(&src.table_styles, &used.table_styles, |t| &t.name);
+    d.table_styles = pick(&src.table_styles, &used.table_styles, |t| &t.name).into();
     d.blocks = src.blocks.iter().filter(|(k, _)| used.blocks.contains(&up(k))).map(|(k, b)| (k.clone(), b.clone())).collect();
     d.layouts.clear();
     d

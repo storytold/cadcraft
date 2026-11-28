@@ -286,7 +286,9 @@ fn read_style(tags: &[Tag]) -> Option<MLineStyle> {
     let mut fill = Color::ByLayer;
     for t in body {
         match t.code {
-            2 => st.name = t.str(),
+            // Trimmed, as the writer writes it and as multilines look it up: a padded name kept
+            // as read was missed by its multilines' lookup, so a save wrote a second style of it.
+            2 => st.name = t.str().trim().to_string(),
             3 => st.description = t.str(),
             70 => flags = t.i64(),
             51 => st.start_caps.angle = t.f64().to_radians(),
@@ -345,11 +347,11 @@ pub(crate) fn resolve(secs: &[SectionRef<'_>], d: &mut Drawing) {
             }
         });
     }
+    // A later style of a name replaces the first.
+    let mut names = crate::dxf_ext::ByName::new(&d.mline_styles, |s| &s.name);
     for st in styles {
-        match d.mline_styles.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&st.name)) {
-            Some(x) => *x = st,
-            None => d.mline_styles.push(st),
-        }
+        let name = st.name.clone();
+        names.put(&mut d.mline_styles, &name, st);
     }
     let by_name: HashMap<String, MLineStyle> = d.mline_styles.iter().map(|s| (key(&s.name), s.clone())).collect();
     fill(&mut d.model, &by_name);
@@ -384,12 +386,14 @@ pub(crate) struct Plan {
     pub dict: String,
     /// Each style and its MLINESTYLE handle.
     styles: Vec<(MLineStyle, String)>,
+    /// The positions of the styles by name.
+    names: crate::dxf_ext::ByName,
 }
 
 impl Plan {
     /// The MLINESTYLE handle of style `name` (STANDARD's when it is missing).
     pub fn handle(&self, name: &str) -> String {
-        let find = |n: &str| self.styles.iter().find(|(s, _)| s.name.eq_ignore_ascii_case(n.trim())).map(|(_, h)| h.clone());
+        let find = |n: &str| self.names.position(n.trim()).and_then(|i| self.styles.get(i)).map(|(_, h)| h.clone());
         find(name).or_else(|| find(STANDARD_MLINE_STYLE)).unwrap_or_else(|| "0".into())
     }
 }
@@ -400,15 +404,18 @@ pub(crate) fn plan<'a>(d: &Drawing, every: impl Iterator<Item = &'a Entity>, mut
     if !list.iter().any(|s| s.name.eq_ignore_ascii_case(STANDARD_MLINE_STYLE)) {
         list.insert(0, MLineStyle::default());
     }
+    let mut names = crate::dxf_ext::ByName::new(&list, |s| &s.name);
     for e in every {
         if let EntityKind::MLine(m) = &e.kind
-            && !list.iter().any(|s| s.name.eq_ignore_ascii_case(m.style.trim()))
+            && names.position(m.style.trim()).is_none()
         {
-            list.push(MLineStyle { name: m.style.trim().to_string(), ..m.def.clone() });
+            names.put(&mut list, m.style.trim(), MLineStyle { name: m.style.trim().to_string(), ..m.def.clone() });
         }
     }
     let dict = new_handle();
-    Plan { dict, styles: list.into_iter().filter(|s| !s.name.trim().is_empty()).map(|s| (s, new_handle())).collect() }
+    let styles: Vec<(MLineStyle, String)> = list.into_iter().filter(|s| !s.name.trim().is_empty()).map(|s| (s, new_handle())).collect();
+    let names = crate::dxf_ext::ByName::new(&styles, |(s, _)| &s.name);
+    Plan { dict, styles, names }
 }
 
 /// The `ACAD_MLINESTYLE` dictionary (owned by the root dictionary `root`) and its styles.

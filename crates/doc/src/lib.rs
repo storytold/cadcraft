@@ -112,7 +112,8 @@ pub struct Drawing {
     /// Dimension styles in table order; [`Drawing::dim_style`] looks them up by name.
     pub dim_styles: NamedList<DimStyle>,
     pub mleader_styles: Vec<MLeaderStyle>,
-    pub table_styles: Vec<TableStyle>,
+    /// Table styles in table order; looked up by name with [`NamedList::by_name`].
+    pub table_styles: NamedList<TableStyle>,
     /// Multiline styles (MLSTYLE); STANDARD is always there.
     pub mline_styles: Vec<MLineStyle>,
     /// Block definitions by name; [`Drawing::block`] looks them up.
@@ -195,7 +196,7 @@ impl Drawing {
         d.scales = metric_scales();
         d.dim_styles.push(DimStyle::iso25());
         d.mleader_styles = vec![MLeaderStyle::metric()];
-        d.table_styles = vec![TableStyle::metric()];
+        d.table_styles = vec![TableStyle::metric()].into();
         d.header.set_str("DIMSTYLE", "ISO-25");
         d
     }
@@ -213,7 +214,7 @@ impl Drawing {
             text_styles: vec![TextStyle::default()].into(),
             dim_styles: vec![DimStyle::default()].into(),
             mleader_styles: vec![MLeaderStyle::default()],
-            table_styles: vec![TableStyle::default()],
+            table_styles: vec![TableStyle::default()].into(),
             mline_styles: vec![MLineStyle::default()],
             blocks: NamedMap::default(),
             model: EntityStore::new(),

@@ -506,6 +506,315 @@ fn a_layouts_named_ucs_is_the_first_of_its_name_with_its_frame() {
     assert_eq!(names.named("front", Vec3::new(1.0, 0.0, 0.0), x, y).map(|u| u.name.as_str()), Some("FRONT"));
 }
 
+/// Many distinct table and multileader style names read in linear time, with the duplicate rule
+/// kept: a later style of a name in other case replaces the first, which keeps its place and takes
+/// the later style's name, also the Standard style a drawing starts with (#1924). The names share
+/// their first 200 bytes, so comparing two costs about that.
+#[test]
+fn many_distinct_table_and_multileader_style_names_read_quickly() {
+    const N: usize = 20_000;
+    let name = |kind: char, i: usize| format!("{kind}{}{i:06}", "x".repeat(199));
+    // Each style: a dictionary entry naming its handle, and the object (TABLESTYLE margin 40 or
+    // MLEADERSTYLE arrow size 44 set to `v`).
+    let mut entries = String::new();
+    let mut objects = String::new();
+    let mut h = 0x1000;
+    let mut style = |kind: &str, n: &str, v: f64| {
+        h += 1;
+        entries.push_str(&format!("3\n{n}\n350\n{h:X}\n"));
+        let own = if kind == "TABLESTYLE" { format!("100\nAcDbTableStyle\n40\n{v}\n") } else { format!("100\nAcDbMLeaderStyle\n44\n{v}\n") };
+        objects.push_str(&format!("0\n{kind}\n5\n{h:X}\n{own}"));
+    };
+    for (kind, k) in [("TABLESTYLE", 'T'), ("MLEADERSTYLE", 'M')] {
+        for i in 0..N {
+            style(kind, &name(k, i), 1.0);
+        }
+        style(kind, &name(k, 0).to_ascii_uppercase(), 2.0);
+        style(kind, "STANDARD", 3.0);
+    }
+    let t = format!("0\nSECTION\n2\nOBJECTS\n0\nDICTIONARY\n5\nA0\n100\nAcDbDictionary\n{entries}{objects}0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "many.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let tables: Vec<(&str, f64)> = d.table_styles.iter().map(|s| (s.name.as_str(), s.margin)).collect();
+    let mleaders: Vec<(&str, f64)> = d.mleader_styles.iter().map(|s| (s.name.as_str(), s.arrow_size)).collect();
+    for (styles, k) in [(tables, 'T'), (mleaders, 'M')] {
+        assert_eq!(styles.len(), N + 1);
+        assert_eq!(styles.first(), Some(&("STANDARD", 3.0)));
+        assert_eq!(styles.get(1), Some(&(name(k, 0).to_ascii_uppercase().as_str(), 2.0)));
+        assert_eq!(styles.get(2), Some(&(name(k, 1).as_str(), 1.0)));
+    }
+}
+
+/// The most multiline styles a file can hold, with long names, read in linear time, with the
+/// duplicate rule kept: a later style of a name in other case replaces the first, which keeps its
+/// place and takes the later style's name, also the STANDARD style a drawing starts with (#1924).
+/// The names share their first 1 000 bytes, so comparing two costs about that.
+#[test]
+fn many_multiline_style_names_read_quickly() {
+    const N: usize = 9_998;
+    let name = |i: usize| format!("L{}{i:06}", "x".repeat(999));
+    let style = |n: &str, description: &str| format!("0\nMLINESTYLE\n100\nAcDbMlineStyle\n2\n{n}\n70\n0\n3\n{description}\n71\n1\n49\n0\n");
+    let mut t = String::from("0\nSECTION\n2\nOBJECTS\n");
+    for i in 0..N {
+        t.push_str(&style(&name(i), "first"));
+    }
+    t.push_str(&style(&name(0).to_ascii_uppercase(), "second"));
+    t.push_str(&style("standard", "third"));
+    t.push_str("0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "mlines.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let styles: Vec<(&str, &str)> = d.mline_styles.iter().map(|s| (s.name.as_str(), s.description.as_str())).collect();
+    assert_eq!(styles.len(), N + 1);
+    assert_eq!(styles.first(), Some(&("standard", "third")));
+    assert_eq!(styles.get(1), Some(&(name(0).to_ascii_uppercase().as_str(), "second")));
+    assert_eq!(styles.get(2), Some(&(name(1).as_str(), "first")));
+}
+
+/// Many viewport configurations read in linear time, with the rule kept: a record adds a tile to
+/// the first configuration of its name, in any case, which keeps its own name, also from a later
+/// TABLES section (#1924). The names share their first 200 bytes, so comparing two costs about
+/// that.
+#[test]
+fn many_viewport_configurations_read_quickly() {
+    const N: usize = 20_000;
+    let name = |i: usize| format!("V{}{i:06}", "x".repeat(199));
+    let record = |n: &str, x: f64| format!("0\nVPORT\n2\n{n}\n70\n0\n10\n0\n20\n0\n11\n1\n21\n1\n12\n{x}\n22\n0\n40\n10\n41\n1\n");
+    let mut t = String::from("0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nVPORT\n");
+    for i in 0..N {
+        t.push_str(&record(&name(i), 1.0));
+    }
+    t.push_str(&record(&name(0).to_ascii_uppercase(), 2.0));
+    t.push_str("0\nENDTAB\n0\nENDSEC\n0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nVPORT\n");
+    t.push_str(&record(&name(1).to_ascii_uppercase(), 3.0));
+    t.push_str("0\nENDTAB\n0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "vports.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let configs: Vec<(&str, Vec<f64>)> =
+        d.vports.iter().filter(|c| c.name.starts_with('V')).map(|c| (c.name.as_str(), c.tiles.iter().map(|t| t.center.x).collect())).collect();
+    assert_eq!(configs.len(), N);
+    assert_eq!(configs.first(), Some(&(name(0).as_str(), vec![1.0, 2.0])));
+    assert_eq!(configs.get(1), Some(&(name(1).as_str(), vec![1.0, 3.0])));
+    assert_eq!(configs.get(2), Some(&(name(2).as_str(), vec![1.0])));
+}
+
+/// The value of group `code` in each record of type `kind` (its first, if repeated), in file order.
+fn first_groups(p: &[(String, String)], kind: &str, code: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let (mut inside, mut found) = (false, false);
+    for (c, v) in p {
+        if c == "0" {
+            (inside, found) = (v.trim() == kind, false);
+        } else if inside && !found && c == code {
+            out.push(v.trim().to_string());
+            found = true;
+        }
+    }
+    out
+}
+
+/// Every dictionary entry: its handle to its name.
+fn entry_names(p: &[(String, String)]) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    let (mut inside, mut name) = (false, None);
+    for (c, v) in p {
+        match c.as_str() {
+            "0" => (inside, name) = (v.trim() == "DICTIONARY", None),
+            "3" if inside => name = Some(v.trim().to_string()),
+            "350" | "360" if inside => {
+                if let Some(n) = name.take() {
+                    out.insert(v.trim().to_string(), n);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Saving many multileaders among many multileader styles takes linear time (#1924), and each is
+/// written as before: pointing at the first style of its name (ignoring case), else at the
+/// drawing's first style, with the landing gap of the first style of its name, else the default
+/// one. The names share their first 200 bytes, so comparing two costs about that.
+#[test]
+fn many_multileaders_among_many_styles_save_quickly() {
+    const N: usize = 10_000;
+    let name = |i: usize| format!("M{}{i:06}", "x".repeat(199));
+    let missing = |i: usize| format!("M{}z{i:05}", "x".repeat(199));
+    let mut d = Drawing::new_imperial();
+    if let Some(first) = d.mleader_styles.first_mut() {
+        first.landing_gap = 0.25;
+    }
+    d.mleader_styles.extend((0..N).map(|i| MLeaderStyle { name: name(i), landing_gap: 0.5, ..MLeaderStyle::default() }));
+    d.mleader_styles.push(MLeaderStyle { name: name(N - 1).to_ascii_uppercase(), landing_gap: 0.75, ..MLeaderStyle::default() });
+    let mleader = |style: String, x: f64| {
+        EntityKind::MLeader(MLeader {
+            leaders: vec![vec![Vec3::new(x, 0.0, 0.0), Vec3::new(x + 1.0, 1.0, 0.0)]],
+            landing: Vec3::new(x + 2.0, 1.0, 0.0),
+            dogleg: 0.5,
+            text: None,
+            style,
+            arrow_size: 1.0,
+            spline: false,
+            block: None,
+        })
+    };
+    for i in 0..N {
+        d.add(&Space::Model, Common::default(), mleader(missing(i), i as f64)).unwrap();
+    }
+    d.add(&Space::Model, Common::default(), mleader(name(N - 1).to_ascii_uppercase(), -1.0)).unwrap();
+    // As a MULTILEADER (R2007 and later): older files get a LEADER and its content instead.
+    let started = std::time::Instant::now();
+    let saved = dxf_2018(&d);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let p = pairs(&saved);
+    let entries = entry_names(&p);
+    let styles: Vec<&str> = first_groups(&p, "MULTILEADER", "340").iter().filter_map(|h| entries.get(h)).map(String::as_str).collect();
+    let gaps: Vec<f64> = first_groups(&p, "MULTILEADER", "145").iter().filter_map(|v| v.parse().ok()).collect();
+    assert_eq!((styles.len(), gaps.len()), (N + 1, N + 1));
+    let default_gap = MLeaderStyle::default().landing_gap;
+    assert!(styles[..N].iter().all(|s| *s == "Standard"), "a missing style points at the first style");
+    assert!(gaps[..N].iter().all(|g| *g == default_gap), "a missing style writes the default landing gap");
+    assert_eq!((styles[N], gaps[N]), (name(N - 1).as_str(), 0.5), "the first style of the name");
+}
+
+/// A multileader's own groups (AutoLISP's entity data) carry its style's landing gap, found
+/// without the styles a save plans.
+#[test]
+fn a_multileaders_entity_groups_have_its_styles_landing_gap() {
+    let mut d = Drawing::new_imperial();
+    d.mleader_styles.push(MLeaderStyle { name: "Notes".into(), landing_gap: 0.5, ..MLeaderStyle::default() });
+    let m = MLeader {
+        leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 1.0, 0.0)]],
+        landing: Vec3::new(2.0, 1.0, 0.0),
+        dogleg: 0.5,
+        text: None,
+        style: "NOTES".into(),
+        arrow_size: 1.0,
+        spline: false,
+        block: None,
+    };
+    let h = d.add(&Space::Model, Common::default(), EntityKind::MLeader(m)).unwrap();
+    let e = d.entity(h).unwrap().clone();
+    let (kind, tags) = entity_groups(&d, &e);
+    assert_eq!(kind, "MULTILEADER");
+    assert_eq!(tags.iter().find(|t| t.code == 145).map(|t| t.f64()), Some(0.5));
+}
+
+/// Many tables from another writer naming a table style the file lacks, among many table styles,
+/// read and save in linear time (#1924). Each table takes the text height of the style of its
+/// name (ignoring case), else the default one, as before, and is saved pointing at that style,
+/// else at the drawing's first one. The names share their first 200 bytes.
+#[test]
+fn many_tables_among_many_table_styles_read_and_save_quickly() {
+    const N: usize = 10_000;
+    let name = |i: usize| format!("T{}{i:06}", "x".repeat(199));
+    let missing = format!("T{}z{:05}", "x".repeat(199), 0);
+    let upper = name(N - 1).to_ascii_uppercase();
+    // Tables whose style (342) is a dictionary entry with no TABLESTYLE: the missing name for the
+    // first N, the last style's name in upper case for the last one.
+    let mut t = String::from("0\nSECTION\n2\nENTITIES\n");
+    for i in 0..=N {
+        let style = if i < N { "F0000" } else { "F0001" };
+        t.push_str(&format!(
+            "0\nACAD_TABLE\n5\n{:X}\n100\nAcDbBlockReference\n10\n{i}\n20\n0\n30\n0\n100\nAcDbTable\n342\n{style}\n91\n1\n92\n1\n141\n1\n142\n1\n",
+            0x100000 + i
+        ));
+    }
+    t.push_str(&format!(
+        "0\nENDSEC\n0\nSECTION\n2\nOBJECTS\n0\nDICTIONARY\n5\nA0\n100\nAcDbDictionary\n3\n{missing}\n350\nF0000\n3\n{upper}\n350\nF0001\n"
+    ));
+    for i in 0..N {
+        t.push_str(&format!("3\n{}\n350\n{:X}\n", name(i), 0x10000 + i));
+    }
+    for i in 0..N {
+        t.push_str(&format!("0\nTABLESTYLE\n5\n{:X}\n100\nAcDbTableStyle\n7\n\n140\n0.5\n", 0x10000 + i));
+    }
+    t.push_str("0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "tables.dxf").unwrap();
+    let saved = write_dxf(&d);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let tables: Vec<(&str, f64)> =
+        d.model.iter().filter_map(|e| if let EntityKind::Table(t) = &e.kind { Some((t.style.as_str(), t.text_height)) } else { None }).collect();
+    let default_height = TableStyle::default().text_height;
+    assert_eq!(tables.len(), N + 1);
+    assert!(tables[..N].iter().all(|t| *t == (missing.as_str(), default_height)), "a missing style gives the default height");
+    assert_eq!(tables[N], (upper.as_str(), 0.5), "the style of the name in other case");
+    let p = pairs(&saved);
+    let entries = entry_names(&p);
+    let styles: Vec<&str> = first_groups(&p, "ACAD_TABLE", "342").iter().filter_map(|h| entries.get(h)).map(String::as_str).collect();
+    assert_eq!(styles.len(), N + 1);
+    assert!(styles[..N].iter().all(|s| *s == "Standard"), "a missing style points at the first style");
+    assert_eq!(styles[N], name(N - 1));
+}
+
+/// Saving many multilines that each name a style the drawing lacks takes linear time (#1924). As
+/// before, each missing style is written once, with the elements of the first multiline naming it,
+/// and each multiline points at the first style of its name, ignoring case and surrounding spaces,
+/// or at STANDARD when it names none.
+#[test]
+fn many_multilines_naming_missing_styles_save_quickly() {
+    const N: usize = 10_000;
+    let missing = |i: usize| format!("L{}{i:06}", "x".repeat(199));
+    let mut d = Drawing::new_imperial();
+    let mline = |style: String, x: f64| {
+        let def = MLineStyle { name: style.clone(), ..MLineStyle::default() };
+        let vertex = |x: f64| MLineVertex { p: Vec3::new(x, 0.0, 0.0), cuts: Vec::new() };
+        EntityKind::MLine(MLine {
+            style,
+            def,
+            scale: 1.0,
+            justification: MLineJust::default(),
+            closed: false,
+            no_start_caps: false,
+            no_end_caps: false,
+            vertices: vec![vertex(x), vertex(x + 1.0)],
+        })
+    };
+    for i in 0..N {
+        d.add(&Space::Model, Common::default(), mline(missing(i), i as f64)).unwrap();
+    }
+    d.add(&Space::Model, Common::default(), mline(missing(N - 1).to_ascii_uppercase(), -1.0)).unwrap();
+    let mut padded = mline(format!(" {} ", missing(0)), -2.0);
+    if let EntityKind::MLine(m) = &mut padded {
+        m.def.elements = vec![MLineElement { offset: 0.25, ..MLineElement::default() }];
+    }
+    d.add(&Space::Model, Common::default(), padded).unwrap();
+    d.add(&Space::Model, Common::default(), mline("  ".into(), -3.0)).unwrap();
+    let started = std::time::Instant::now();
+    let saved = write_dxf(&d);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let p = pairs(&saved);
+    let entries = entry_names(&p);
+    let styles: Vec<&str> = first_groups(&p, "MLINE", "340").iter().filter_map(|h| entries.get(h)).map(String::as_str).collect();
+    let want: Vec<String> = (0..N).map(missing).chain([missing(N - 1), missing(0), "STANDARD".into()]).collect();
+    assert_eq!(styles, want);
+    assert_eq!(first_groups(&p, "MLINESTYLE", "2").len(), N + 1, "STANDARD and each missing style once");
+    let offsets: Vec<f64> = first_groups(&p, "MLINESTYLE", "49").iter().filter_map(|v| v.parse().ok()).collect();
+    assert!(offsets.len() == N + 1 && !offsets.contains(&0.25), "a later multiline does not change the style");
+}
+
+/// A multiline style whose name has spaces around it in the file is read with the name trimmed, so
+/// its multilines, whose lookup trims, find it: a save writes it once and points them at it.
+#[test]
+fn a_padded_multiline_style_name_is_saved_once() {
+    let t = "0\nSECTION\n2\nENTITIES\n0\nMLINE\n5\n100\n100\nAcDbEntity\n8\n0\n100\nAcDbMline\n2\n Road \n40\n1\n70\n0\n71\n1\n72\n2\n73\n2\n\
+             10\n0\n20\n0\n30\n0\n11\n0\n21\n0\n31\n0\n12\n1\n22\n0\n32\n0\n13\n0\n23\n1\n33\n0\n74\n2\n41\n0\n41\n0\n75\n0\n74\n2\n41\n0\n41\n0\n75\n0\n\
+             11\n1\n21\n0\n31\n0\n12\n1\n22\n0\n32\n0\n13\n0\n23\n1\n33\n0\n74\n2\n41\n0\n41\n0\n75\n0\n74\n2\n41\n0\n41\n0\n75\n0\n\
+             0\nENDSEC\n0\nSECTION\n2\nOBJECTS\n0\nMLINESTYLE\n5\n200\n100\nAcDbMlineStyle\n2\n Road \n70\n0\n3\npadded\n71\n2\n\
+             49\n0.25\n62\n256\n6\nBYLAYER\n49\n-0.25\n62\n256\n6\nBYLAYER\n0\nENDSEC\n0\nEOF\n";
+    let d = read(t.as_bytes(), "padded.dxf").unwrap();
+    assert_eq!(d.mline_styles.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["STANDARD", "Road"]);
+    let p = pairs(&write_dxf(&d));
+    let entries = entry_names(&p);
+    assert_eq!(first_groups(&p, "MLINESTYLE", "2"), ["STANDARD", "Road"], "one Road style");
+    let styles: Vec<&str> = first_groups(&p, "MLINE", "340").iter().filter_map(|h| entries.get(h)).map(String::as_str).collect();
+    assert_eq!(styles, ["Road"]);
+}
+
 /// Many layouts with every paper-space object in one of the last of them read in linear time.
 /// Each object goes to the first layout of its exact name, as before: not to an earlier one whose
 /// name differs only in case, nor to a later one of the same name (#1924).

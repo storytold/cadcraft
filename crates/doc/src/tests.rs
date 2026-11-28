@@ -29,7 +29,7 @@ fn new_metric_drawing_has_metric_multileader_and_table_styles() {
 
     let i = Drawing::new_imperial();
     assert_eq!(i.mleader_styles, vec![MLeaderStyle::default()]);
-    assert_eq!(i.table_styles, vec![TableStyle::default()]);
+    assert_eq!(*i.table_styles, vec![TableStyle::default()]);
     assert_eq!((i.mleader_styles[0].text_height, i.table_styles[0].text_height), (0.18, 0.18));
 }
 

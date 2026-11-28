@@ -453,9 +453,12 @@ fn attribs(d: &Drawing, ins: &Insert, values: &[(String, String)]) -> Vec<Attrib
 }
 
 /// What a MULTILEADER record points at in the file being written.
-pub(crate) struct Refs {
+pub(crate) struct Refs<'a> {
     /// MLEADERSTYLE handle.
     pub style: String,
+    /// The drawing's style of the multileader's style name (the first of that name, ignoring
+    /// case), when it has one.
+    pub style_def: Option<&'a MLeaderStyle>,
     /// STYLE record handle of the text.
     pub text_style: Option<String>,
     /// BLOCK_RECORD handle of the content block.
@@ -463,7 +466,7 @@ pub(crate) struct Refs {
 }
 
 /// The groups of a MULTILEADER record after its `AcDbMLeader` marker.
-pub(crate) fn entity_tags(d: &Drawing, m: &MLeader, r: &Refs) -> Vec<Tag> {
+pub(crate) fn entity_tags(d: &Drawing, m: &MLeader, r: &Refs<'_>) -> Vec<Tag> {
     let mut t: Vec<Tag> = Vec::new();
     let s = |t: &mut Vec<Tag>, c: i32, v: &str| t.push(Tag::s(c, v));
     let f = |t: &mut Vec<Tag>, c: i32, v: f64| t.push(Tag::f(c, v));
@@ -473,7 +476,7 @@ pub(crate) fn entity_tags(d: &Drawing, m: &MLeader, r: &Refs) -> Vec<Tag> {
         t.push(Tag::f(c + 10, v.y));
         t.push(Tag::f(c + 20, v.z));
     };
-    let style = d.mleader_styles.iter().find(|x| x.name.eq_ignore_ascii_case(&m.style)).cloned().unwrap_or_default();
+    let style = r.style_def.cloned().unwrap_or_default();
     // Block content wins over text when an entity has both (DXF has one content type).
     let block = m.block.as_ref().zip(r.block.as_ref());
     let text = if block.is_some() { None } else { m.text.as_ref() };
