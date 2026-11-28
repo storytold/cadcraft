@@ -66,7 +66,7 @@ impl Interactive for PointM {
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match i {
             Input::Point(p) => {
-                s.add_entity(EntityKind::Point(Point { p: v3(p), angle: 0.0 }))?;
+                s.add_entity(EntityKind::Point(Point { p: p.to3(s.point_z()), angle: 0.0 }))?;
                 Ok(if self.multiple { Step::Continue } else { Step::Done })
             }
             Input::Enter => Ok(Step::Done),

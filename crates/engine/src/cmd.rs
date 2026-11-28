@@ -21,7 +21,7 @@ mod griphot;
 pub(crate) mod groups;
 pub(crate) mod hatch;
 mod image;
-mod inquiry;
+pub(crate) mod inquiry;
 pub mod interface;
 mod layer;
 mod layout;

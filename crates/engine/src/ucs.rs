@@ -244,6 +244,11 @@ impl Session {
         crate::prompt::parse_point_in(text, last, &self.angle_settings(), &self.input_ucs())
     }
 
+    /// [`Session::parse_typed_point`] keeping Z ([`crate::prompt::parse_point3_in`]).
+    pub fn parse_typed_point3(&self, text: &str, last: Vec3) -> Option<Vec3> {
+        crate::prompt::parse_point3_in(text, last, &self.angle_settings(), &self.input_ucs())
+    }
+
     /// A world point in the coordinates shown to the user (the current UCS).
     pub fn ucs_point(&self, p: Vec2) -> Vec2 {
         self.input_ucs().to_ucs(p)

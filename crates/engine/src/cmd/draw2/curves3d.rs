@@ -1,6 +1,6 @@
 use super::{
     Accept, EntityKind, Handle, Helix, HelixConstrain, Input, Interactive, MAX_GEN, Polyline3d, Prompt, Result, Session, Spline, Step, Value, Vec2,
-    Vec3, added, bad, bool_or, circle, curves, f64_or, f64_req, line, number, other, point_req, points_param, v3,
+    Vec3, added, bad, bool_or, circle, curves, f64_or, f64_req, line, number, other, point_req, points_param,
 };
 
 // =====================================================================================
@@ -26,13 +26,14 @@ pub(super) fn run_3dpoly(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[derive(Default)]
 pub(super) struct Poly3dM {
-    pts: Vec<Vec2>,
+    /// The vertices: a typed point keeps its Z ([`Session::point_z`]), a picked one is at z = 0.
+    pts: Vec<Vec3>,
     handle: Option<Handle>,
 }
 
 impl Poly3dM {
     fn sync(&mut self, s: &mut Session, closed: bool) -> Result<()> {
-        let k = EntityKind::Polyline3d(Polyline3d { points: self.pts.iter().map(|p| v3(*p)).collect(), closed });
+        let k = EntityKind::Polyline3d(Polyline3d { points: self.pts.clone(), closed });
         match (self.handle, self.pts.len() >= 2) {
             (Some(h), true) => s.doc_mut()?.modify_entity(h, |e| e.kind = k)?,
             (None, true) => self.handle = Some(s.add_entity(k)?),
@@ -53,14 +54,15 @@ impl Interactive for Poly3dM {
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.pts.len() {
             0 => Prompt::new("Specify start point of polyline", Accept::POINT),
-            1 | 2 => Prompt::new("Specify endpoint of line", Accept::POINT).kw(&["Undo"]).base_opt(self.pts.last().copied()),
-            _ => Prompt::new("Specify endpoint of line", Accept::POINT).kw(&["Close", "Undo"]).base_opt(self.pts.last().copied()),
+            1 | 2 => Prompt::new("Specify endpoint of line", Accept::POINT).kw(&["Undo"]).base_opt(self.pts.last().map(|p| p.xy())),
+            _ => Prompt::new("Specify endpoint of line", Accept::POINT).kw(&["Close", "Undo"]).base_opt(self.pts.last().map(|p| p.xy())),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match i {
             Input::Point(p) => {
-                if self.pts.last().is_none_or(|l| !l.near(p, 1e-12)) && self.pts.len() < MAX_GEN {
+                let p = p.to3(s.point_z());
+                if self.pts.last().is_none_or(|l| (*l - p).len() > 1e-12) && self.pts.len() < MAX_GEN {
                     self.pts.push(p);
                     self.sync(s, false)?;
                 }
@@ -80,7 +82,7 @@ impl Interactive for Poly3dM {
         }
     }
     fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
-        self.pts.last().map(|l| vec![line(*l, c)]).unwrap_or_default()
+        self.pts.last().map(|l| vec![line(l.xy(), c)]).unwrap_or_default()
     }
 }
 

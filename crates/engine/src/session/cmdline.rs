@@ -1,4 +1,4 @@
-use super::{EngineError, Input, Result, Session, Value, Vec2, cmd, lisp, prompt, snap, units};
+use super::{EngineError, Input, Result, Session, Value, Vec2, Vec3, cmd, lisp, prompt, snap, units};
 
 impl Session {
     /// Process one line typed at the command line (Enter pressed). Spaces separate inputs as in a
@@ -108,8 +108,16 @@ impl Session {
                 lisp::value::Value::Real(r) => self.typed_token(&format!("{r}"), false),
                 lisp::value::Value::Str(s) => self.typed_token(&s, false),
                 other => match other.as_point() {
-                    // A point from LISP is in the current UCS, as typed coordinates are.
-                    Some(p) => self.input(Input::Point(self.input_ucs().to_wcs(Vec2::new(p[0], p[1])))),
+                    // A point from LISP is in the current UCS, as typed coordinates are, and a 3D
+                    // point keeps its Z, as a typed `x,y,z` does.
+                    Some(p) => {
+                        let ucs = self.input_ucs();
+                        let xy = ucs.to_wcs(Vec2::new(p[0], p[1]));
+                        self.point_z = p.get(2).copied().filter(|z| z.is_finite()).map_or(0.0, |z| ucs.to_wcs3(Vec3::new(p[0], p[1], z)).z);
+                        let r = self.input(Input::Point(xy));
+                        self.point_z = 0.0;
+                        r
+                    }
                     None => {
                         self.echo(format!("Invalid input: {}", lisp::value::to_text(&other, true)));
                         Ok(())
@@ -149,9 +157,12 @@ impl Session {
         }
         if prompt.accept.point {
             self.note_tilted_ucs();
-            if let Some(p) = self.parse_typed_point(tt, self.last_point) {
+            if let Some(p) = self.parse_typed_point3(tt, self.last_point3()) {
                 self.last_polar = prompt::parse_polar_text(tt, &self.angle_settings());
-                return self.input(Input::Point(p));
+                self.point_z = p.z;
+                let r = self.input(Input::Point(p.xy()));
+                self.point_z = 0.0;
+                return r;
             }
             // Direct distance entry along the tracking path the cursor is on, from the point it
             // comes from (an acquired or temporary tracking point needs no base point).
