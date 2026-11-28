@@ -557,7 +557,7 @@ fn write_table_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper: b
                     w.i(93, 4);
                     w.i(90, 4);
                 }
-                let chars: Vec<char> = cell.filter(|_| !cx.modern_table_values || !covered).map(|x| x.text.chars().collect()).unwrap_or_default();
+                let chars: Vec<char> = cell.map(|x| x.text.chars().collect()).unwrap_or_default();
                 let chunks: Vec<String> = chars.chunks(250).map(|c| c.iter().collect()).collect();
                 let n = chunks.len();
                 for (i, ch) in chunks.iter().enumerate() {
