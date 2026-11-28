@@ -187,7 +187,11 @@ impl Session {
             return Err(EngineError::BadParams { cmd: "script".into(), msg: "a script is already running; nested scripts are not supported".into() });
         }
         self.in_script = true;
+        // A script that a LISP routine started (`(command "_.script" …)`) feeds its own lines: they
+        // are not the routine's input, so a command they start answers as from a script.
+        let program_input = std::mem::replace(&mut self.program_input, false);
         let r = self.script_lines(text);
+        self.program_input = program_input;
         self.in_script = false;
         r
     }

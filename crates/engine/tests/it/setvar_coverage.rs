@@ -22,8 +22,10 @@ fn defaults_are_the_ones_the_commands_use() {
         ("TRIMMODE", json!(1)),
         ("PROJMODE", json!(1)),
         ("EDGEMODE", json!(0)),
+        ("HPDOUBLE", json!(0)),
         ("HPNAME", json!("ANSI31")),
         ("HPSCALE", json!(1.0)),
+        ("HPSPACE", json!(1.0)),
         ("HPANG", json!(0.0)),
         ("DONUTID", json!(0.5)),
         ("DONUTOD", json!(1.0)),
@@ -40,7 +42,7 @@ fn defaults_are_the_ones_the_commands_use() {
     // Lowercase names work; the list shows the new variables and the dimension variables.
     assert_eq!(getvar(&mut s, "circlerad"), json!(0.0));
     let all = cadcraft_engine::sysvars::list(&s);
-    for n in ["POLYSIDES", "SPLINESEGS", "CHAMFERD", "TRANSPARENCYDISPLAY", "DIMASZ", "OSMODE", "CLAYER"] {
+    for n in ["POLYSIDES", "SPLINESEGS", "CHAMFERD", "TRANSPARENCYDISPLAY", "DIMASZ", "OSMODE", "CLAYER", "HPSPACE", "HPDOUBLE"] {
         assert!(all.get(n).is_some(), "{n} listed");
     }
 }
@@ -81,6 +83,9 @@ fn bad_values_and_unknown_names_are_refused() {
         ("LAYLOCKFADECTL", json!(91)),
         ("LAYLOCKFADECTL", json!(-91)),
         ("HPSCALE", json!(0)),
+        ("HPSPACE", json!(0)),
+        ("HPDOUBLE", json!(2)),
+        ("HPDOUBLE", json!(0.5)),
         ("HPNAME", json!("NO-SUCH-PATTERN")),
         ("DONUTOD", json!(0)),
         ("CIRCLERAD", json!(-1)),
