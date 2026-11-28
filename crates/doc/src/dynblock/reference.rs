@@ -23,8 +23,13 @@ const MAX_VALUES: usize = 10_000;
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Value {
-    /// A visibility state's name or a lookup value.
-    Text { value: String },
+    /// A visibility state's name or a lookup value, and where the parameter is when the record
+    /// says (an action may have carried it from where the dynamic block has it).
+    Text {
+        value: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        at: Option<Vec3>,
+    },
     /// A point parameter's position.
     Point { at: Vec3 },
     /// A two-point parameter's points.
@@ -93,17 +98,18 @@ fn entries(objects: &HashMap<Handle, &ForeignObject>, dict: Handle) -> Vec<(Stri
     out
 }
 
-/// A value XRECORD: its text (group 1) when it has one, else its points (10/20/30); a flip
+/// A value XRECORD: its text (group 1) when it has one, with the parameter's position (a
+/// visibility or lookup grip's, 10/20/30) when it has that too; else its points; a flip
 /// parameter's also has its state, a group 70 after its points (the header's `70 25`, `70 104`
 /// come before them).
 fn value(o: &ForeignObject) -> Option<Value> {
-    if let Some(t) = o.tags.iter().find(|t| t.code == 1) {
-        return Some(Value::Text { value: t.value.clone() });
-    }
     let num = |code: i32, i: usize| {
         o.tags.iter().filter(|t| t.code == code).nth(i).and_then(|t| t.value.trim().parse::<f64>().ok()).filter(|v| v.is_finite())
     };
     let point = |i: usize| Some(Vec3::new(num(10, i)?, num(20, i)?, num(30, i).unwrap_or(0.0)));
+    if let Some(t) = o.tags.iter().find(|t| t.code == 1) {
+        return Some(Value::Text { value: t.value.clone(), at: point(0) });
+    }
     let first_point = o.tags.iter().position(|t| t.code == 10).unwrap_or(o.tags.len());
     let state = o.tags.get(first_point..).unwrap_or_default().iter().rev().find(|t| t.code == 70).map(|t| t.value.trim() == "1");
     match (point(0), point(1)) {

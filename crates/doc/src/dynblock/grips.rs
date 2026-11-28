@@ -172,7 +172,7 @@ pub fn grips(d: &Drawing, insert: Handle) -> Vec<DynGrip> {
     for p in &m.parameters {
         if let ParameterKind::Visibility { states, .. } = &p.kind {
             let current = match r.values.get(&p.node) {
-                Some(Value::Text { value }) => states.iter().find(|s| s.name.eq_ignore_ascii_case(value)),
+                Some(Value::Text { value, .. }) => states.iter().find(|s| s.name.eq_ignore_ascii_case(value)),
                 _ => states.first(),
             };
             if let Some(s) = current {
@@ -340,7 +340,11 @@ pub fn grips(d: &Drawing, insert: Handle) -> Vec<DynGrip> {
             ParameterKind::Visibility { at, label, .. } | ParameterKind::Lookup { at, label, .. } => {
                 let Some(list) = choices.get(&label.to_ascii_uppercase()).filter(|c| !c.is_empty()) else { continue };
                 if shown(p.node, grip(0)) {
-                    let at = world(*at);
+                    // Where the reference's record has it (an action may have carried it).
+                    let at = match r.values.get(&p.node) {
+                        Some(Value::Text { at: Some(q), .. }) => world(*q),
+                        _ => world(*at),
+                    };
                     out.push(DynGrip {
                         node: p.node,
                         part: GripPart::At,

@@ -32,6 +32,7 @@ mod dynblock_params;
 mod dynblock_read;
 mod dynblock_rotate_flip;
 mod dynblock_scale_polar;
+mod dynblock_visibility_position;
 mod entity_props_roundtrip;
 mod exhausted_handseed;
 mod followups_626;

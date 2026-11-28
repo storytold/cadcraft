@@ -104,6 +104,48 @@ enum Val {
     Flip(Vec3, Vec3, bool),
     /// A flip grip's state: its value record's last group 70.
     State(bool),
+    /// Where a visibility or lookup parameter is, when an action carries it, with its state or
+    /// value (unchanged; its record holds both).
+    At(Vec3, String),
+}
+
+/// What an action carries of parameter `node`: the value this change has given it so far, else
+/// its current one; of a visibility or lookup parameter, its position (its state or value stays).
+/// None for a parameter whose state this change sets (it stays where it is).
+fn carried(m: &DynamicBlock, values: &BTreeMap<i32, Value>, new: &BTreeMap<i32, Val>, node: i32) -> Option<Val> {
+    match new.get(&node) {
+        Some(Val::Text(_)) => None,
+        Some(v) => Some(v.clone()),
+        None => match current(m, values, node)? {
+            Val::Text(t) => located(m, values, node).map(|p| Val::At(p, t)),
+            v => Some(v),
+        },
+    }
+}
+
+/// Parameter value `v` with each of its points moved by `f` (a visibility or lookup parameter's
+/// carried position too); `None` for a value without points (a state or a value alone).
+fn moved(v: Val, f: impl Fn(Vec3) -> Vec3) -> Option<Val> {
+    Some(match v {
+        Val::Point(q) => Val::Point(f(q)),
+        Val::At(q, t) => Val::At(f(q), t),
+        Val::Points(b, e) => Val::Points(f(b), f(e)),
+        Val::Flip(b, e, s) => Val::Flip(f(b), f(e), s),
+        Val::Text(_) | Val::State(_) => return None,
+    })
+}
+
+/// Where a visibility or lookup parameter is on a reference: as its record has it, else as the
+/// dynamic block has it.
+fn located(m: &DynamicBlock, values: &BTreeMap<i32, Value>, node: i32) -> Option<Vec3> {
+    let home = m.parameters.iter().find(|p| p.node == node).and_then(|p| match &p.kind {
+        ParameterKind::Visibility { at, .. } | ParameterKind::Lookup { at, .. } => Some(*at),
+        _ => None,
+    })?;
+    Some(match values.get(&node) {
+        Some(Value::Text { at: Some(q), .. }) => *q,
+        _ => home,
+    })
 }
 
 /// A rotation parameter's angle (radians, 0 to 2π): its end's direction from its base, from the
@@ -173,7 +215,7 @@ fn current(m: &DynamicBlock, values: &BTreeMap<i32, Value>, node: i32) -> Option
     let p = m.parameters.iter().find(|p| p.node == node)?;
     let given = values.get(&node);
     Some(match (&p.kind, given) {
-        (_, Some(Value::Text { value })) => Val::Text(value.clone()),
+        (_, Some(Value::Text { value, .. })) => Val::Text(value.clone()),
         (_, Some(Value::Point { at })) => Val::Point(*at),
         (_, Some(Value::Points { base, end })) => Val::Points(*base, *end),
         (_, Some(Value::Flip { base, end, flipped })) => Val::Flip(*base, *end, *flipped),
@@ -954,7 +996,7 @@ impl ActionRun<'_> {
     /// The value of parameter `node` so far: carried along by an action already, else the
     /// reference's.
     fn value_of(&self, node: i32) -> Option<Val> {
-        self.new.get(&node).cloned().or_else(|| current(self.m, self.values, node))
+        carried(self.m, self.values, &self.new, node)
     }
 
     /// Action `a`, when one of its connections follows a parameter the change sets.
@@ -1022,13 +1064,9 @@ impl ActionRun<'_> {
         }
         let back = |q: Vec3| q - rebase.to3(0.0);
         for p in self.m.parameters.iter().filter(|p| !matches!(p.kind, ParameterKind::BasePoint { .. })) {
-            let moved = match self.value_of(p.node) {
-                Some(Val::Point(q)) => Val::Point(back(q)),
-                Some(Val::Points(b, e)) => Val::Points(back(b), back(e)),
-                Some(Val::Flip(b, e, f)) => Val::Flip(back(b), back(e), f),
-                _ => continue,
-            };
-            self.new.insert(p.node, moved);
+            // A visibility or lookup grip goes back too (its carried position).
+            let Some(now) = self.value_of(p.node).and_then(|v| moved(v, back)) else { continue };
+            self.new.insert(p.node, now);
         }
         rebase
     }
@@ -1047,14 +1085,8 @@ impl ActionRun<'_> {
                     continue;
                 }
                 let Some(cur) = self.value_of(node) else { continue };
-                let p = |q: Vec3| t.apply(q.xy()).to3(q.z);
-                let moved = match cur {
-                    Val::Point(q) => Val::Point(p(q)),
-                    Val::Points(b, e) => Val::Points(p(b), p(e)),
-                    Val::Flip(b, e, f) => Val::Flip(p(b), p(e), f),
-                    other => other,
-                };
-                self.new.insert(node, moved);
+                let now = moved(cur.clone(), |q| t.apply(q.xy()).to3(q.z)).unwrap_or(cur);
+                self.new.insert(node, now);
             } else if let Some(c) = self.copy_of(h) {
                 self.moves.entry(c).or_default().push(Op::Transform(t));
             }
@@ -1082,7 +1114,8 @@ impl ActionRun<'_> {
                 }
                 let Some(cur) = self.value_of(node) else { continue };
                 let home = current(self.m, &BTreeMap::new(), node);
-                self.new.insert(node, turned_and_shifted(cur, home, frame, (turn, v)));
+                let at = located(self.m, &BTreeMap::new(), node);
+                self.new.insert(node, turned_and_shifted(cur, (home, at), frame, (turn, v)));
                 continue;
             }
             let Some(c) = self.copy_of(h) else { continue };
@@ -1148,7 +1181,8 @@ impl ActionRun<'_> {
                 }
                 let Some(cur) = self.value_of(node) else { continue };
                 let home = current(self.m, &BTreeMap::new(), node);
-                self.new.insert(node, shifted(cur, home, frame, v));
+                let at = located(self.m, &BTreeMap::new(), node);
+                self.new.insert(node, shifted(cur, (home, at), frame, v));
                 continue;
             }
             let Some(c) = self.copy_of(h) else { continue };
@@ -1204,7 +1238,7 @@ fn earlier_copies(src: &Block, src_tag: &HashMap<Handle, i64>, arrays: &HashMap<
 
 /// A parameter value `cur` turned by `turn`, and carried by `v` where its points are in `frame`
 /// (judged where the dynamic block has them, `home`), after a polar stretch.
-fn turned_and_shifted(cur: Val, home: Option<Val>, frame: &[Vec2], (turn, v): (Mat3, Vec2)) -> Val {
+fn turned_and_shifted(cur: Val, (home, located): (Option<Val>, Option<Vec3>), frame: &[Vec2], (turn, v): (Mat3, Vec2)) -> Val {
     let carry = |p: Vec3, at: Vec3| {
         let q = turn.apply(p.xy()).to3(p.z);
         if in_frame(frame, at.xy()) { q + v.to3(0.0) } else { q }
@@ -1212,6 +1246,8 @@ fn turned_and_shifted(cur: Val, home: Option<Val>, frame: &[Vec2], (turn, v): (M
     match (cur, home) {
         (Val::Point(p), Some(Val::Point(h))) => Val::Point(carry(p, h)),
         (Val::Point(p), _) => Val::Point(carry(p, p)),
+        // A carried visibility or lookup grip: in the frame where the dynamic block has it.
+        (Val::At(p, t), _) => Val::At(carry(p, located.unwrap_or(p)), t),
         (Val::Points(b, e), Some(Val::Points(hb, he))) => Val::Points(carry(b, hb), carry(e, he)),
         (Val::Points(b, e), _) => Val::Points(carry(b, b), carry(e, e)),
         (Val::Flip(b, e, f), Some(Val::Flip(hb, he, _))) => Val::Flip(carry(b, hb), carry(e, he), f),
@@ -1222,11 +1258,12 @@ fn turned_and_shifted(cur: Val, home: Option<Val>, frame: &[Vec2], (turn, v): (M
 
 /// Parameter value `cur` carried by `v`: the points in `frame` (empty: all of them), judged where
 /// the dynamic block has them (`home`), move.
-fn shifted(cur: Val, home: Option<Val>, frame: &[Vec2], v: Vec2) -> Val {
+fn shifted(cur: Val, (home, located): (Option<Val>, Option<Vec3>), frame: &[Vec2], v: Vec2) -> Val {
     let shift = |p: Vec3, at: Option<Vec3>| if frame.is_empty() || in_frame(frame, at.unwrap_or(p).xy()) { p + v.to3(0.0) } else { p };
     match (cur, home) {
         (Val::Point(p), Some(Val::Point(h))) => Val::Point(shift(p, Some(h))),
         (Val::Point(p), _) => Val::Point(shift(p, None)),
+        (Val::At(p, t), _) => Val::At(shift(p, located), t),
         (Val::Points(b, e), Some(Val::Points(hb, he))) => Val::Points(shift(b, Some(hb)), shift(e, Some(he))),
         (Val::Points(b, e), _) => Val::Points(shift(b, None), shift(e, None)),
         (Val::Flip(b, e, f), Some(Val::Flip(hb, he, _))) => Val::Flip(shift(b, Some(hb)), shift(e, Some(he)), f),
@@ -2030,6 +2067,10 @@ fn write_value(tags: &mut Vec<RawTag>, v: &Val) {
             return;
         }
         Val::Point(p) => vec![*p],
+        Val::At(p, t) => {
+            write_value(tags, &Val::Text(t.clone()));
+            vec![*p]
+        }
         Val::Points(b, e) | Val::Flip(b, e, _) => vec![*b, *e],
         Val::State(f) => {
             set_state(tags, *f);
@@ -2242,6 +2283,29 @@ mod tests {
         assert_eq!(total, 3);
         keep_array(&mut arrays, &mut total, Handle(2), &[Vec2::ZERO; 20]).unwrap();
         assert_eq!(total, 23);
+    }
+
+    #[test]
+    fn a_carried_visibility_grip_moves_with_the_points() {
+        let up = |q: Vec3| q + Vec3::new(0.0, 1.0, 0.0);
+        let at = Val::At(Vec3::new(2.0, 0.0, 0.0), "Open".into());
+        assert_eq!(moved(at, up), Some(Val::At(Vec3::new(2.0, 1.0, 0.0), "Open".into())));
+        assert_eq!(moved(Val::Text("Open".into()), up), None);
+        assert_eq!(moved(Val::State(true), up), None);
+    }
+
+    #[test]
+    fn a_polar_stretch_carries_a_visibility_grip() {
+        let turn = Mat3::rotate_about(Vec2::ZERO, std::f64::consts::FRAC_PI_2);
+        let frame = [Vec2::new(1.0, -1.0), Vec2::new(3.0, 1.0)];
+        let at = |x: f64, y: f64| Val::At(Vec3::new(x, y, 0.0), "Open".into());
+        let near = |v: Val, x: f64, y: f64| matches!(v, Val::At(p, _) if (p.x - x).abs() < 1e-9 && (p.y - y).abs() < 1e-9);
+        // In the frame where the dynamic block has it: turned, then moved.
+        let v = turned_and_shifted(at(2.0, 0.0), (None, Some(Vec3::new(2.0, 0.0, 0.0))), &frame, (turn, Vec2::new(0.0, 1.0)));
+        assert!(near(v, 0.0, 3.0));
+        // Outside it: only turned.
+        let v = turned_and_shifted(at(5.0, 0.0), (None, Some(Vec3::new(5.0, 0.0, 0.0))), &frame, (turn, Vec2::new(0.0, 1.0)));
+        assert!(near(v, 0.0, 5.0));
     }
 
     fn tagged(h: u64, tag_value: Option<&str>) -> Entity {
